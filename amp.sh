@@ -111,6 +111,7 @@ phpEnsurePresent() {
         echo "PHP is already available"
         phpGetVersion
     fi
+    systemPackageAddRepositories ppa:ondrej/php
     packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}" "${PHP_VERSION}-common")
     systemPackagesAdd "${packagesToInstall[@]}"
 }
@@ -130,8 +131,8 @@ phpListModules() {
 
 checkSudoWithoutPasswordEntry
 systemPackagesUpdateRepositories
-apacheEnsurePresent
-apacheStatus
+#apacheEnsurePresent
+#apacheStatus
 phpEnsurePresent
 phpGetVersion
 #phpListModules
