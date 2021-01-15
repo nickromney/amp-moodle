@@ -13,10 +13,13 @@ checkIsCommandAvailable() {
     fi
 }
 
-checkPrivileges() {
-    if [ "$(id -u)" != 0 ]
+checkSudoWithoutPasswordEntry() {
+    if sudo -v &> /dev/null
     then
-        echo "script needs to be run as root user" >&2
+        echo "This user is able to sudo without requiring a password"
+    else
+        # propagate error to caller
+        return $?
     fi
 }
 
@@ -76,7 +79,7 @@ phpInstall() {
     if ! checkIsCommandAvailable php
     then
         echo "PHP is not yet available. Starting installation."
-	   systemPackageAdd php
+	    systemPackageAdd php
     fi
 }
 
@@ -93,7 +96,7 @@ phpListModules() {
     fi
 }
 
-checkPrivileges
+checkSudoWithoutPasswordEntry
 systemPackageUpdateRepositories
 apacheInstall
 apacheConfigureService
