@@ -53,26 +53,25 @@ serviceStop() {
 	sudo systemctl stop "${service}"
 }
 
-systemPackageAdd() {
-    local packageToAdd="$1"
-    sudo apt install -qy "${packageToAdd}"
+systemPackagesAdd() {
+    local packagesToCheck="$1"
+    local packagesToInstall
+    packagesToInstall=$(dpkg --get-selections "${packagesToCheck}" 2>&1 | grep -v 'install$' | awk '{ print $6 }')
+    # If "${packagesToInstall}" is not null, then attempt installation via apt-get
+    [[ -n "${packagesToInstall}" ]] && sudo apt-get install "${packagesToInstall}"
 }
 
-systemPackageUpdateRepositories() {
+systemPackagesUpdateRepositories() {
 	echo "Updating package repositories"
-	sudo apt -qq update
+	sudo apt-get -qq update
 }
 
 # Main functions
 
-apacheInstall() {
-    if ! checkIsCommandAvailable apachectl
-    then
-        echo "Apache is not yet available. Starting installation."
-	    systemPackageAdd apache2
-        serviceEnable apache2
-        serviceStart apache2
-    fi
+apacheEnsurePresent() {
+    systemPackagesAdd apache2
+    serviceEnable apache2
+    serviceStart apache2
 }
 
 apacheStatus() {
@@ -94,12 +93,8 @@ phpGetVersion() {
     echo "PHP version is ${PHP_VERSION}"
 }
 
-phpInstall() {
-    if ! checkIsCommandAvailable php
-    then
-        echo "PHP is not yet available. Starting installation."
-	    systemPackageAdd "php libapache2-mod-php"
-    fi
+phpEnsurePresent() {
+    systemPackagesAdd "php libapache2-mod-php"
 }
 
 phpListModules() {
@@ -116,9 +111,9 @@ phpListModules() {
 }
 
 checkSudoWithoutPasswordEntry
-systemPackageUpdateRepositories
-apacheInstall
+systemPackagesUpdateRepositories
+apacheEnsurePresent
 apacheStatus
-phpInstall
+phpEnsurePresent
 phpGetVersion
-phpListModules
+#phpListModules
