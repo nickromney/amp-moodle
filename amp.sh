@@ -56,9 +56,11 @@ serviceStop() {
 systemPackagesAdd() {
     local packagesToCheck="$1"
     local packagesToInstall
+    echo "Checking presence of packages ${packagesToCheck}"
     packagesToInstall=$(dpkg --get-selections "${packagesToCheck}" 2>&1 | grep -v 'install$' | awk '{ print $6 }')
-    # If "${packagesToInstall}" is not null, then attempt installation via apt-get
-    [[ -n "${packagesToInstall}" ]] && sudo apt-get install "${packagesToInstall}"
+    echo "Packages not yet installed: ${packagesToInstall}"
+    # If "${packagesToInstall}" has value, then attempt installation via apt-get
+    [[ -n "${packagesToInstall}" ]] && sudo apt-get install -qy "${packagesToInstall}"
 }
 
 systemPackagesUpdateRepositories() {
