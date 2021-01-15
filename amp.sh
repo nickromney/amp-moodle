@@ -55,12 +55,16 @@ serviceStop() {
 
 systemPackagesAdd() {
     local packagesToCheck="$1"
-    local packagesToInstall
     echo "Checking presence of packages ${packagesToCheck}"
-    packagesToInstall=$(dpkg --get-selections "${packagesToCheck}" 2>&1 | grep -v 'install$' | awk '{ print $6 }')
+    echo "use apt list --installed"
+    sudo apt -qq list "${packagesToCheck}" --installed
+    echo "use dpkg --get-selections"
+    packagesToInstall=$(sudo dpkg --get-selections "${packagesToCheck}" 2>&1 | grep -v 'install$' | awk '{ print $6 }')
     echo "Packages not yet installed: ${packagesToInstall}"
+    echo "Install if not present, but don't upgrade if present"
+    sudo apt-get install --no-upgrade "${packagesToCheck}"
     # If "${packagesToInstall}" has value, then attempt installation via apt-get
-    [[ -n "${packagesToInstall}" ]] && sudo apt-get install -qy "${packagesToInstall}"
+    #[[ -n "${packagesToInstall}" ]] && sudo apt-get install -qy "${packagesToInstall} --no-upgrade"
 }
 
 systemPackagesUpdateRepositories() {
@@ -96,7 +100,15 @@ phpGetVersion() {
 }
 
 phpEnsurePresent() {
-    systemPackagesAdd "php libapache2-mod-php"
+    if ! checkIsCommandAvailable php
+    then
+        echo "PHP is not yet available. Adding."
+        packagesToInstall="php"
+    else
+        echo "PHP is already available"
+    fi
+    packagesToInstall="${packagesToInstall} libapache2-mod-php"
+    systemPackagesAdd "${packagesToInstall}"
 }
 
 phpListModules() {
