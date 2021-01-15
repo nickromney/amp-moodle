@@ -55,11 +55,12 @@ serviceStop() {
 
 systemPackagesAdd() {
     local packagesToCheck="$1"
+    systemPackagesUpdateRepositories
     echo "Checking presence of packages ${packagesToCheck}"
     echo "use apt list --installed"
     sudo apt -qq list "${packagesToCheck}" --installed
     # Install if not present, but don't upgrade if present
-    sudo apt-get install --no-upgrade "${packagesToCheck}"
+    sudo apt-get -qy install --no-upgrade "${packagesToCheck}"
 }
 
 systemPackagesUpdateRepositories() {
