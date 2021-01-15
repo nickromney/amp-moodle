@@ -102,10 +102,11 @@ phpGetVersion() {
 }
 
 phpEnsurePresent() {
+    packagesToInstall
     if ! checkIsCommandAvailable php
     then
         echo "PHP is not yet available. Adding."
-        packagesToInstall="php"
+        packagesToInstall="${packagesToInstall} php"
     else
         echo "PHP is already available"
         phpGetVersion
