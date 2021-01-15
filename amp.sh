@@ -63,6 +63,12 @@ systemPackagesAdd() {
     sudo apt-get -qy install --no-upgrade "${packagesToCheck}"
 }
 
+systemPackageAddRepositories() {
+    local repositoriesToAdd="$1"
+    systemPackagesAdd software-properties-common
+    sudo add-apt-repository "${repositoriesToAdd}"
+}
+
 systemPackagesUpdateRepositories() {
 	echo "Updating package repositories"
 	sudo apt-get -qq update
@@ -104,6 +110,7 @@ phpEnsurePresent() {
         echo "PHP is already available"
         phpGetVersion
     fi
+    systemPackageAddRepositories ppa:ondrej/php
     packagesToInstall="${packagesToInstall} libapache2-mod-php${PHP_VERSION}"
     systemPackagesAdd "${packagesToInstall}"
 }
