@@ -102,16 +102,17 @@ phpGetVersion() {
 }
 
 phpEnsurePresent() {
-    packagesToInstall="libapache2-mod-php"
+    packagesToInstall=()
     if ! checkIsCommandAvailable php
     then
         echo "PHP is not yet available. Adding."
-        packagesToInstall="php ${packagesToInstall}"
+        packagesToInstall=("${packagesToInstall[@]}" "php")
     else
         echo "PHP is already available"
         phpGetVersion
     fi
-    systemPackagesAdd "${packagesToInstall}"
+    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
+    systemPackagesAdd "${packagesToInstall[@]}"
 }
 
 phpListModules() {
