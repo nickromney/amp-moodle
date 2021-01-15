@@ -13,11 +13,44 @@ checkIsCommandAvailable() {
     fi
 }
 
-checkPrivileges() {
-    if [ "$(id -u)" != 0 ]
+checkSudoWithoutPasswordEntry() {
+    if sudo -v &> /dev/null
     then
-        echo "script needs to be run as root user" >&2
+        echo "This user is able to sudo without requiring a password"
+    else
+        # propagate error to caller
+        return $?
     fi
+}
+
+serviceEnable() {
+    local service="$1"
+	sudo systemctl enable "${service}"
+}
+
+serviceReload() {
+    local service="$1"
+	sudo systemctl reload "${service}"
+}
+
+serviceRestart() {
+    local service="$1"
+	sudo systemctl restart "${service}"
+}
+
+serviceStart() {
+    local service="$1"
+	sudo systemctl start "${service}"
+}
+
+serviceStatus() {
+    local service="$1"
+	sudo systemctl status "${service}"
+}
+
+serviceStop() {
+    local service="$1"
+	sudo systemctl stop "${service}"
 }
 
 systemPackageAdd() {
@@ -37,25 +70,14 @@ apacheInstall() {
     then
         echo "Apache is not yet available. Starting installation."
 	    systemPackageAdd apache2
+        serviceEnable apache2
+        serviceStart apache2
     fi
-}
-
-apacheConfigureService() {
-	sudo systemctl enable apache2
-    sudo systemctl start apache2
-}
-
-apacheReload() {
-    sudo systemctl reload apache2
-}
-
-apacheRestart() {
-    sudo systemctl restart apache2
 }
 
 apacheStatus() {
     echo "Apache - get service status"
-    sudo systemctl status apache2
+    serviceStatus apache2
 	echo "Apache - get version"
 	apache2 -V
     echo "Apache - list loaded/enabled modules"
@@ -76,7 +98,7 @@ phpInstall() {
     if ! checkIsCommandAvailable php
     then
         echo "PHP is not yet available. Starting installation."
-	   systemPackageAdd php
+	    systemPackageAdd "php libapache2-mod-php"
     fi
 }
 
@@ -93,10 +115,9 @@ phpListModules() {
     fi
 }
 
-checkPrivileges
+checkSudoWithoutPasswordEntry
 systemPackageUpdateRepositories
 apacheInstall
-apacheConfigureService
 apacheStatus
 phpInstall
 phpGetVersion
