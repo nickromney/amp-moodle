@@ -135,8 +135,8 @@ ensureFPM() {
         echo "PHP is not yet available. Exiting."
 	    exit
     else
-        a2enmod proxy_fcgi setenvif
-        a2enconf php7.4-fpm
+        sudo a2enmod proxy_fcgi setenvif
+        sudo a2enconf php7.4-fpm
     fi
 }
 
