@@ -111,7 +111,7 @@ phpEnsurePresent() {
         echo "PHP is already available"
         phpGetVersion
     fi
-    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
+    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}" "${PHP_VERSION}-common")
     systemPackagesAdd "${packagesToInstall[@]}"
 }
 
