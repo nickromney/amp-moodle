@@ -102,7 +102,7 @@ phpGetVersion() {
 }
 
 phpEnsurePresent() {
-    packagesToInstall
+    packagesToInstall=""
     if ! checkIsCommandAvailable php
     then
         echo "PHP is not yet available. Adding."
@@ -111,8 +111,9 @@ phpEnsurePresent() {
         echo "PHP is already available"
         phpGetVersion
     fi
-    systemPackageAddRepositories ppa:ondrej/php
-    packagesToInstall="${packagesToInstall} libapache2-mod-php${PHP_VERSION}"
+    #systemPackageAddRepositories ppa:ondrej/php
+    #packagesToInstall="${packagesToInstall} libapache2-mod-php${PHP_VERSION}"
+    packagesToInstall="${packagesToInstall} libapache2-mod-php"
     systemPackagesAdd "${packagesToInstall}"
 }
 
