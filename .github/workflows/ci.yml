@@ -10,10 +10,12 @@ jobs:
     name: Run amp.sh
     runs-on: ubuntu-20.04
     steps:
-    - uses: actions/checkout@v2
-      name: Checkout Code
-
+    - name: Checkout Code
+      uses: actions/checkout@v2
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '7.4'
     - name: Run amp.sh
       run: |
-        FILE="/etc/passwd"
         [[ -f ./amp.sh ]] && ./amp.sh || echo "./amp.sh file not present"
