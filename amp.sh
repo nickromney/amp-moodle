@@ -131,8 +131,8 @@ phpListModules() {
 
 checkSudoWithoutPasswordEntry
 systemPackagesUpdateRepositories
-#apacheEnsurePresent
-#apacheStatus
+apacheEnsurePresent
+apacheStatus
 phpEnsurePresent
 phpGetVersion
 #phpListModules
