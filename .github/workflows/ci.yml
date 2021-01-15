@@ -15,4 +15,5 @@ jobs:
 
     - name: Run amp.sh
       run: |
-        ./amp.sh
+        FILE="/etc/passwd"
+        [[ -f ./amp.sh ]] && ./amp.sh || echo "./amp.sh file not present"
