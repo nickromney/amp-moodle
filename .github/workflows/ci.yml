@@ -9,13 +9,26 @@ jobs:
   ci:
     name: Run amp.sh
     runs-on: ubuntu-20.04
+
+    env:
+      DB_DATABASE: test_db
+      DB_USER: root
+      DB_PASSWORD: root
+
     steps:
+    - name: Set up MySQL
+      run: |
+        sudo /etc/init.d/mysql start
+        mysql -e 'CREATE DATABASE ${{ env.DB_DATABASE }};' -u${{ env.DB_USER }} -p${{ env.DB_PASSWORD }}
+
     - name: Checkout Code
       uses: actions/checkout@v2
+
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
       with:
         php-version: '7.4'
+
     - name: Run amp.sh
       run: |
         [[ -f ./amp.sh ]] && ./amp.sh || echo "./amp.sh file not present"
