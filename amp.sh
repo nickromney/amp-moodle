@@ -212,7 +212,7 @@ moodleConfigureDirectories() {
 moodleDownloadExtract() {
 	# Download and extract Moodle
 	sudo mkdir -p ${moodleDir}
-	sudo wget -qO - https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz | sudo tar zxv -C ${moodleDir} --strip-components 1
+	sudo wget -qO - https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz | sudo tar zx -C ${moodleDir} --strip-components 1
     sudo chown -R root:${apacheUser} ${moodleDir}
 	sudo chmod -R 0755 ${moodleDir}
 }
@@ -220,7 +220,7 @@ moodleDownloadExtract() {
 moodleWriteConfig() {
 FILE_CONFIG="${moodleDir}/config.php"
 
-cat << EOF > "${FILE_CONFIG}"
+sudo cat << EOF > "${FILE_CONFIG}"
 <?php  // Moodle configuration file
 
 unset(\$CFG);
