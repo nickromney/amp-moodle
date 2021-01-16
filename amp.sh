@@ -139,17 +139,22 @@ apacheStatus() {
 }
 
 apacheEnsureFPM() {
+    echo "Control variable useFPM is set to ${useFPM}"
     if ! checkIsCommandAvailable php-fpm
     then
-        echo "PHP-FPM is not yet available."
-        echo "This may be intentional"
-        echo "Control variable useFPM is set to ${useFPM}"
-	    exit
-    else
-        echo "Enabling Apache modules and config for FPM."
-        sudo a2enmod proxy_fcgi setenvif
-        sudo a2enconf php7.4-fpm
+        if [ ${useFPM} == 1 ]
+        then
+            echo "PHP-FPM is required but not available."
+            echo "Exiting."
+            exit
+        else
+            echo "PHP-FPM is not required"
+            exit
+        fi
     fi
+    echo "Enabling Apache modules and config for FPM."
+    sudo a2enmod proxy_fcgi setenvif
+    sudo a2enconf php7.4-fpm
 }
 
 phpGetVersion() {
@@ -170,7 +175,7 @@ phpEnsurePresent() {
     fi
     if [ ${useFPM} == 1 ]
     then
-        packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-fcgid${PHP_VERSION}")
+        packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-fcgid")
     else
         packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
     fi
