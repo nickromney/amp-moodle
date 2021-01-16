@@ -6,42 +6,42 @@
 useFPM=1
 
 # Users
-apacheUser="www-data"
-moodleUser="moodle"
+#apacheUser="www-data"
+#moodleUser="moodle"
 
 # Site name
-moodleSiteName="moodle.romn.co"
+#moodleSiteName="moodle.romn.co"
 
 # Directories
-apacheDocumentRoot="/var/www/html"
-moodleDir="${apacheDocumentRoot}/${moodleSiteName}"
-moodleDataDir="/home/${moodleUser}/moodledata"
+#apacheDocumentRoot="/var/www/html"
+#moodleDir="${apacheDocumentRoot}/${moodleSiteName}"
+#moodleDataDir="/home/${moodleUser}/moodledata"
 
 # moodleVersion="39"
-moodleVersion="310"
+#moodleVersion="310"
 
 # PHP Modules
 
-php_apache="php libapache2-mod-php"
+#php_apache="php libapache2-mod-php"
 # List from https://docs.moodle.org/310/en/PHP
-php_modules_moodle_required="php-{curl,ctype,dom,iconv,json,mbstring,pcre,simplexml,spl,xml,zip}"
-php_modules_moodle_recommended="php-{intl,gd,openssl,soap,tokenizer,xmlrpc}"
+#php_modules_moodle_required="php-{curl,ctype,dom,iconv,json,mbstring,pcre,simplexml,spl,xml,zip}"
+#php_modules_moodle_recommended="php-{intl,gd,openssl,soap,tokenizer,xmlrpc}"
 # php_modules_moodle_conditional="php-mysql php-odbc php-pgsql php-ldap php-ntlm"
-php_modules_moodle_conditional="php-mysql"
-php_modules_memcached="php-memcached"
-php_modules_opensharing="php-{apcu,bz2,geoip,gmp,msgpack,pear,xml}"
+#php_modules_moodle_conditional="php-mysql"
+#php_modules_memcached="php-memcached"
+#php_modules_opensharing="php-{apcu,bz2,geoip,gmp,msgpack,pear,xml}"
 
 # SSL option
 
-sslType="ubuntuSnakeoil"
+#sslType="ubuntuSnakeoil"
 #sslType="opensslSelfSigned"
 #sslType="letsEncrypt"
 #sslType="userProvidedAWSParameterStore"
 #sslType="userProvidedAWSS3"
 
 # AWS settings
-parameterStorePrefix="/prod/moodle/"
-s3BackupBucketName=""
+#parameterStorePrefix="/prod/moodle/"
+#s3BackupBucketName=""
 
 # Helper functions
 
@@ -182,6 +182,10 @@ phpEnsurePresent() {
     systemPackageAddRepositories ppa:ondrej/php
     packagesToInstall=("${packagesToInstall[@]}" "${PHP_VERSION}-common")
     systemPackagesAdd "${packagesToInstall[@]}"
+    if [ ${useFPM} == 1 ]
+    then
+        serviceStart "php${PHP_VERSION}-fpm"
+    fi
 }
 
 phpStatus() {
