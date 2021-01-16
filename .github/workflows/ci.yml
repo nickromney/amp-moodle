@@ -40,7 +40,7 @@ jobs:
     #php_modules_opensharing="php-{,geoip,,,pear,"
 
     - name: Setup PHP
-      uses: shivammathur/setup-php@v2
+      uses: shivammathur/setup-php@verbose
       with:
         php-version: '7.4'
         extensions: php-fpm
