@@ -220,7 +220,7 @@ moodleDownloadExtract() {
 moodleWriteConfig() {
 FILE_CONFIG="${moodleDir}/config.php"
 
-sudo cat << EOF > "${FILE_CONFIG}"
+sudo tee "$FILE_CONFIG" > /dev/null << EOF
 <?php  // Moodle configuration file
 
 unset(\$CFG);
