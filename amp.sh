@@ -139,6 +139,7 @@ apacheStatus() {
 }
 
 apacheEnsureFPM() {
+    phpGetVersion
     echo "Control variable useFPM is set to ${useFPM}"
     if [ ${useFPM} == 1 ]
     then
@@ -166,7 +167,6 @@ phpEnsurePresent() {
         packagesToInstall=("${packagesToInstall[@]}" "php")
     else
         echo "PHP is already available"
-        phpGetVersion
     fi
     if [ ${useFPM} == 1 ]
     then
@@ -206,3 +206,8 @@ apacheStatus
 #phpEnsurePresent
 apacheEnsureFPM
 #phpStatus
+# Write sample website with PHPInfo
+# Automated download
+# Download Moodle
+# Write config
+# Install Database
