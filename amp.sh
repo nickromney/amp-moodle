@@ -139,11 +139,14 @@ apacheStatus() {
 }
 
 apacheEnsureFPM() {
-    if ! checkIsCommandAvailable php
+    if ! checkIsCommandAvailable php-fpm
     then
-        echo "PHP is not yet available. Exiting."
+        echo "PHP-FPM is not yet available."
+        echo "This may be intentional"
+        echo "Control variable useFPM is set to ${useFPM}"
 	    exit
     else
+        echo "Enabling Apache modules and config for FPM."
         sudo a2enmod proxy_fcgi setenvif
         sudo a2enconf php7.4-fpm
     fi
@@ -194,8 +197,5 @@ systemPackagesUpdateRepositories
 apacheEnsurePresent
 apacheStatus
 phpEnsurePresent
-if [ ${useFPM} == 1 ]
-then
-    apacheEnsureFPM
-fi
+apacheEnsureFPM
 #phpStatus
