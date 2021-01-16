@@ -6,19 +6,19 @@
 useFPM=1
 
 # Users
-#apacheUser="www-data"
-#moodleUser="moodle"
+apacheUser="www-data"
+moodleUser="moodle"
 
 # Site name
-#moodleSiteName="moodle.romn.co"
+moodleSiteName="moodle.romn.co"
 
 # Directories
-#apacheDocumentRoot="/var/www/html"
-#moodleDir="${apacheDocumentRoot}/${moodleSiteName}"
-#moodleDataDir="/home/${moodleUser}/moodledata"
+apacheDocumentRoot="/var/www/html"
+moodleDir="${apacheDocumentRoot}/${moodleSiteName}"
+moodleDataDir="/home/${moodleUser}/moodledata"
 
 # moodleVersion="39"
-#moodleVersion="310"
+moodleVersion="310"
 
 # PHP Modules
 
@@ -198,10 +198,29 @@ phpStatus() {
     fi
 }
 
+moodleConfigureDirectories() {
+	# Add moodle user for moodledata / Change ownerships and permissions
+	sudo adduser --system ${moodleUser}
+	sudo mkdir -p ${moodleDataDir}
+	sudo chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
+	sudo chmod 0777 ${moodleDataDir}
+	sudo mkdir -p ${moodleDir}
+	sudo chown -R root:${apacheUser} ${moodleDir}
+	sudo chmod -R 0755 ${moodleDir}
+}
+
+moodleDownloadExtract() {
+	# Download and extract Moodle
+	sudo mkdir -p ${moodleDir}
+	wget -qO - https://download.moodle.org/download.php/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz | tar zxv -C ${moodleDir} --strip-components 1
+	sudo chown -R root:${apacheUser} ${moodleDir}
+	sudo chmod -R 0755 ${moodleDir}
+}
+
 checkSudoWithoutPasswordEntry
 systemPackagesUpdateRepositories
 apacheEnsurePresent
-apacheStatus
+#apacheStatus
 # With PHP enabled by GitHub Actions
 #phpEnsurePresent
 apacheEnsureFPM
@@ -211,3 +230,5 @@ apacheEnsureFPM
 # Download Moodle
 # Write config
 # Install Database
+moodleConfigureDirectories
+moodleDownloadExtract
