@@ -285,3 +285,16 @@ apacheEnsureFPM
 moodleConfigureDirectories
 moodleDownloadExtract
 moodleWriteConfig
+
+
+
+
+# LINKS
+# https://www.howtogeek.com/howto/30184/10-ways-to-generate-a-random-password-from-the-command-line/
+# https://serversforhackers.com/c/installing-mysql-with-debconf
+# https://gist.github.com/Mins/4602864
+# https://gercogandia.blogspot.com/2012/11/automatic-unattended-install-of.html
+# https://github.com/moodlehq/moodle-php-apache/blob/master/root/tmp/setup/php-extensions.sh
+# https://stackoverflow.com/questions/1298066/check-if-an-apt-get-package-is-installed-and-then-install-it-if-its-not-on-linu
+# https://ovirium.com/blog/how-to-make-mysql-work-in-your-github-actions/
+# https://github.com/RoverWire/virtualhost

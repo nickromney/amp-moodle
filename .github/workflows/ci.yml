@@ -38,4 +38,8 @@ jobs:
 
     - name: Run amp.sh
       run: |
-        [[ -f ./amp.sh ]] && ./amp.sh || echo "./amp.sh file not present"
+        [[ -f ./amp.sh ]] && sudo ./amp.sh || echo "./amp.sh file not present"
+
+    - name: Set test site
+      run: |
+        [[ -f ./virtualhost.sh ]] && sudo ./virtualhost.sh create myblog.dev wordpress || echo "./virtualhost.sh file not present"
