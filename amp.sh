@@ -140,21 +140,16 @@ apacheStatus() {
 
 apacheEnsureFPM() {
     echo "Control variable useFPM is set to ${useFPM}"
-    if ! checkIsCommandAvailable php-fpm
+    if [ ${useFPM} == 1 ]
     then
-        if [ ${useFPM} == 1 ]
-        then
-            echo "PHP-FPM is required but not available."
-            echo "Exiting."
-            exit
-        else
-            echo "PHP-FPM is not required"
-            exit
-        fi
+        echo "Enabling Apache modules and config for FPM."
+        sudo a2enmod proxy_fcgi setenvif
+        sudo a2enconf "php${PHP_VERSION}-fpm"
+        systemPackagesAdd "libapache2-mod-fcgid"
+    else
+        echo "FPM is not required."
+        systemPackagesAdd "libapache2-mod-php${PHP_VERSION}"
     fi
-    echo "Enabling Apache modules and config for FPM."
-    sudo a2enmod proxy_fcgi setenvif
-    sudo a2enconf php7.4-fpm
 }
 
 phpGetVersion() {
@@ -184,7 +179,9 @@ phpEnsurePresent() {
     systemPackagesAdd "${packagesToInstall[@]}"
     if [ ${useFPM} == 1 ]
     then
-        serviceStart "php${PHP_VERSION}-fpm"
+        localServiceName="php${PHP_VERSION}-fpm"
+        echo "Starting ${localServiceName}"
+        serviceStart "${localServiceName}"
     fi
 }
 
@@ -205,6 +202,7 @@ checkSudoWithoutPasswordEntry
 systemPackagesUpdateRepositories
 apacheEnsurePresent
 apacheStatus
-phpEnsurePresent
+# With PHP enabled by GitHub Actions
+#phpEnsurePresent
 apacheEnsureFPM
 #phpStatus

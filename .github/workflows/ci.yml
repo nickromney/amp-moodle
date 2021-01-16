@@ -24,10 +24,26 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v2
 
+    #php_modules_moodle_required="php-{curl,ctype,dom,iconv,json,mbstring,pcre,simplexml,spl,xml,zip}"
+    #php_modules_moodle_recommended="php-{intl,gd,openssl,soap,tokenizer,xmlrpc}"
+    #php_modules_moodle_conditional="php-mysql php-odbc php-pgsql php-ldap php-ntlm"
+    #php_modules_moodle_conditional="php-mysql"
+    #php_modules_memcached="php-memcached"
+    #php_modules_opensharing="php-{apcu,bz2,geoip,gmp,msgpack,pear,xml}"
+    # https://github.com/shivammathur/setup-php/wiki/Php-extensions-loaded-on-ubuntu-20.04#php-74
+    # List of default PHP Modules
+    #php_modules_moodle_required="php-{,}"
+    #php_modules_moodle_recommended="php-{,,,,,}"
+    #php_modules_moodle_conditional="php- php- php- php- php-ntlm"
+    #php_modules_moodle_conditional="php-mysql"
+    #php_modules_memcached="php-"
+    #php_modules_opensharing="php-{,geoip,,,pear,"
+
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
       with:
         php-version: '7.4'
+        extensions: php-fpm
 
     - name: Run amp.sh
       run: |
