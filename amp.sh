@@ -2,6 +2,9 @@
 
 # Control variables
 
+# PHP-FPM
+useFPM=1
+
 # Users
 apacheUser="www-data"
 moodleUser="moodle"
@@ -39,9 +42,6 @@ sslType="ubuntuSnakeoil"
 # AWS settings
 parameterStorePrefix="/prod/moodle/"
 s3BackupBucketName=""
-
-# PHP-FPM
-useFPM=0
 
 # Helper functions
 
