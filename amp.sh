@@ -211,14 +211,17 @@ moodleConfigureDirectories() {
 
 moodleDownloadExtract() {
 	# Download and extract Moodle
+    local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
+    echo "Downloading and extracting ${moodleArchive}"
 	sudo mkdir -p ${moodleDir}
-	sudo wget -qO - https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz | sudo tar zx -C ${moodleDir} --strip-components 1
+	sudo wget -qO - "${moodleArchive}" | sudo tar zx -C ${moodleDir} --strip-components 1
     sudo chown -R root:${apacheUser} ${moodleDir}
 	sudo chmod -R 0755 ${moodleDir}
 }
 
 moodleWriteConfig() {
-FILE_CONFIG="${moodleDir}/config.php"
+    FILE_CONFIG="${moodleDir}/config.php"
+    echo "Writing file ${moodleDir}/config.php"
 
 sudo tee "$FILE_CONFIG" > /dev/null << EOF
 <?php  // Moodle configuration file
