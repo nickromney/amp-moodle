@@ -250,7 +250,7 @@ EOF
 
 #if memcached_enabled=1
 #Append
-cat << EOF >> "${FILE_CONFIG}"
+sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_handler_class = '\core\session\memcached';
 \$CFG->session_memcached_save_path = '${memcachedServer}:11211';
 \$CFG->session_memcached_prefix = 'memc.sess.key.';
@@ -258,7 +258,7 @@ cat << EOF >> "${FILE_CONFIG}"
 \$CFG->session_memcached_lock_expire = 7200;
 EOF
 
-cat << EOF >> "${FILE_CONFIG}"
+sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
 require_once(__DIR__ . '/lib/setup.php');
 
 // There is no php closing tag in this file,
