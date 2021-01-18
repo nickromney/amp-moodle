@@ -1,9 +1,36 @@
 #!/bin/bash
+#set -Eeuxo pipefail    # From https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 
 # Control variables
 
-# PHP-FPM
-useFPM=1
+## Namespace
+
+# Leave empty if you want to parse options
+namespace=""
+#namespace=database
+#namespace=moodle
+#namespace=php
+#namespace=tool
+#namespace=webserver
+
+### Database
+
+databaseEngine=mysql
+databaseInstallLocalServer=false
+#databaseCreateLocalDatabase=false
+#databaseCreateLocalUser=false
+
+### Moodle
+
+### PHP
+phpUseFPM=1
+
+### Virtualhost
+
+### Webserver
+
+webserverEngine=apache
+webserverUseFPM=1
 
 # Users
 apacheUser="www-data"
@@ -43,9 +70,100 @@ moodleVersion="310"
 #parameterStorePrefix="/prod/moodle/"
 #s3BackupBucketName=""
 
+# Control logic
+
+function printUsage () {
+  echo "Usage: $(basename ${0}) [database|moodle|php|virtualhost|webserver][-s schemaname] [-d databasename] [-u username] -f -t -h"
+}
+
+# Mildly adapted from https://sookocheff.com/post/bash/parsing-bash-script-arguments-with-shopts/
+
+if [ -z "${namespace}" ]
+then
+    echo "Namespace is not set. Parsing options"
+    namespace=$1; shift  # Remove namespace from the argument list
+    echo "Namespace is ${namespace}"
+    case "${namespace}" in
+        database)
+            while getopts ":e:s" opt; do
+                case ${opt} in
+                    e)
+                    databaseEngine=$OPTARG
+                    echo "database Engine $databaseEngine"
+                    ;;
+                    s )
+                    databaseInstallLocalServer=1
+                    echo "Install local database server $databaseInstallLocalServer"
+                    ;;
+                    \? )
+                    echo "Invalid Option: -$OPTARG" 1>&2
+                    exit 1
+                    ;;
+                    : )
+                    echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+                    exit 1
+                    ;;
+                esac
+            done
+            shift $((OPTIND -1))
+            ;;
+        php)
+            while getopts ":f" opt; do
+                case ${opt} in
+                    f)
+                    phpUseFPM=1
+                    echo "PHP fpm $phpUseFPM"
+                    ;;
+                    \? )
+                    echo "Invalid Option: -$OPTARG" 1>&2
+                    exit 1
+                    ;;
+                    : )
+                    echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+                    exit 1
+                    ;;
+                esac
+            done
+            shift $((OPTIND -1))
+            ;;
+        webserver)
+            while getopts ":e:sv" opt; do
+                case ${opt} in
+                    e)
+                    webserverEngine=$OPTARG
+                    echo "webserver Engine $webserverEngine"
+                    ;;
+                    s )
+                    webserverInstallLocalServer=1
+                    echo "Install local webserver $webserverInstallLocalServer"
+                    ;;
+                    v )
+                    createVirtualhost=1
+                    echo "create virtualhost $createVirtualhost"
+                    ;;
+                    \? )
+                    echo "Invalid Option: -$OPTARG" 1>&2
+                    exit 1
+                    ;;
+                    : )
+                    echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+                    exit 1
+                    ;;
+                esac
+            done
+            shift $((OPTIND -1))
+            ;;
+        *)
+            echo "namespace is not permitted"
+            exit 1
+            ;;
+    esac
+fi
+
+
 # Helper functions
 
-checkIsCommandAvailable() {
+function checkIsCommandAvailable () {
     local commandToCheck="$1"
     if command -v "${commandToCheck}" &> /dev/null
     then
@@ -56,7 +174,7 @@ checkIsCommandAvailable() {
     fi
 }
 
-checkSudoWithoutPasswordEntry() {
+function checkSudoWithoutPasswordEntry () {
     if sudo -v &> /dev/null
     then
         echo "This user is able to sudo without requiring a password"
@@ -66,66 +184,66 @@ checkSudoWithoutPasswordEntry() {
     fi
 }
 
-serviceEnable() {
+function serviceEnable () {
     local service="$1"
-	sudo systemctl enable "${service}"
+	systemctl enable "${service}"
 }
 
-serviceReload() {
+function serviceReload () {
     local service="$1"
-	sudo systemctl reload "${service}"
+	systemctl reload "${service}"
 }
 
-serviceRestart() {
+function serviceRestart () {
     local service="$1"
-	sudo systemctl restart "${service}"
+	systemctl restart "${service}"
 }
 
-serviceStart() {
+function serviceStart () {
     local service="$1"
-	sudo systemctl start "${service}"
+	systemctl start "${service}"
 }
 
-serviceStatus() {
+function serviceStatus () {
     local service="$1"
-	sudo systemctl status "${service}"
+	systemctl status "${service}"
 }
 
-serviceStop() {
+function serviceStop () {
     local service="$1"
-	sudo systemctl stop "${service}"
+	systemctl stop "${service}"
 }
 
-systemPackagesAdd() {
+function systemPackagesAdd () {
     local packagesToCheck="$1"
-    systemPackagesUpdateRepositories
+    systemPackageRepositoriesUpdate
     echo "Checking presence of packages ${packagesToCheck}"
     echo "use apt list --installed"
-    sudo apt -qq list "${packagesToCheck}" --installed
+    apt -qq list "${packagesToCheck}" --installed
     # Install if not present, but don't upgrade if present
-    sudo apt-get -qy install --no-upgrade "${packagesToCheck}"
+    apt-get -qy install --no-upgrade "${packagesToCheck}"
 }
 
-systemPackageAddRepositories() {
+function systemPackageRepositoriesAdd () {
     local repositoriesToAdd="$1"
     systemPackagesAdd software-properties-common
-    sudo add-apt-repository "${repositoriesToAdd}"
+    add-apt-repository "${repositoriesToAdd}"
 }
 
-systemPackagesUpdateRepositories() {
+function systemPackageRepositoriesUpdate () {
 	echo "Updating package repositories"
-	sudo apt-get -qq update
+	apt-get -qq update
 }
 
 # Main functions
 
-apacheEnsurePresent() {
+function apacheEnsurePresent () {
     systemPackagesAdd apache2
     serviceEnable apache2
     serviceStart apache2
 }
 
-apacheStatus() {
+function apacheStatus () {
     echo "Apache - get service status"
     serviceStatus apache2
 	echo "Apache - get version"
@@ -138,14 +256,14 @@ apacheStatus() {
     apache2ctl -t
 }
 
-apacheEnsureFPM() {
+function apacheEnsureFPM () {
     phpGetVersion
-    echo "Control variable useFPM is set to ${useFPM}"
-    if [ ${useFPM} == 1 ]
+    echo "Control variable apacheUseFPM is set to ${apacheUseFPM}"
+    if [ "${apacheUseFPM}" == 1 ]
     then
         echo "Enabling Apache modules and config for FPM."
-        sudo a2enmod proxy_fcgi setenvif
-        sudo a2enconf "php${PHP_VERSION}-fpm"
+        a2enmod proxy_fcgi setenvif
+        a2enconf "php${PHP_VERSION}-fpm"
         systemPackagesAdd "libapache2-mod-fcgid"
     else
         echo "FPM is not required."
@@ -153,13 +271,13 @@ apacheEnsureFPM() {
     fi
 }
 
-phpGetVersion() {
+function phpGetVersion () {
 	# Extract installed PHP version
 	PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
     echo "PHP version is ${PHP_VERSION}"
 }
 
-phpEnsurePresent() {
+function phpEnsurePresent () {
     packagesToInstall=()
     if ! checkIsCommandAvailable php
     then
@@ -168,16 +286,16 @@ phpEnsurePresent() {
     else
         echo "PHP is already available"
     fi
-    if [ ${useFPM} == 1 ]
+    if [ "${phpUseFPM}" == 1 ]
     then
         packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-fcgid")
     else
         packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
     fi
-    systemPackageAddRepositories ppa:ondrej/php
+    systemPackageRepositoriesAdd ppa:ondrej/php
     packagesToInstall=("${packagesToInstall[@]}" "${PHP_VERSION}-common")
     systemPackagesAdd "${packagesToInstall[@]}"
-    if [ ${useFPM} == 1 ]
+    if [ "${phpUseFPM}" == 1 ]
     then
         localServiceName="php${PHP_VERSION}-fpm"
         echo "Starting ${localServiceName}"
@@ -185,7 +303,7 @@ phpEnsurePresent() {
     fi
 }
 
-phpStatus() {
+function phpStatus () {
     if ! checkIsCommandAvailable php
     then
         echo "PHP is not yet available. Exiting."
@@ -198,32 +316,32 @@ phpStatus() {
     fi
 }
 
-moodleConfigureDirectories() {
+function moodleConfigureDirectories () {
 	# Add moodle user for moodledata / Change ownerships and permissions
-	sudo adduser --system ${moodleUser}
-	sudo mkdir -p ${moodleDataDir}
-	sudo chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
-	sudo chmod 0777 ${moodleDataDir}
-	sudo mkdir -p ${moodleDir}
-	sudo chown -R root:${apacheUser} ${moodleDir}
-	sudo chmod -R 0755 ${moodleDir}
+	adduser --system ${moodleUser}
+	mkdir -p ${moodleDataDir}
+	chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
+	chmod 0777 ${moodleDataDir}
+	mkdir -p ${moodleDir}
+	chown -R root:${apacheUser} ${moodleDir}
+	chmod -R 0755 ${moodleDir}
 }
 
-moodleDownloadExtract() {
+function moodleDownloadExtract () {
 	# Download and extract Moodle
     local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
     echo "Downloading and extracting ${moodleArchive}"
-	sudo mkdir -p ${moodleDir}
-	sudo wget -qO - "${moodleArchive}" | sudo tar zx -C ${moodleDir} --strip-components 1
-    sudo chown -R root:${apacheUser} ${moodleDir}
-	sudo chmod -R 0755 ${moodleDir}
+	mkdir -p ${moodleDir}
+	wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
+    chown -R root:${apacheUser} ${moodleDir}
+	chmod -R 0755 ${moodleDir}
 }
 
-moodleWriteConfig() {
+function moodleWriteConfig () {
     FILE_CONFIG="${moodleDir}/config.php"
     echo "Writing file ${moodleDir}/config.php"
 
-sudo tee "$FILE_CONFIG" > /dev/null << EOF
+tee "$FILE_CONFIG" > /dev/null << EOF
 <?php  // Moodle configuration file
 
 unset(\$CFG);
@@ -253,7 +371,7 @@ EOF
 
 #if memcached_enabled=1
 #Append
-sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
+tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_handler_class = '\core\session\memcached';
 \$CFG->session_memcached_save_path = '${memcachedServer}:11211';
 \$CFG->session_memcached_prefix = 'memc.sess.key.';
@@ -261,7 +379,7 @@ sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_memcached_lock_expire = 7200;
 EOF
 
-sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
+tee -a "$FILE_CONFIG" > /dev/null << EOF
 require_once(__DIR__ . '/lib/setup.php');
 
 // There is no php closing tag in this file,
@@ -269,22 +387,22 @@ require_once(__DIR__ . '/lib/setup.php');
 EOF
 }
 
-checkSudoWithoutPasswordEntry
-systemPackagesUpdateRepositories
-apacheEnsurePresent
-#apacheStatus
-# With PHP enabled by GitHub Actions
-#phpEnsurePresent
-apacheEnsureFPM
-#phpStatus
-# Write sample website with PHPInfo
-# Automated download
-# Download Moodle
-# Write config
-# Install Database
-moodleConfigureDirectories
-moodleDownloadExtract
-moodleWriteConfig
+# checkSudoWithoutPasswordEntry
+# systemPackageRepositoriesUpdate
+# apacheEnsurePresent
+# #apacheStatus
+# # With PHP enabled by GitHub Actions
+# #phpEnsurePresent
+# apacheEnsureFPM
+# #phpStatus
+# # Write sample website with PHPInfo
+# # Automated download
+# # Download Moodle
+# # Write config
+# # Install Database
+# moodleConfigureDirectories
+# moodleDownloadExtract
+# moodleWriteConfig
 
 
 
