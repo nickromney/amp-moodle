@@ -82,8 +82,8 @@ apache_ensure_present() {
 apache_get_status() {
   echo "Apache - get service status"
   service_get_status apache2
-	echo "Apache - get version"
-	apache2 -V
+  echo "Apache - get version"
+  apache2 -V
   echo "Apache - list loaded/enabled modules"
   apache2ctl -M
   echo "Apache - list enabled sites"
@@ -96,32 +96,32 @@ apache_ensure_fpm() {
   php_get_version
   echo "Control variable apacheUseFPM is set to ${apacheUseFPM}"
   if [[ "${apacheUseFPM}" == 1 ]]; then
-  echo "Enabling Apache modules and config for FPM."
-  a2enmod proxy_fcgi setenvif
-  a2enconf "php${PHP_VERSION}-fpm"
-  system_packages_add "libapache2-mod-fcgid"
+    echo "Enabling Apache modules and config for FPM."
+    a2enmod proxy_fcgi setenvif
+    a2enconf "php${PHP_VERSION}-fpm"
+    system_packages_add "libapache2-mod-fcgid"
   else
-  echo "FPM is not required."
-  system_packages_add "libapache2-mod-php${PHP_VERSION}"
+    echo "FPM is not required."
+    system_packages_add "libapache2-mod-php${PHP_VERSION}"
   fi
 }
 
 check_is_command_available() {
   local commandToCheck="$1"
   if command -v "${commandToCheck}" &> /dev/null; then
-  echo "${commandToCheck} command available"
+    echo "${commandToCheck} command available"
   else
-  # propagate error to caller
-  return $?
+    # propagate error to caller
+    return $?
   fi
 }
 
 check_can_sudo_without_password_entry() {
   if sudo -v &> /dev/null; then
-  echo "This user is able to sudo without requiring a password"
+    echo "This user is able to sudo without requiring a password"
   else
-  # propagate error to caller
-  return $?
+    # propagate error to caller
+    return $?
   fi
 }
 
@@ -130,24 +130,24 @@ err() {
 }
 
 moodle_configure_directories() {
-	# Add moodle user for moodledata / Change ownerships and permissions
-	adduser --system ${moodleUser}
-	mkdir -p ${moodleDataDir}
-	chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
-	chmod 0777 ${moodleDataDir}
-	mkdir -p ${moodleDir}
-	chown -R root:${apacheUser} ${moodleDir}
-	chmod -R 0755 ${moodleDir}
+  # Add moodle user for moodledata / Change ownerships and permissions
+  adduser --system ${moodleUser}
+  mkdir -p ${moodleDataDir}
+  chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
+  chmod 0777 ${moodleDataDir}
+  mkdir -p ${moodleDir}
+  chown -R root:${apacheUser} ${moodleDir}
+  chmod -R 0755 ${moodleDir}
 }
 
 moodle_download_extract() {
-	# Download and extract Moodle
+  # Download and extract Moodle
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
   echo "Downloading and extracting ${moodleArchive}"
-	mkdir -p ${moodleDir}
-	wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
+  mkdir -p ${moodleDir}
+  wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
   chown -R root:${apacheUser} ${moodleDir}
-	chmod -R 0755 ${moodleDir}
+  chmod -R 0755 ${moodleDir}
 }
 
 moodle_write_config() {
@@ -201,43 +201,43 @@ EOF
 }
 
 php_get_version() {
-	# Extract installed PHP version
-	PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
+  # Extract installed PHP version
+  PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
   echo "PHP version is ${PHP_VERSION}"
 }
 
 php_ensure_present() {
-  packagesToInstall=()
+  declare -a packagesToInstall
   if ! check_is_command_available php; then
-  echo "PHP is not yet available. Adding."
-  packagesToInstall=("${packagesToInstall[@]}" "php")
+    echo "PHP is not yet available. Adding."
+    packagesToInstall=("${packagesToInstall[@]}" "php")
   else
-  echo "PHP is already available"
+    echo "PHP is already available"
   fi
   if [[ "${phpUseFPM}" == 1 ]]; then
-  packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-fcgid")
+    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-fcgid")
   else
-  packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
+    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
   fi
   system_packages_repositories_add ppa:ondrej/php
   packagesToInstall=("${packagesToInstall[@]}" "${PHP_VERSION}-common")
   system_packages_add "${packagesToInstall[@]}"
   if [[ "${phpUseFPM}" == 1 ]]; then
-  localServiceName="php${PHP_VERSION}-fpm"
+    localServiceName="php${PHP_VERSION}-fpm"
   echo "Starting ${localServiceName}"
-  service_start "${localServiceName}"
+    service_start "${localServiceName}"
   fi
 }
 
 php_get_status() {
   if ! check_is_command_available php; then
-  echo "PHP is not yet available. Exiting."
-	  exit
+    err "PHP is not yet available. Exiting."
+    exit
   else
-  echo "List all compiled PHP modules"
-  php -m
+    echo "List all compiled PHP modules"
+    php -m
   echo "List all PHP modules installed by package manager"
-  dpkg --get-selections | grep -i php
+    dpkg --get-selections | grep -i php
   fi
 }
 
@@ -247,32 +247,32 @@ print_usage() {
 
 service_enable() {
   local service="$1"
-	systemctl enable "${service}"
+  systemctl enable "${service}"
 }
 
 service_reload() {
   local service="$1"
-	systemctl reload "${service}"
+  systemctl reload "${service}"
 }
 
 service_restart() {
   local service="$1"
-	systemctl restart "${service}"
+  systemctl restart "${service}"
 }
 
 service_start() {
   local service="$1"
-	systemctl start "${service}"
+  systemctl start "${service}"
 }
 
 service_get_status() {
   local service="$1"
-	systemctl status "${service}"
+  systemctl status "${service}"
 }
 
 service_stop() {
   local service="$1"
-	systemctl stop "${service}"
+  systemctl stop "${service}"
 }
 
 system_packages_add() {
@@ -292,8 +292,8 @@ system_packages_repositories_add() {
 }
 
 system_packages_repositories_update() {
-	echo "Updating package repositories"
-	apt-get -qq update
+  echo "Updating package repositories"
+  apt-get -qq update
 }
 
 # Control logic
@@ -307,8 +307,8 @@ main() {
   echo "Namespace is ${namespace}"
   case "${namespace}" in
     database)
-    while getopts ":e:s" opt; do
-      case ${opt} in
+    while getopts ":e:s" flag; do
+      case "${flag}" in
         e)
           databaseEngine=$OPTARG
           echo "database Engine $databaseEngine"
@@ -330,8 +330,8 @@ main() {
     shift $((OPTIND -1))
     ;;
     php)
-    while getopts ":f" opt; do
-      case ${opt} in
+    while getopts ":f" flag; do
+      case "${flag}" in
         f)
           phpUseFPM=1
           echo "PHP fpm $phpUseFPM"
@@ -349,8 +349,8 @@ main() {
     shift $((OPTIND -1))
     ;;
     webserver)
-      while getopts ":e:sv" opt; do
-        case ${opt} in
+      while getopts ":e:sv" flag; do
+        case "${flag}" in
           e)
             webserverEngine=$OPTARG
             echo "webserver Engine $webserverEngine"
