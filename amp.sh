@@ -411,12 +411,14 @@ main "$@"
 # https://stackoverflow.com/questions/1298066/check-if-an-apt-get-package-is-installed-and-then-install-it-if-its-not-on-linu
 # https://ovirium.com/blog/how-to-make-mysql-work-in-your-github-actions/
 # https://github.com/RoverWire/virtualhost
+# https://google.github.io/styleguide/shellguide.html
+# https://stackoverflow.com/questions/7069682/how-to-get-arguments-with-flags-in-bash
 
 # Usage
 
 # No parameters - reports help
 # Suggested:
-# amp.sh -b awscli curl git wget -d mariadb -f -r moodle php webserver -s openssl -w apache -m 3.9 createcourse createusers localmemcached install moosh
+# amp.sh -b awscli curl git wget -d mariadb -f -r moodle php webserver -s openssl -w apache -m 3.9 createcourse createusers localmemcached moosh populatedatabase
 
 # -b = install binaries
 # -b awscli curl git wget
@@ -425,7 +427,7 @@ main "$@"
 # -h = help
 # -l = local database (name, user, password, collation)
 # -m = moodle options
-# -m version createcourse createdatabase createusers localmemcached install moosh
+# -m version createcourse createdatabase createusers localmemcached moosh populatedatabase
 # -n = dry run
 # -p = use package repository
 # -p ppa:ondrej
@@ -440,4 +442,5 @@ main "$@"
 # Moodle will:
 # create local database (calls database function itself)
 # install memcached locally
+# populate database
 # install Moosh locally
