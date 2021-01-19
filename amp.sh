@@ -411,3 +411,33 @@ main "$@"
 # https://stackoverflow.com/questions/1298066/check-if-an-apt-get-package-is-installed-and-then-install-it-if-its-not-on-linu
 # https://ovirium.com/blog/how-to-make-mysql-work-in-your-github-actions/
 # https://github.com/RoverWire/virtualhost
+
+# Usage
+
+# No parameters - reports help
+# Suggested:
+# amp.sh -b awscli curl git wget -d mariadb -f -r moodle php webserver -s openssl -w apache -m 3.9 createcourse createusers localmemcached install moosh
+
+# -b = install binaries
+# -b awscli curl git wget
+# -d = database engine (MySQL, MariaDB, PosgreSQL)
+# -f = use FPM (affects webserver, PHP)
+# -h = help
+# -l = local database (name, user, password, collation)
+# -m = moodle options
+# -m version createcourse createdatabase createusers localmemcached install moosh
+# -n = dry run
+# -p = use package repository
+# -p ppa:ondrej
+# -r = roles
+# -r database moodle php webserver
+# -s = use SSL
+# -s SSL type (letsencrypt, openssl)
+# -v = virtualhost
+# -v domain rootDirectory (honours "s" for SSL)
+# -w webserver type (apache, nginx, both)
+
+# Moodle will:
+# create local database (calls database function itself)
+# install memcached locally
+# install Moosh locally
