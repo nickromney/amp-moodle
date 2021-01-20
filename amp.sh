@@ -6,6 +6,8 @@ export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 #####################################################
+# useGetopts determines whether to get flags (opts) from the command line
+useGetopts=1
 ensureBinaries=0
 databaseEngine=mariadb
 useFPM=0
@@ -268,14 +270,13 @@ service_stop() {
 
 system_packages_ensure() {
   #uses global array "${packagesToEnsure[@]}"
-  system_packages_repositories_update
   #echo "Checking presence of packages ${packagesToEnsure}"
   targetvalue=( "${packagesToEnsure[@]}" )
   declare -p targetvalue
   #echo "use apt list --installed"
-  #apt -qq list "${packagesToEnsure[@]}" --installed
+  apt -qq list "${packagesToEnsure[@]}" --installed
   # Install if not present, but don't upgrade if present
-  #apt-get -qy install --no-upgrade "${packagesToEnsure[@]}"
+  sudo apt-get -qy install --no-upgrade "${packagesToEnsure[@]}"
 }
 
 system_repositories_ensure() {
@@ -307,11 +308,8 @@ Options:
 -w                      Ensure Webserver is present (apache)
 " 2>&1
 }
-# Control logic
 
-# Mildly adapted from https://sookocheff.com/post/bash/parsing-bash-script-arguments-with-shopts/
-
-main() {
+use_getopts() {
 
   if [[ ${#} -eq 0 ]]; then
     showHelp=1
@@ -374,6 +372,13 @@ main() {
         ;;
     esac
   done
+}
+
+main() {
+
+  if [[ "${useGetopts}" -eq 1 ]]; then
+    use_getopts "$@"
+  fi
 
   if [[ "${showHelp}" -eq 1 ]]; then
     usage
@@ -385,7 +390,7 @@ main() {
     check_user_can_sudo_without_password_entry
     if [[ "${userCanSudoWithoutPassword}" -eq 0 ]]; then
       echo "User requires a password to issue sudo commands. Exiting"
-      echo "Please re-run the script as root or sudo"
+      echo "Please re-run the script as root, or having sudo'd with a password"
       usage
       exit 1
     else
