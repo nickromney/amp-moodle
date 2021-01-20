@@ -1,36 +1,18 @@
 #!/bin/bash
 #set -Eeuxo pipefail  # From https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
-
-# Constants
-
-## Namespace
-
-# Leave empty if you want to parse options
-namespace=""
-#namespace=database
-#namespace=moodle
-#namespace=php
-#namespace=tool
-#namespace=webserver
-
-### Database
-
-databaseEngine=mysql
-databaseInstallLocalServer=false
-#databaseCreateLocalDatabase=false
-#databaseCreateLocalUser=false
-
-### Moodle
-
-### PHP
-phpUseFPM=1
-
-### Virtualhost
-
-### Webserver
-
+ensureBinaries=0
+databaseEngine=mariadb
+useFPM=0
+showHelp=0
+ensureMoodle=0
+dryRun=0
+ensureRepository=0
+ensureRoles=0
+useSSL=0
+ensureVirtualhost=0
+ensureWebserver=0
 webserverEngine=apache
-webserverUseFPM=1
+declare -a packagesToEnsure
 
 # Users
 apacheUser="www-data"
@@ -74,7 +56,7 @@ moodleVersion="310"
 # Functions
 
 apache_ensure_present() {
-  system_packages_add apache2
+  system_packages_ensure apache2
   service_enable apache2
   service_start apache2
 }
@@ -94,15 +76,15 @@ apache_get_status() {
 
 apache_ensure_fpm() {
   php_get_version
-  echo "Control variable apacheUseFPM is set to ${apacheUseFPM}"
-  if [[ "${apacheUseFPM}" == 1 ]]; then
+  echo "Control variable useFPM is set to ${useFPM}"
+  if [[ "${useFPM}" == 1 ]]; then
     echo "Enabling Apache modules and config for FPM."
     a2enmod proxy_fcgi setenvif
     a2enconf "php${PHP_VERSION}-fpm"
-    system_packages_add "libapache2-mod-fcgid"
+    system_packages_ensure "libapache2-mod-fcgid"
   else
     echo "FPM is not required."
-    system_packages_add "libapache2-mod-php${PHP_VERSION}"
+    system_packages_ensure "libapache2-mod-php${PHP_VERSION}"
   fi
 }
 
@@ -207,22 +189,21 @@ php_get_version() {
 }
 
 php_ensure_present() {
-  declare -a packagesToInstall
   if ! check_is_command_available php; then
     echo "PHP is not yet available. Adding."
-    packagesToInstall=("${packagesToInstall[@]}" "php")
+    packagesToEnsure=("${packagesToEnsure[@]}" "php")
   else
     echo "PHP is already available"
   fi
-  if [[ "${phpUseFPM}" == 1 ]]; then
-    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-fcgid")
+  if [[ "${useFPM}" == 1 ]]; then
+    packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
   else
-    packagesToInstall=("${packagesToInstall[@]}" "libapache2-mod-php${PHP_VERSION}")
+    packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${PHP_VERSION}")
   fi
-  system_packages_repositories_add ppa:ondrej/php
-  packagesToInstall=("${packagesToInstall[@]}" "${PHP_VERSION}-common")
-  system_packages_add "${packagesToInstall[@]}"
-  if [[ "${phpUseFPM}" == 1 ]]; then
+  system_repositories_ensure ppa:ondrej/php
+  packagesToEnsure=("${packagesToEnsure[@]}" "${PHP_VERSION}-common")
+  system_packages_ensure
+  if [[ "${useFPM}" == 1 ]]; then
     localServiceName="php${PHP_VERSION}-fpm"
   echo "Starting ${localServiceName}"
     service_start "${localServiceName}"
@@ -239,10 +220,6 @@ php_get_status() {
   echo "List all PHP modules installed by package manager"
     dpkg --get-selections | grep -i php
   fi
-}
-
-print_usage() {
-  echo "Usage: $(basename ${0}) [database|moodle|php|virtualhost|webserver][-s schemaname] [-d databasename] [-u username] -f -t -h"
 }
 
 service_enable() {
@@ -275,20 +252,22 @@ service_stop() {
   systemctl stop "${service}"
 }
 
-system_packages_add() {
-  local packagesToCheck="$1"
+system_packages_ensure() {
+  #uses global array "${packagesToEnsure[@]}"
   system_packages_repositories_update
-  echo "Checking presence of packages ${packagesToCheck}"
-  echo "use apt list --installed"
-  apt -qq list "${packagesToCheck}" --installed
+  #echo "Checking presence of packages ${packagesToEnsure}"
+  targetvalue=( "${packagesToEnsure[@]}" )
+  declare -p targetvalue
+  #echo "use apt list --installed"
+  #apt -qq list "${packagesToEnsure[@]}" --installed
   # Install if not present, but don't upgrade if present
-  apt-get -qy install --no-upgrade "${packagesToCheck}"
+  #apt-get -qy install --no-upgrade "${packagesToEnsure[@]}"
 }
 
-system_packages_repositories_add() {
-  local repositoriesToAdd="$1"
-  system_packages_add software-properties-common
-  add-apt-repository "${repositoriesToAdd}"
+system_repositories_ensure() {
+  local repositoriesToEnsure="$1"
+
+  add-apt-repository "${repositoriesToEnsure}"
 }
 
 system_packages_repositories_update() {
@@ -296,94 +275,107 @@ system_packages_repositories_update() {
   apt-get -qq update
 }
 
+usage() {
+  echo "Usage: sudo $(basename $0) [-b -d engine -f -h -l -m -n -p -r repo -s SSL provider -v details -w webserver type]" 2>&1
+echo "
+Options:
+-b                      Ensure binaries are present
+-d                      Specify database engine (mariadb)
+-f                      Use FPM with PHP and Webserver
+-h                      Print this help text and exit
+-l                      Local database server (uses option -d)
+-m                      Install and configure Moodle
+-n                      Dry run (don't make any changes)
+-p                      Ensure PHP is present
+-r                      Add repository to apt
+-s                      Use SSL (openssl)
+-v                      Ensure Virtualhost is present
+-w                      Ensure Webserver is present (apache)
+" 2>&1
+}
 # Control logic
 
 # Mildly adapted from https://sookocheff.com/post/bash/parsing-bash-script-arguments-with-shopts/
 
 main() {
-  if [[ -z "${namespace}" ]]; then
-  echo "Namespace is not set. Parsing options"
-  namespace=$1; shift  # Remove namespace from the argument list
-  echo "Namespace is ${namespace}"
-  case "${namespace}" in
-    database)
-    while getopts ":e:s" flag; do
-      case "${flag}" in
-        e)
-          databaseEngine=$OPTARG
-          echo "database Engine $databaseEngine"
-          ;;
-        s )
-          databaseInstallLocalServer=1
-          echo "Install local database server $databaseInstallLocalServer"
-          ;;
-        \? )
-          echo "Invalid Option: -$OPTARG" 1>&2
-          exit 1
-          ;;
-        : )
-          echo "Invalid Option: -$OPTARG requires an argument" 1>&2
-          exit 1
-          ;;
-      esac
-    done
-    shift $((OPTIND -1))
-    ;;
-    php)
-    while getopts ":f" flag; do
-      case "${flag}" in
-        f)
-          phpUseFPM=1
-          echo "PHP fpm $phpUseFPM"
-          ;;
-        \? )
-          echo "Invalid Option: -$OPTARG" 1>&2
-          exit 1
-          ;;
-        : )
-          echo "Invalid Option: -$OPTARG requires an argument" 1>&2
-          exit 1
-          ;;
-      esac
-    done
-    shift $((OPTIND -1))
-    ;;
-    webserver)
-      while getopts ":e:sv" flag; do
-        case "${flag}" in
-          e)
-            webserverEngine=$OPTARG
-            echo "webserver Engine $webserverEngine"
-            ;;
-          s )
-            webserverInstallLocalServer=1
-            echo "Install local webserver $webserverInstallLocalServer"
-            ;;
-          v )
-            createVirtualhost=1
-            echo "create virtualhost $createVirtualhost"
-            ;;
-          \? )
-            echo "Invalid Option: -$OPTARG" 1>&2
-            exit 1
-            ;;
-          : )
-            echo "Invalid Option: -$OPTARG requires an argument" 1>&2
-            exit 1
-            ;;
-        esac
-      done
-      shift $((OPTIND -1))
-      ;;
-    *)
-      echo "namespace is not permitted"
-      exit 1
-      ;;
-  esac
+
+  if [[ ${#} -eq 0 ]]; then
+    showHelp=1
   fi
 
-  # check_can_sudo_without_password_entry
-  # system_packages_repositories_update
+  while getopts ":b:d:fhl:m:np:r:s:v:w:" flag; do
+    case "${flag}" in
+      b)
+        ensureBinaries=1
+        binariesToEnsure=$OPTARG
+        ;;
+      d)
+        databaseEngine=$OPTARG
+        echo "database Engine $databaseEngine"
+        ;;
+      f)
+        useFPM=1
+        ;;
+      h)
+        showHelp=1
+        ;;
+      l )
+        databaseInstallLocalServer=1
+        echo "Install local database server $databaseInstallLocalServer"
+        ;;
+      m)
+        ensureMoodle=1
+        moodleOpts=$OPTARG
+        ;;
+      n)
+        dryRun=1
+        ;;
+      p)
+        ensureRepository=1
+        repositoriesToEnsure=$OPTARG
+        ;;
+      r)
+        ensureRoles=1
+        rolesToEnsure=$OPTARG
+        ;;
+      s)
+        useSSL=1
+        sslEngine=$OPTARG
+        ;;
+      v)
+        ensureVirtualhost=1
+        virtualhostOptions=$OPTARG
+        ;;
+      w)
+        ensureWebserver=1
+        webserverType=$OPTARG
+        ;;
+      \? )
+        echo "Invalid Option: -$OPTARG" 1>&2
+        exit 1
+        ;;
+      : )
+        echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ "${showHelp}" -eq 1 ]]; then
+    usage
+    exit 1
+  fi
+  check_can_sudo_without_password_entry
+  if [[ "${ensureRepository}" -eq 1 ]]; then
+    packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
+    system_packages_ensure
+    system_repositories_ensure "${repositoriesToEnsure}"
+  fi
+  system_packages_repositories_update
+  if [[ "${ensureBinaries}" -eq 1 ]]; then
+    packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
+    system_packages_ensure
+  fi
   # apache_ensure_present
   # #apache_get_status
   # # With PHP enabled by GitHub Actions
