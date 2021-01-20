@@ -1,5 +1,11 @@
 #!/bin/bash
 #set -Eeuxo pipefail  # From https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
+# Set locale to avoid issues with apt-get
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+export LANGUAGE=en_US.UTF-8
+export LC_CTYPE=en_US.UTF-8
+#####################################################
 ensureBinaries=0
 databaseEngine=mariadb
 useFPM=0
@@ -12,6 +18,8 @@ useSSL=0
 ensureVirtualhost=0
 ensureWebserver=0
 webserverEngine=apache
+userIsRoot=0
+userCanSudoWithoutPassword=0
 declare -a packagesToEnsure
 
 # Users
@@ -65,13 +73,13 @@ apache_get_status() {
   echo "Apache - get service status"
   service_get_status apache2
   echo "Apache - get version"
-  apache2 -V
+  sudo apache2 -V
   echo "Apache - list loaded/enabled modules"
-  apache2ctl -M
+  sudo apache2ctl -M
   echo "Apache - list enabled sites"
-  apachectl -S
+  sudo apachectl -S
   echo "Apache - check configuration files for errors"
-  apache2ctl -t
+  sudo apache2ctl -t
 }
 
 apache_ensure_fpm() {
@@ -79,8 +87,8 @@ apache_ensure_fpm() {
   echo "Control variable useFPM is set to ${useFPM}"
   if [[ "${useFPM}" == 1 ]]; then
     echo "Enabling Apache modules and config for FPM."
-    a2enmod proxy_fcgi setenvif
-    a2enconf "php${PHP_VERSION}-fpm"
+    sudo a2enmod proxy_fcgi setenvif
+    sudo a2enconf "php${PHP_VERSION}-fpm"
     system_packages_ensure "libapache2-mod-fcgid"
   else
     echo "FPM is not required."
@@ -98,9 +106,15 @@ check_is_command_available() {
   fi
 }
 
-check_can_sudo_without_password_entry() {
+check_user_is_root_or_sudo() {
+  if [ "$(whoami)" = 'root' ]; then
+    userIsRoot=1
+  fi
+}
+
+check_user_can_sudo_without_password_entry() {
   if sudo -v &> /dev/null; then
-    echo "This user is able to sudo without requiring a password"
+    userCanSudoWithoutPassword=1
   else
     # propagate error to caller
     return $?
@@ -113,30 +127,30 @@ err() {
 
 moodle_configure_directories() {
   # Add moodle user for moodledata / Change ownerships and permissions
-  adduser --system ${moodleUser}
-  mkdir -p ${moodleDataDir}
-  chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
-  chmod 0777 ${moodleDataDir}
-  mkdir -p ${moodleDir}
-  chown -R root:${apacheUser} ${moodleDir}
-  chmod -R 0755 ${moodleDir}
+  sudo adduser --system ${moodleUser}
+  sudo mkdir -p ${moodleDataDir}
+  sudo chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
+  sudo chmod 0777 ${moodleDataDir}
+  sudo mkdir -p ${moodleDir}
+  sudo chown -R root:${apacheUser} ${moodleDir}
+  sudo chmod -R 0755 ${moodleDir}
 }
 
 moodle_download_extract() {
   # Download and extract Moodle
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
   echo "Downloading and extracting ${moodleArchive}"
-  mkdir -p ${moodleDir}
-  wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
-  chown -R root:${apacheUser} ${moodleDir}
-  chmod -R 0755 ${moodleDir}
+  sudo mkdir -p ${moodleDir}
+  sudo wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
+  sudo chown -R root:${apacheUser} ${moodleDir}
+  sudo chmod -R 0755 ${moodleDir}
 }
 
 moodle_write_config() {
   FILE_CONFIG="${moodleDir}/config.php"
   echo "Writing file ${moodleDir}/config.php"
 
-tee "$FILE_CONFIG" > /dev/null << EOF
+sudo tee "$FILE_CONFIG" > /dev/null << EOF
 <?php  // Moodle configuration file
 
 unset(\$CFG);
@@ -166,7 +180,7 @@ EOF
 
 #if memcached_enabled=1
 #Append
-tee -a "$FILE_CONFIG" > /dev/null << EOF
+sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_handler_class = '\core\session\memcached';
 \$CFG->session_memcached_save_path = '${memcachedServer}:11211';
 \$CFG->session_memcached_prefix = 'memc.sess.key.';
@@ -174,7 +188,7 @@ tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_memcached_lock_expire = 7200;
 EOF
 
-tee -a "$FILE_CONFIG" > /dev/null << EOF
+sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
 require_once(__DIR__ . '/lib/setup.php');
 
 // There is no php closing tag in this file,
@@ -224,32 +238,32 @@ php_get_status() {
 
 service_enable() {
   local service="$1"
-  systemctl enable "${service}"
+  sudo systemctl enable "${service}"
 }
 
 service_reload() {
   local service="$1"
-  systemctl reload "${service}"
+  sudo systemctl reload "${service}"
 }
 
 service_restart() {
   local service="$1"
-  systemctl restart "${service}"
+  sudo systemctl restart "${service}"
 }
 
 service_start() {
   local service="$1"
-  systemctl start "${service}"
+  sudo systemctl start "${service}"
 }
 
 service_get_status() {
   local service="$1"
-  systemctl status "${service}"
+  sudo systemctl status "${service}"
 }
 
 service_stop() {
   local service="$1"
-  systemctl stop "${service}"
+  sudo systemctl stop "${service}"
 }
 
 system_packages_ensure() {
@@ -267,12 +281,12 @@ system_packages_ensure() {
 system_repositories_ensure() {
   local repositoriesToEnsure="$1"
 
-  add-apt-repository "${repositoriesToEnsure}"
+  sudo add-apt-repository "${repositoriesToEnsure}"
 }
 
 system_packages_repositories_update() {
   echo "Updating package repositories"
-  apt-get -qq update
+  sudo apt-get -qq update
 }
 
 usage() {
@@ -365,7 +379,19 @@ main() {
     usage
     exit 1
   fi
-  check_can_sudo_without_password_entry
+  check_user_is_root_or_sudo
+  if [[ "${userIsRoot}" -eq 0 ]]; then
+    echo "this user is not root"
+    check_user_can_sudo_without_password_entry
+    if [[ "${userCanSudoWithoutPassword}" -eq 0 ]]; then
+      echo "User requires a password to issue sudo commands. Exiting"
+      echo "Please re-run the script as root or sudo"
+      usage
+      exit 1
+    else
+      echo "User can issue sudo commands without entering a password. Continuing"
+    fi
+  fi
   if [[ "${ensureRepository}" -eq 1 ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_packages_ensure
