@@ -6,11 +6,11 @@ export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 #####################################################
-# USE_GETOPTS determines whether to get flags (opts) from the command line
-USE_GETOPTS=true
+# USE_COMMAND_LINE_OPTS determines whether to get flags (opts) from the command line
+USE_COMMAND_LINE_OPTS=true
 # Control logic defaults
 # These are set as defaults
-# If USE_GETOPTS=true, then they may be overridden by command-line input
+# If USE_COMMAND_LINE_OPTS=true, then they may be overridden by command-line input
 DATABASE_ENGINE='mariadb'
 DRY_RUN=false
 ENSURE_BINARIES=false
@@ -321,90 +321,97 @@ usage() {
 }
 
 main() {
-
-  # Check for ${#} - the number of positional parameters supplied
-  if [[ ${#} -eq 0 && "${USE_GETOPTS}" = true ]]; then
-    err "USE_GETOPTS=true, but no command-line options provided"
-    usage
-    exit 1
+  if ${USE_COMMAND_LINE_OPTS}; then
+    # We are going to determine VERBOSE logging on or off with an opt, but have not yet parsed it
+    VERBOSE=true
+    log "USE_COMMAND_LINE_OPTS=${USE_COMMAND_LINE_OPTS}"
+    # Check for ${#} - the number of positional parameters supplied
+    if [[ ${#} -eq 0 ]]; then
+      err "No command-line options provided"
+      usage
+      exit 1
+    else
+      log "Parse command line opts"
+      # Disable VERBOSE logging, and allow setting to derive from opt
+      VERBOSE=false
+      while getopts ":fhlnVb:d:m:p:r:s:v:w:" flag; do
+        case "${flag}" in
+          b)
+            ENSURE_BINARIES=true
+            log "ENSURE_BINARIES use command-line opt of ${ENSURE_BINARIES}"
+            binariesToEnsure=$OPTARG
+            ;;
+          d)
+            DATABASE_ENGINE=$OPTARG
+            log "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
+            ;;
+          f)
+            ENSURE_FPM=true
+            log "ENSURE_FPM use command-line opt of ${ENSURE_FPM}"
+            ;;
+          h)
+            SHOW_USAGE=true
+            log "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
+            ;;
+          l )
+            databaseInstallLocalServer=true
+            log "databaseInstallLocalServer use command-line opt of ${databaseInstallLocalServer}"
+            ;;
+          m)
+            ENSURE_MOODLE=true
+            log "ENSURE_MOODLE use command-line opt of ${ENSURE_MOODLE}"
+            moodleOpts=$OPTARG
+            ;;
+          n)
+            DRY_RUN=true
+            log "DRY_RUN use command-line opt of ${DRY_RUN}"
+            ;;
+          p)
+            ENSURE_REPOSITORY=true
+            log "ENSURE_REPOSITORY use command-line opt of ${ENSURE_REPOSITORY}"
+            repositoriesToEnsure=$OPTARG
+            ;;
+          r)
+            ENSURE_ROLES=true
+            log "ENSURE_ROLES use command-line opt of ${ENSURE_ROLES}"
+            rolesToEnsure=$OPTARG
+            ;;
+          s)
+            ENSURE_SSL=true
+            log "ENSURE_SSL use command-line opt of ${ENSURE_SSL}"
+            sslEngine=$OPTARG
+            ;;
+          v)
+            ENSURE_VIRTUALHOST=true
+            log "ENSURE_VIRTUALHOST use command-line opt of ${ENSURE_VIRTUALHOST}"
+            virtualhostOptions=$OPTARG
+            ;;
+          V)
+            VERBOSE=true
+            log "VERBOSE use command-line opt of ${VERBOSE}"
+            ;;
+          w)
+            ENSURE_WEBSERVER=true
+            log "ENSURE_WEBSERVER use command-line opt of ${ENSURE_WEBSERVER}"
+            webserverType=$OPTARG
+            ;;
+          \? )
+            err "Invalid Option: -$OPTARG" 1>&2
+            exit 1
+            ;;
+          : )
+            err "Invalid Option: -$OPTARG requires an argument" 1>&2
+            exit 1
+            ;;
+        esac
+      done
+    fi
   fi
 
-    while getopts ":fhlnVb:d:m:p:r:s:v:w:" flag; do
-      case "${flag}" in
-        b)
-          ENSURE_BINARIES=true
-          log "Command-line opt: ENSURE_BINARIES set to ${ENSURE_BINARIES}"
-          binariesToEnsure=$OPTARG
-          ;;
-        d)
-          DATABASE_ENGINE=$OPTARG
-          log "Command-line opt: DATABASE_ENGINE set to ${DATABASE_ENGINE}"
-          ;;
-        f)
-          ENSURE_FPM=true
-          log "Command-line opt: ENSURE_FPM set to ${ENSURE_FPM}"
-          ;;
-        h)
-          SHOW_USAGE=true
-          log "Command-line opt: SHOW_USAGE set to ${SHOW_USAGE}"
-          ;;
-        l )
-          databaseInstallLocalServer=true
-          log "Command-line opt: databaseInstallLocalServer set to ${databaseInstallLocalServer}"
-          ;;
-        m)
-          ENSURE_MOODLE=true
-          log "Command-line opt: ENSURE_MOODLE set to ${ENSURE_MOODLE}"
-          moodleOpts=$OPTARG
-          ;;
-        n)
-          DRY_RUN=true
-          log "Command-line opt: DRY_RUN set to ${DRY_RUN}"
-          ;;
-        p)
-          ENSURE_REPOSITORY=true
-          log "Command-line opt: ENSURE_REPOSITORY set to ${ENSURE_REPOSITORY}"
-          repositoriesToEnsure=$OPTARG
-          ;;
-        r)
-          ENSURE_ROLES=true
-          log "Command-line opt: ENSURE_ROLES set to ${ENSURE_ROLES}"
-          rolesToEnsure=$OPTARG
-          ;;
-        s)
-          ENSURE_SSL=true
-          log "Command-line opt: ENSURE_SSL set to ${ENSURE_SSL}"
-          sslEngine=$OPTARG
-          ;;
-        v)
-          ENSURE_VIRTUALHOST=true
-          log "Command-line opt: ENSURE_VIRTUALHOST set to ${ENSURE_VIRTUALHOST}"
-          virtualhostOptions=$OPTARG
-          ;;
-        V)
-          VERBOSE=true
-          log "Command-line opt: VERBOSE set to ${VERBOSE}"
-          ;;
-        w)
-          ENSURE_WEBSERVER=true
-          log "Command-line opt: ENSURE_WEBSERVER set to ${ENSURE_WEBSERVER}"
-          webserverType=$OPTARG
-          ;;
-        \? )
-          err "Invalid Option: -$OPTARG" 1>&2
-          exit 1
-          ;;
-        : )
-          err "Invalid Option: -$OPTARG requires an argument" 1>&2
-          exit 1
-          ;;
-      esac
-    done
-
-  for opt in  USE_GETOPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_MOODLE ENSURE_REPOSITORY \
+  for opt in  USE_COMMAND_LINE_OPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_MOODLE ENSURE_REPOSITORY \
               ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
     readonly ${opt}
-    log "Setting ${opt} to readonly, with value: ${!opt}"
+    log "${opt} has value: ${!opt} ; Setting readonly"
   done
 
   if ${SHOW_USAGE}; then
