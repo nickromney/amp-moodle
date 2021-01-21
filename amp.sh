@@ -10,11 +10,11 @@ export LC_CTYPE=en_US.UTF-8
 USE_GETOPTS=true
 # Control logic defaults
 # These are set as defaults
-# If USE_GETOPTS=1, then they may be overridden by command-line input
+# If USE_GETOPTS=true, then they may be overridden by command-line input
 DATABASE_ENGINE='mariadb'
 DRY_RUN=false
 ENSURE_BINARIES=false
-ENSURE_FPM=true
+ENSURE_FPM=false
 ENSURE_MOODLE=false
 ENSURE_REPOSITORY=false
 ENSURE_ROLES=false
@@ -22,7 +22,7 @@ ENSURE_SSL=false
 ENSURE_VIRTUALHOST=false
 ENSURE_WEBSERVER=false
 SHOW_USAGE=false
-VERBOSE=true
+VERBOSE=false
 WEBSERVER_ENGINE='apache'
 declare -a packagesToEnsure
 
@@ -78,28 +78,27 @@ apache_ensure_present() {
 }
 
 apache_get_status() {
-  echo "Apache - get service status"
+  log "Apache - get service status"
   service_action status apache2
-  echo "Apache - get version"
+  log "Apache - get version"
   run_command apache2 -V
-  echo "Apache - list loaded/enabled modules"
+  log "Apache - list loaded/enabled modules"
   run_command apache2ctl -M
-  echo "Apache - list enabled sites"
+  log "Apache - list enabled sites"
   run_command apachectl -S
-  echo "Apache - check configuration files for errors"
+  log "Apache - check configuration files for errors"
   run_command apache2ctl -t
 }
 
 apache_ensure_fpm() {
   php_get_version
-  echo "Control variable ENSURE_FPM is set to ${ENSURE_FPM}"
-  if [[ "${ENSURE_FPM}" = 'true' ]]; then
-    echo "Enabling Apache modules and config for ENSURE_FPM."
+  if [[ "${ENSURE_FPM}" = true ]]; then
+    log "Enabling Apache modules and config for ENSURE_FPM."
     run_command a2enmod proxy_fcgi setenvif
     run_command a2enconf "php${PHP_VERSION}-fpm"
     system_packages_ensure "libapache2-mod-fcgid"
   else
-    echo "ENSURE_FPM is not required."
+    log "ENSURE_FPM is not required."
     system_packages_ensure "libapache2-mod-php${PHP_VERSION}"
   fi
 }
@@ -107,23 +106,30 @@ apache_ensure_fpm() {
 check_is_command_available() {
   local commandToCheck="$1"
   if command -v "${commandToCheck}" &> /dev/null; then
-    echo "${commandToCheck} command available"
+    log "${commandToCheck} command available"
   else
     # propagate error to caller
     return $?
   fi
 }
 
-check_user_is_root_or_sudo() {
+check_user_is_root() {
+  log "Test if UID is 0 (root)"
   if [[ "${UID}" -eq 0 ]]; then
-    USER_IS_ROOT=1
+    log "Setting USER_IS_ROOT to true"
+    USER_IS_ROOT=true
   fi
+  log "UID value: ${UID}"
+  log "USER_IS_ROOT value: ${USER_IS_ROOT}"
 }
 
 check_user_can_sudo_without_password_entry() {
+  log "Test if user can sudo without entering a password"
   if sudo -v &> /dev/null; then
-    USER_CAN_SUDO_WITHOUT_PASSWORD=true
+    ${USER_CAN_SUDO_WITHOUT_PASSWORD}=true
+    log "USER_CAN_SUDO_WITHOUT_PASSWORD value: ${USER_CAN_SUDO_WITHOUT_PASSWORD}"
   else
+    log "USER_CAN_SUDO_WITHOUT_PASSWORD value: ${USER_CAN_SUDO_WITHOUT_PASSWORD}"
     # propagate error to caller
     return $?
   fi
@@ -131,6 +137,12 @@ check_user_can_sudo_without_password_entry() {
 
 err() {
   echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
+}
+
+log() {
+  if [[ "${VERBOSE}" = true ]]; then
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*"
+  fi
 }
 
 moodle_configure_directories() {
@@ -147,7 +159,7 @@ moodle_configure_directories() {
 moodle_download_extract() {
   # Download and extract Moodle
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
-  echo "Downloading and extracting ${moodleArchive}"
+  log "Downloading and extracting ${moodleArchive}"
   run_command mkdir -p ${moodleDir}
   run_command wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
   run_command chown -R root:${apacheUser} ${moodleDir}
@@ -207,7 +219,7 @@ EOF
 php_get_version() {
   # Extract installed PHP version
   PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
-  echo "PHP version is ${PHP_VERSION}"
+  log "PHP version is ${PHP_VERSION}"
 }
 
 php_ensure_present() {
@@ -215,9 +227,9 @@ php_ensure_present() {
     echo "PHP is not yet available. Adding."
     packagesToEnsure=("${packagesToEnsure[@]}" "php")
   else
-    echo "PHP is already available"
+    log "PHP is already available"
   fi
-  if [[ "${ENSURE_FPM}" = 'true' ]]; then
+  if [[ "${ENSURE_FPM}" = true ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
   else
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${PHP_VERSION}")
@@ -227,7 +239,7 @@ php_ensure_present() {
   system_packages_ensure
   if [[ "${ENSURE_FPM}" == 1 ]]; then
     localServiceName="php${PHP_VERSION}-fpm"
-  echo "Starting ${localServiceName}"
+  log "Starting ${localServiceName}"
     service_start "${localServiceName}"
   fi
 }
@@ -237,9 +249,9 @@ php_get_status() {
     err "PHP is not yet available. Exiting."
     exit
   else
-    echo "List all compiled PHP modules"
+    log "List all compiled PHP modules"
     php -m
-  echo "List all PHP modules installed by package manager"
+  log "List all PHP modules installed by package manager"
     dpkg --get-selections | grep -i php
   fi
 }
@@ -249,11 +261,11 @@ run_command() {
     cat
   fi
   printf -v cmd_str '%q ' "$@"
-  if [[ "${DRY_RUN}" = 'true' ]]; then
-    echo "DRY RUN: Not executing: ${SUDO}${cmd_str}" >&2
+  if [[ "${DRY_RUN}" = true ]]; then
+    log "DRY RUN: Not executing: ${SUDO}${cmd_str}" >&2
   else
-    if [[ "${VERBOSE}" = 'true' ]]; then
-      echo "VERBOSE: Preparing to execute: ${SUDO}${cmd_str}"
+    if [[ "${VERBOSE}" = true ]]; then
+      log "VERBOSE: Preparing to execute: ${SUDO}${cmd_str}"
     fi
     ${SUDO} "$@"
   fi
@@ -267,7 +279,7 @@ service_action() {
 
 system_packages_ensure() {
   #uses global array "${packagesToEnsure[@]}"
-  #echo "Checking presence of packages ${packagesToEnsure}"
+  #log "Checking presence of packages ${packagesToEnsure}"
   targetvalue=( "${packagesToEnsure[@]}" )
   declare -p targetvalue
   #echo "use apt list --installed"
@@ -283,7 +295,7 @@ system_repositories_ensure() {
 }
 
 system_packages_repositories_update() {
-  echo "Updating package repositories"
+  log "Updating package repositories"
   run_command apt-get -qq update
 }
 
@@ -311,102 +323,126 @@ usage() {
 main() {
 
   # Check for ${#} - the number of positional parameters supplied
-  if [[ ${#} -eq 0 && "${USE_GETOPTS}" = 'true' ]]; then
-    echo "Requested to use command-line options with USE_GETOPTS=true"
-    echo "But none provided"
-    echo
+  if [[ ${#} -eq 0 && "${USE_GETOPTS}" = true ]]; then
+    err "USE_GETOPTS=true, but no command-line options provided"
     usage
     exit 1
   fi
 
-    while getopts ":b:d:fhl:m:np:r:s:v:Vw:" flag; do
+    while getopts ":fhlnVb:d:m:p:r:s:v:w:" flag; do
       case "${flag}" in
         b)
-          ENSURE_BINARIES=1
+          ENSURE_BINARIES=true
+          log "Command-line opt: ENSURE_BINARIES set to ${ENSURE_BINARIES}"
           binariesToEnsure=$OPTARG
           ;;
         d)
           DATABASE_ENGINE=$OPTARG
-          echo "database Engine $DATABASE_ENGINE"
+          log "Command-line opt: DATABASE_ENGINE set to ${DATABASE_ENGINE}"
           ;;
         f)
-          ENSURE_FPM=1
+          ENSURE_FPM=true
+          log "Command-line opt: ENSURE_FPM set to ${ENSURE_FPM}"
           ;;
         h)
-          SHOW_USAGE=1
+          SHOW_USAGE=true
+          log "Command-line opt: SHOW_USAGE set to ${SHOW_USAGE}"
           ;;
         l )
-          databaseInstallLocalServer=1
-          echo "Install local database server $databaseInstallLocalServer"
+          databaseInstallLocalServer=true
+          log "Command-line opt: databaseInstallLocalServer set to ${databaseInstallLocalServer}"
           ;;
         m)
-          ENSURE_MOODLE=1
+          ENSURE_MOODLE=true
+          log "Command-line opt: ENSURE_MOODLE set to ${ENSURE_MOODLE}"
           moodleOpts=$OPTARG
           ;;
         n)
-          DRY_RUN=1
+          DRY_RUN=true
+          log "Command-line opt: DRY_RUN set to ${DRY_RUN}"
           ;;
         p)
-          ENSURE_REPOSITORY=1
+          ENSURE_REPOSITORY=true
+          log "Command-line opt: ENSURE_REPOSITORY set to ${ENSURE_REPOSITORY}"
           repositoriesToEnsure=$OPTARG
           ;;
         r)
-          ENSURE_ROLES=1
+          ENSURE_ROLES=true
+          log "Command-line opt: ENSURE_ROLES set to ${ENSURE_ROLES}"
           rolesToEnsure=$OPTARG
           ;;
         s)
-          ENSURE_SSL=1
+          ENSURE_SSL=true
+          log "Command-line opt: ENSURE_SSL set to ${ENSURE_SSL}"
           sslEngine=$OPTARG
           ;;
         v)
-          ENSURE_VIRTUALHOST=1
+          ENSURE_VIRTUALHOST=true
+          log "Command-line opt: ENSURE_VIRTUALHOST set to ${ENSURE_VIRTUALHOST}"
           virtualhostOptions=$OPTARG
           ;;
         V)
-          VERBOSE=1
+          VERBOSE=true
+          log "Command-line opt: VERBOSE set to ${VERBOSE}"
           ;;
         w)
-          ENSURE_WEBSERVER=1
+          ENSURE_WEBSERVER=true
+          log "Command-line opt: ENSURE_WEBSERVER set to ${ENSURE_WEBSERVER}"
           webserverType=$OPTARG
           ;;
         \? )
-          echo "Invalid Option: -$OPTARG" 1>&2
+          err "Invalid Option: -$OPTARG" 1>&2
           exit 1
           ;;
         : )
-          echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+          err "Invalid Option: -$OPTARG requires an argument" 1>&2
           exit 1
           ;;
       esac
     done
 
-  #Set constants to read only
+  for opt in  USE_GETOPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_MOODLE ENSURE_REPOSITORY \
+              ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
+    readonly ${opt}
+    log "${opt} set to ${!opt}"
+  done
 
-  if [[ "${SHOW_USAGE}" = 'true' ]]; then
+  #Set constants to read only
+  #Set an array of constants
+  #Set to readonly
+  #Log values
+
+  if [[ "${SHOW_USAGE}" = true ]]; then
     usage
     exit 1
   fi
-  check_user_is_root_or_sudo
-  if [[ "${USER_IS_ROOT}" = 'true' ]]; then
-    echo "this user is not root"
+  check_user_is_root
+  if [[ "${USER_IS_ROOT}" = false ]]; then
+    log "this user is not root"
     check_user_can_sudo_without_password_entry
-    if [[ "${USER_CAN_SUDO_WITHOUT_PASSWORD}" = 'false' ]]; then
-      echo "User requires a password to issue sudo commands. Exiting"
-      echo "Please re-run the script as root, or having sudo'd with a password"
+    if [[ "${USER_CAN_SUDO_WITHOUT_PASSWORD}" = false ]]; then
+      err "User requires a password to issue sudo commands. Exiting"
+      err "Please re-run the script as root, or having sudo'd with a password"
       usage
       exit 1
     else
       SUDO='sudo '
-      echo "User can issue sudo commands without entering a password. Continuing"
+      log "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
-  if [[ "${ENSURE_REPOSITORY}" = 'true' ]]; then
+  for opt in  USER_IS_ROOT USER_CAN_SUDO_WITHOUT_PASSWORD; do
+    readonly ${opt}
+    log "${opt} set to ${!opt}"
+  done
+  if [[ "${ENSURE_REPOSITORY}" = true ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
-    system_packages_ensure
     system_repositories_ensure "${repositoriesToEnsure}"
+    system_packages_ensure
+    system_packages_repositories_update
+  else
+    system_packages_repositories_update
   fi
-  system_packages_repositories_update
-  if [[ "${ENSURE_BINARIES}" = 'true' ]]; then
+  if [[ "${ENSURE_BINARIES}" = true ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
   fi
@@ -439,6 +475,7 @@ main "$@"
 # https://github.com/RoverWire/virtualhost
 # https://google.github.io/styleguide/shellguide.html
 # https://stackoverflow.com/questions/7069682/how-to-get-arguments-with-flags-in-bash
+# https://www.cyberciti.biz/faq/how-to-declare-boolean-variables-in-bash-and-use-them-in-a-shell-script/
 
 # Usage
 
