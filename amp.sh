@@ -26,8 +26,8 @@ VERBOSE=false
 WEBSERVER_ENGINE='apache'
 declare -a packagesToEnsure
 
-USER_CAN_SUDO_WITHOUT_PASSWORD=false
-USER_IS_ROOT=false
+USER_REQUIRES_PASSWORD_TO_SUDO=true
+NON_ROOT_USER=true
 
 
 # Users
@@ -116,20 +116,20 @@ check_is_command_available() {
 check_user_is_root() {
   log "Test if UID is 0 (root)"
   if [[ "${UID}" -eq 0 ]]; then
-    log "Setting USER_IS_ROOT to true"
-    USER_IS_ROOT=true
+    log "Setting NON_ROOT_USER to true"
+    NON_ROOT_USER=true
   fi
   log "UID value: ${UID}"
-  log "USER_IS_ROOT value: ${USER_IS_ROOT}"
+  log "NON_ROOT_USER value: ${NON_ROOT_USER}"
 }
 
 check_user_can_sudo_without_password_entry() {
   log "Test if user can sudo without entering a password"
   if sudo -v &> /dev/null; then
-    USER_CAN_SUDO_WITHOUT_PASSWORD=true
-    log "USER_CAN_SUDO_WITHOUT_PASSWORD value: ${USER_CAN_SUDO_WITHOUT_PASSWORD}"
+    USER_REQUIRES_PASSWORD_TO_SUDO=false
+    log "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
   else
-    log "USER_CAN_SUDO_WITHOUT_PASSWORD value: ${USER_CAN_SUDO_WITHOUT_PASSWORD}"
+    log "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
     # propagate error to caller
     return $?
   fi
@@ -404,17 +404,17 @@ main() {
   for opt in  USE_GETOPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_MOODLE ENSURE_REPOSITORY \
               ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
     readonly ${opt}
-    log "${opt} set to ${!opt}"
+    log "Setting ${opt} to readonly, with value: ${!opt}"
   done
 
-  if [[ "${SHOW_USAGE}" = true ]]; then
+  if ${SHOW_USAGE}; then
     usage
     exit 1
   fi
   check_user_is_root
-  if [[ "${USER_IS_ROOT}" = false ]]; then
+  if ${NON_ROOT_USER}; then
     check_user_can_sudo_without_password_entry
-    if [[ "${USER_CAN_SUDO_WITHOUT_PASSWORD}" = false ]]; then
+    if ${USER_REQUIRES_PASSWORD_TO_SUDO}; then
       err "User requires a password to issue sudo commands. Exiting"
       err "Please re-run the script as root, or having sudo'd with a password"
       usage
@@ -424,7 +424,8 @@ main() {
       log "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
-  if [[ "${ENSURE_REPOSITORY}" = true ]]; then
+  if ${ENSURE_REPOSITORY}; then
+    log "Function main: ENSURE_REPOSITORY"
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_repositories_ensure "${repositoriesToEnsure}"
     system_packages_ensure
@@ -432,7 +433,8 @@ main() {
   else
     system_packages_repositories_update
   fi
-  if [[ "${ENSURE_BINARIES}" = true ]]; then
+  if ${ENSURE_BINARIES}; then
+    log "Function main: ENSURE_BINARIES"
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
   fi
