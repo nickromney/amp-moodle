@@ -6,23 +6,29 @@ export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 #####################################################
-# useGetopts determines whether to get flags (opts) from the command line
-useGetopts=1
-ensureBinaries=0
-databaseEngine=mariadb
-useFPM=0
-showHelp=0
-ensureMoodle=0
-dryRun=0
-ensureRepository=0
-ensureRoles=0
-useSSL=0
-ensureVirtualhost=0
-ensureWebserver=0
-webserverEngine=apache
-userIsRoot=0
-userCanSudoWithoutPassword=0
+# USE_GETOPTS determines whether to get flags (opts) from the command line
+USE_GETOPTS=true
+# Control logic defaults
+# These are set as defaults
+# If USE_GETOPTS=1, then they may be overridden by command-line input
+DATABASE_ENGINE='mariadb'
+DRY_RUN=false
+ENSURE_BINARIES=false
+ENSURE_FPM=true
+ENSURE_MOODLE=false
+ENSURE_REPOSITORY=false
+ENSURE_ROLES=false
+ENSURE_SSL=false
+ENSURE_VIRTUALHOST=false
+ENSURE_WEBSERVER=false
+SHOW_USAGE=false
+VERBOSE=true
+WEBSERVER_ENGINE='apache'
 declare -a packagesToEnsure
+
+USER_CAN_SUDO_WITHOUT_PASSWORD=false
+USER_IS_ROOT=false
+
 
 # Users
 apacheUser="www-data"
@@ -73,27 +79,27 @@ apache_ensure_present() {
 
 apache_get_status() {
   echo "Apache - get service status"
-  service_get_status apache2
+  service_action status apache2
   echo "Apache - get version"
-  sudo apache2 -V
+  run_command apache2 -V
   echo "Apache - list loaded/enabled modules"
-  sudo apache2ctl -M
+  run_command apache2ctl -M
   echo "Apache - list enabled sites"
-  sudo apachectl -S
+  run_command apachectl -S
   echo "Apache - check configuration files for errors"
-  sudo apache2ctl -t
+  run_command apache2ctl -t
 }
 
 apache_ensure_fpm() {
   php_get_version
-  echo "Control variable useFPM is set to ${useFPM}"
-  if [[ "${useFPM}" == 1 ]]; then
-    echo "Enabling Apache modules and config for FPM."
-    sudo a2enmod proxy_fcgi setenvif
-    sudo a2enconf "php${PHP_VERSION}-fpm"
+  echo "Control variable ENSURE_FPM is set to ${ENSURE_FPM}"
+  if [[ "${ENSURE_FPM}" = 'true' ]]; then
+    echo "Enabling Apache modules and config for ENSURE_FPM."
+    run_command a2enmod proxy_fcgi setenvif
+    run_command a2enconf "php${PHP_VERSION}-fpm"
     system_packages_ensure "libapache2-mod-fcgid"
   else
-    echo "FPM is not required."
+    echo "ENSURE_FPM is not required."
     system_packages_ensure "libapache2-mod-php${PHP_VERSION}"
   fi
 }
@@ -109,14 +115,14 @@ check_is_command_available() {
 }
 
 check_user_is_root_or_sudo() {
-  if [ "$(whoami)" = 'root' ]; then
-    userIsRoot=1
+  if [[ "${UID}" -eq 0 ]]; then
+    USER_IS_ROOT=1
   fi
 }
 
 check_user_can_sudo_without_password_entry() {
   if sudo -v &> /dev/null; then
-    userCanSudoWithoutPassword=1
+    USER_CAN_SUDO_WITHOUT_PASSWORD=true
   else
     # propagate error to caller
     return $?
@@ -129,30 +135,30 @@ err() {
 
 moodle_configure_directories() {
   # Add moodle user for moodledata / Change ownerships and permissions
-  sudo adduser --system ${moodleUser}
-  sudo mkdir -p ${moodleDataDir}
-  sudo chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
-  sudo chmod 0777 ${moodleDataDir}
-  sudo mkdir -p ${moodleDir}
-  sudo chown -R root:${apacheUser} ${moodleDir}
-  sudo chmod -R 0755 ${moodleDir}
+  run_command adduser --system ${moodleUser}
+  run_command mkdir -p ${moodleDataDir}
+  run_command chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
+  run_command chmod 0777 ${moodleDataDir}
+  run_command mkdir -p ${moodleDir}
+  run_command chown -R root:${apacheUser} ${moodleDir}
+  run_command chmod -R 0755 ${moodleDir}
 }
 
 moodle_download_extract() {
   # Download and extract Moodle
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
   echo "Downloading and extracting ${moodleArchive}"
-  sudo mkdir -p ${moodleDir}
-  sudo wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
-  sudo chown -R root:${apacheUser} ${moodleDir}
-  sudo chmod -R 0755 ${moodleDir}
+  run_command mkdir -p ${moodleDir}
+  run_command wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
+  run_command chown -R root:${apacheUser} ${moodleDir}
+  run_command chmod -R 0755 ${moodleDir}
 }
 
 moodle_write_config() {
   FILE_CONFIG="${moodleDir}/config.php"
   echo "Writing file ${moodleDir}/config.php"
 
-sudo tee "$FILE_CONFIG" > /dev/null << EOF
+run_command tee "$FILE_CONFIG" > /dev/null << EOF
 <?php  // Moodle configuration file
 
 unset(\$CFG);
@@ -182,7 +188,7 @@ EOF
 
 #if memcached_enabled=1
 #Append
-sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
+run_command tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_handler_class = '\core\session\memcached';
 \$CFG->session_memcached_save_path = '${memcachedServer}:11211';
 \$CFG->session_memcached_prefix = 'memc.sess.key.';
@@ -190,7 +196,7 @@ sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
 \$CFG->session_memcached_lock_expire = 7200;
 EOF
 
-sudo tee -a "$FILE_CONFIG" > /dev/null << EOF
+run_command tee -a "$FILE_CONFIG" > /dev/null << EOF
 require_once(__DIR__ . '/lib/setup.php');
 
 // There is no php closing tag in this file,
@@ -211,7 +217,7 @@ php_ensure_present() {
   else
     echo "PHP is already available"
   fi
-  if [[ "${useFPM}" == 1 ]]; then
+  if [[ "${ENSURE_FPM}" = 'true' ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
   else
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${PHP_VERSION}")
@@ -219,7 +225,7 @@ php_ensure_present() {
   system_repositories_ensure ppa:ondrej/php
   packagesToEnsure=("${packagesToEnsure[@]}" "${PHP_VERSION}-common")
   system_packages_ensure
-  if [[ "${useFPM}" == 1 ]]; then
+  if [[ "${ENSURE_FPM}" == 1 ]]; then
     localServiceName="php${PHP_VERSION}-fpm"
   echo "Starting ${localServiceName}"
     service_start "${localServiceName}"
@@ -238,34 +244,25 @@ php_get_status() {
   fi
 }
 
-service_enable() {
-  local service="$1"
-  sudo systemctl enable "${service}"
+run_command() {
+  if [[ ! -t 0 ]]; then
+    cat
+  fi
+  printf -v cmd_str '%q ' "$@"
+  if [[ "${DRY_RUN}" = 'true' ]]; then
+    echo "DRY RUN: Not executing: ${SUDO}${cmd_str}" >&2
+  else
+    if [[ "${VERBOSE}" = 'true' ]]; then
+      echo "VERBOSE: Preparing to execute: ${SUDO}${cmd_str}"
+    fi
+    ${SUDO} "$@"
+  fi
 }
 
-service_reload() {
-  local service="$1"
-  sudo systemctl reload "${service}"
-}
-
-service_restart() {
-  local service="$1"
-  sudo systemctl restart "${service}"
-}
-
-service_start() {
-  local service="$1"
-  sudo systemctl start "${service}"
-}
-
-service_get_status() {
-  local service="$1"
-  sudo systemctl status "${service}"
-}
-
-service_stop() {
-  local service="$1"
-  sudo systemctl stop "${service}"
+service_action() {
+  local action="$1"
+  local service="$2"
+  run_command systemctl "${action}" "${service}"
 }
 
 system_packages_ensure() {
@@ -276,134 +273,140 @@ system_packages_ensure() {
   #echo "use apt list --installed"
   apt -qq list "${packagesToEnsure[@]}" --installed
   # Install if not present, but don't upgrade if present
-  sudo apt-get -qy install --no-upgrade "${packagesToEnsure[@]}"
+  run_command apt-get -qy install --no-upgrade "${packagesToEnsure[@]}"
 }
 
 system_repositories_ensure() {
   local repositoriesToEnsure="$1"
 
-  sudo add-apt-repository "${repositoriesToEnsure}"
+  run_command add-apt-repository "${repositoriesToEnsure}"
 }
 
 system_packages_repositories_update() {
   echo "Updating package repositories"
-  sudo apt-get -qq update
+  run_command apt-get -qq update
 }
 
 usage() {
-  echo "Usage: sudo $(basename $0) [-b -d engine -f -h -l -m -n -p -r repo -s SSL provider -v details -w webserver type]" 2>&1
-echo "
-Options:
--b                      Ensure binaries are present
--d                      Specify database engine (mariadb)
--f                      Use FPM with PHP and Webserver
--h                      Print this help text and exit
--l                      Local database server (uses option -d)
--m                      Install and configure Moodle
--n                      Dry run (don't make any changes)
--p                      Ensure PHP is present
--r                      Add repository to apt
--s                      Use SSL (openssl)
--v                      Ensure Virtualhost is present
--w                      Ensure Webserver is present (apache)
-" 2>&1
-}
-
-use_getopts() {
-
-  if [[ ${#} -eq 0 ]]; then
-    showHelp=1
-  fi
-
-  while getopts ":b:d:fhl:m:np:r:s:v:w:" flag; do
-    case "${flag}" in
-      b)
-        ensureBinaries=1
-        binariesToEnsure=$OPTARG
-        ;;
-      d)
-        databaseEngine=$OPTARG
-        echo "database Engine $databaseEngine"
-        ;;
-      f)
-        useFPM=1
-        ;;
-      h)
-        showHelp=1
-        ;;
-      l )
-        databaseInstallLocalServer=1
-        echo "Install local database server $databaseInstallLocalServer"
-        ;;
-      m)
-        ensureMoodle=1
-        moodleOpts=$OPTARG
-        ;;
-      n)
-        dryRun=1
-        ;;
-      p)
-        ensureRepository=1
-        repositoriesToEnsure=$OPTARG
-        ;;
-      r)
-        ensureRoles=1
-        rolesToEnsure=$OPTARG
-        ;;
-      s)
-        useSSL=1
-        sslEngine=$OPTARG
-        ;;
-      v)
-        ensureVirtualhost=1
-        virtualhostOptions=$OPTARG
-        ;;
-      w)
-        ensureWebserver=1
-        webserverType=$OPTARG
-        ;;
-      \? )
-        echo "Invalid Option: -$OPTARG" 1>&2
-        exit 1
-        ;;
-      : )
-        echo "Invalid Option: -$OPTARG requires an argument" 1>&2
-        exit 1
-        ;;
-    esac
-  done
+  # Display the usage
+  echo "Usage: ${0} [-fhlmnp] [-b binaries] [-d engine] [-r repository] [-s SSL provider] [-v virtualhost] [-w webservertype]" >&2
+  echo "  -f FILE  Use FILE for the list of servers. Default: ${SERVER_LIST}." >&2
+  echo '  -n       Dry run mode. Display the COMMAND that would have been executed and exit.' >&2
+  echo '  -s       Execute the COMMAND using sudo on the remote server.' >&2
+  echo '  -b                      Ensure binaries are present' >&2
+  echo '  -d                      Specify database engine (mariadb)' >&2
+  echo '  -f                      Use ENSURE_FPM with PHP and Webserver' >&2
+  echo '  -h                      Print this help text and exit' >&2
+  echo '  -l                      Local database server (uses option -d)' >&2
+  echo '  -m                      Install and configure Moodle' >&2
+  echo "  -n                      Dry run (don't make any changes)" >&2
+  echo '  -p                      Ensure PHP is present' >&2
+  echo '  -r                      Add repository to apt' >&2
+  echo '  -s                      Use SSL (openssl)' >&2
+  echo '  -v                      Ensure Virtualhost is present' >&2
+  echo '  -V       Verbose mode. Displays the server name before executing COMMAND.' >&2
+  echo '  -w                      Ensure Webserver is present (apache)' >&2
 }
 
 main() {
 
-  if [[ "${useGetopts}" -eq 1 ]]; then
-    use_getopts "$@"
+  # Check for ${#} - the number of positional parameters supplied
+  if [[ ${#} -eq 0 && "${USE_GETOPTS}" = 'true' ]]; then
+    echo "Requested to use command-line options with USE_GETOPTS=true"
+    echo "But none provided"
+    echo
+    usage
+    exit 1
   fi
 
-  if [[ "${showHelp}" -eq 1 ]]; then
+    while getopts ":b:d:fhl:m:np:r:s:v:Vw:" flag; do
+      case "${flag}" in
+        b)
+          ENSURE_BINARIES=1
+          binariesToEnsure=$OPTARG
+          ;;
+        d)
+          DATABASE_ENGINE=$OPTARG
+          echo "database Engine $DATABASE_ENGINE"
+          ;;
+        f)
+          ENSURE_FPM=1
+          ;;
+        h)
+          SHOW_USAGE=1
+          ;;
+        l )
+          databaseInstallLocalServer=1
+          echo "Install local database server $databaseInstallLocalServer"
+          ;;
+        m)
+          ENSURE_MOODLE=1
+          moodleOpts=$OPTARG
+          ;;
+        n)
+          DRY_RUN=1
+          ;;
+        p)
+          ENSURE_REPOSITORY=1
+          repositoriesToEnsure=$OPTARG
+          ;;
+        r)
+          ENSURE_ROLES=1
+          rolesToEnsure=$OPTARG
+          ;;
+        s)
+          ENSURE_SSL=1
+          sslEngine=$OPTARG
+          ;;
+        v)
+          ENSURE_VIRTUALHOST=1
+          virtualhostOptions=$OPTARG
+          ;;
+        V)
+          VERBOSE=1
+          ;;
+        w)
+          ENSURE_WEBSERVER=1
+          webserverType=$OPTARG
+          ;;
+        \? )
+          echo "Invalid Option: -$OPTARG" 1>&2
+          exit 1
+          ;;
+        : )
+          echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+          exit 1
+          ;;
+      esac
+    done
+
+  #Set constants to read only
+
+  if [[ "${SHOW_USAGE}" = 'true' ]]; then
     usage
     exit 1
   fi
   check_user_is_root_or_sudo
-  if [[ "${userIsRoot}" -eq 0 ]]; then
+  if [[ "${USER_IS_ROOT}" = 'true' ]]; then
     echo "this user is not root"
     check_user_can_sudo_without_password_entry
-    if [[ "${userCanSudoWithoutPassword}" -eq 0 ]]; then
+    if [[ "${USER_CAN_SUDO_WITHOUT_PASSWORD}" = 'false' ]]; then
       echo "User requires a password to issue sudo commands. Exiting"
       echo "Please re-run the script as root, or having sudo'd with a password"
       usage
       exit 1
     else
+      SUDO='sudo '
       echo "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
-  if [[ "${ensureRepository}" -eq 1 ]]; then
+  if [[ "${ENSURE_REPOSITORY}" = 'true' ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_packages_ensure
     system_repositories_ensure "${repositoriesToEnsure}"
   fi
   system_packages_repositories_update
-  if [[ "${ensureBinaries}" -eq 1 ]]; then
+  if [[ "${ENSURE_BINARIES}" = 'true' ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
   fi
@@ -446,7 +449,7 @@ main "$@"
 # -b = install binaries
 # -b awscli curl git wget
 # -d = database engine (MySQL, MariaDB, PosgreSQL)
-# -f = use FPM (affects webserver, PHP)
+# -f = use ENSURE_FPM (affects webserver, PHP)
 # -h = help
 # -l = local database (name, user, password, collation)
 # -m = moodle options
