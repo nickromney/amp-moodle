@@ -126,7 +126,7 @@ check_user_is_root() {
 check_user_can_sudo_without_password_entry() {
   log "Test if user can sudo without entering a password"
   if sudo -v &> /dev/null; then
-    ${USER_CAN_SUDO_WITHOUT_PASSWORD}=true
+    USER_CAN_SUDO_WITHOUT_PASSWORD=true
     log "USER_CAN_SUDO_WITHOUT_PASSWORD value: ${USER_CAN_SUDO_WITHOUT_PASSWORD}"
   else
     log "USER_CAN_SUDO_WITHOUT_PASSWORD value: ${USER_CAN_SUDO_WITHOUT_PASSWORD}"
@@ -407,18 +407,12 @@ main() {
     log "${opt} set to ${!opt}"
   done
 
-  #Set constants to read only
-  #Set an array of constants
-  #Set to readonly
-  #Log values
-
   if [[ "${SHOW_USAGE}" = true ]]; then
     usage
     exit 1
   fi
   check_user_is_root
   if [[ "${USER_IS_ROOT}" = false ]]; then
-    log "this user is not root"
     check_user_can_sudo_without_password_entry
     if [[ "${USER_CAN_SUDO_WITHOUT_PASSWORD}" = false ]]; then
       err "User requires a password to issue sudo commands. Exiting"
@@ -430,10 +424,6 @@ main() {
       log "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
-  for opt in  USER_IS_ROOT USER_CAN_SUDO_WITHOUT_PASSWORD; do
-    readonly ${opt}
-    log "${opt} set to ${!opt}"
-  done
   if [[ "${ENSURE_REPOSITORY}" = true ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_repositories_ensure "${repositoriesToEnsure}"
