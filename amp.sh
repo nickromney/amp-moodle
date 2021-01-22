@@ -95,7 +95,7 @@ apache_get_status() {
 apache_ensure_fpm() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   php_get_version
-  if [[ "${ENSURE_FPM}" = true ]]; then
+  if ${ENSURE_FPM}; then
     echo_stdout_verbose "Enabling Apache modules and config for ENSURE_FPM."
     run_command a2enmod proxy_fcgi setenvif
     run_command a2enconf "php${PHP_VERSION}-fpm"
@@ -153,7 +153,7 @@ echo_stdout() {
 
 echo_stdout_verbose() {
   local message="${*}"
-  if [[ "${VERBOSE}" = true ]]; then
+  if ${VERBOSE}; then
     echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${message}" >&1
   fi
 }
@@ -247,7 +247,7 @@ php_ensure_present() {
   else
     echo_stdout_verbose "PHP is already available"
   fi
-  if [[ "${ENSURE_FPM}" = true ]]; then
+  if ${ENSURE_FPM} ; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
   else
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${PHP_VERSION}")
@@ -255,7 +255,7 @@ php_ensure_present() {
   system_repositories_ensure ppa:ondrej/php
   packagesToEnsure=("${packagesToEnsure[@]}" "${PHP_VERSION}-common")
   system_packages_ensure
-  if [[ "${ENSURE_FPM}" == 1 ]]; then
+  if ${ENSURE_FPM} ; then
     localServiceName="php${PHP_VERSION}-fpm"
   echo_stdout_verbose "Starting ${localServiceName}"
     service_start "${localServiceName}"
@@ -280,10 +280,10 @@ run_command() {
     cat
   fi
   printf -v cmd_str '%q ' "$@"
-  if [[ "${DRY_RUN}" = true ]]; then
+  if ${DRY_RUN} ; then
     echo_stdout_verbose "DRY RUN: Not executing: ${SUDO}${cmd_str}"
   else
-    if [[ "${VERBOSE}" = true ]]; then
+    if ${VERBOSE} ; then
       echo_stdout_verbose "Preparing to execute: ${SUDO}${cmd_str}"
     fi
     ${SUDO} "$@"
@@ -426,6 +426,9 @@ main() {
     echo_stdout_verbose "${opt} has value: ${!opt} ; Setting readonly"
   done
 
+  # option combination validation
+  # w - is it one of (apache,)
+
   if ${SHOW_USAGE}; then
     usage
     exit 1
@@ -444,7 +447,7 @@ main() {
     fi
   fi
   if ${ENSURE_REPOSITORY}; then
-    echo_stdout_verbose "Function main: ENSURE_REPOSITORY"
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_REPOSITORY"
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_repositories_ensure "${repositoriesToEnsure}"
     system_packages_ensure
@@ -453,9 +456,12 @@ main() {
     system_packages_repositories_update
   fi
   if ${ENSURE_BINARIES}; then
-    echo_stdout_verbose "Function main: ENSURE_BINARIES"
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_BINARIES"
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
+  fi
+  if ${ENSURE_WEBSERVER}; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_WEBSERVER"
   fi
   # apache_ensure_present
   # #apache_get_status
