@@ -7,30 +7,34 @@ export LANGUAGE=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 #####################################################
 # USE_COMMAND_LINE_OPTS determines whether to get flags (opts) from the command line
-USE_COMMAND_LINE_OPTS=true
+USE_COMMAND_LINE_OPTS='true'
 # Control logic defaults
 # These are set as defaults
-# If USE_COMMAND_LINE_OPTS=true, then they may be overridden by command-line input
+# If USE_COMMAND_LINE_OPTS='true', then they may be overridden by command-line input
+
+DRY_RUN='false'
+ENSURE_BINARIES='false'
+ENSURE_FPM='false'
+ENSURE_LOCAL_DATABASE_SERVER='false'
+ENSURE_PHP='false'
+ENSURE_REPOSITORY='false'
+ENSURE_ROLES='false'
+ENSURE_SSL='false'
+ENSURE_VIRTUALHOST='false'
+ENSURE_WEBSERVER='false'
+SHOW_USAGE='false'
+VERBOSE='false'
 DATABASE_ENGINE='mariadb'
-DRY_RUN=false
-ENSURE_BINARIES=false
-ENSURE_FPM=false
-ENSURE_MOODLE=false
-ENSURE_REPOSITORY=false
-ENSURE_ROLES=false
-ENSURE_SSL=false
-ENSURE_VIRTUALHOST=false
-ENSURE_WEBSERVER=false
-SHOW_USAGE=false
-VERBOSE=false
+SSL_ENGINE='openssl'
 WEBSERVER_ENGINE='apache'
 declare -a packagesToEnsure
 
 # Used internally by the script
 DATABASE_ENGINE_OPTIONS='mariadb mysql'
+SSL_ENGINE_OPTIONS='openssl ubuntusnakeoil'
 WEBSERVER_ENGINE_OPTIONS='apache nginx nginxproxyingapache'
-USER_REQUIRES_PASSWORD_TO_SUDO=true
-NON_ROOT_USER=true
+USER_REQUIRES_PASSWORD_TO_SUDO='true'
+NON_ROOT_USER='true'
 
 
 # Users
@@ -45,8 +49,8 @@ apacheDocumentRoot="/var/www/html"
 moodleDir="${apacheDocumentRoot}/${moodleSiteName}"
 moodleDataDir="/home/${moodleUser}/moodledata"
 
-# moodleVersion="39"
-moodleVersion="310"
+# MOODLE_VERSION="39"
+MOODLE_VERSION="310"
 
 # PHP Modules
 
@@ -101,11 +105,11 @@ apache_php_integration() {
   if ${ENSURE_FPM}; then
     echo_stdout_verbose "Enabling Apache modules and config for ENSURE_FPM."
     run_command a2enmod proxy_fcgi setenvif
-    run_command a2enconf "php${PHP_VERSION}-fpm"
+    run_command a2enconf "php${DISCOVERED_PHP_VERSION}-fpm"
     system_packages_ensure "libapache2-mod-fcgid"
   else
     echo_stdout_verbose "ENSURE_FPM is not required."
-    system_packages_ensure "libapache2-mod-php${PHP_VERSION}"
+    system_packages_ensure "libapache2-mod-php${DISCOVERED_PHP_VERSION}"
   fi
 }
 
@@ -120,12 +124,17 @@ check_is_command_available() {
   fi
 }
 
+check_is_true() {
+  local valueToCheck="$1"
+  [[ ${valueToCheck} ]]
+}
+
 check_user_is_root() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   echo_stdout_verbose "Test if UID is 0 (root)"
   if [[ "${UID}" -eq 0 ]]; then
     echo_stdout_verbose "Setting NON_ROOT_USER to true"
-    NON_ROOT_USER=true
+    NON_ROOT_USER='true'
   fi
   echo_stdout_verbose "UID value: ${UID}"
   echo_stdout_verbose "NON_ROOT_USER value: ${NON_ROOT_USER}"
@@ -135,7 +144,7 @@ check_user_can_sudo_without_password_entry() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   echo_stdout_verbose "Test if user can sudo without entering a password"
   if sudo -v &> /dev/null; then
-    USER_REQUIRES_PASSWORD_TO_SUDO=false
+    USER_REQUIRES_PASSWORD_TO_SUDO='false'
     echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
   else
     echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
@@ -246,8 +255,8 @@ EOF
 php_get_version() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   # Extract installed PHP version
-  PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
-  echo_stdout_verbose "PHP version is ${PHP_VERSION}"
+  DISCOVERED_PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
+  echo_stdout_verbose "PHP version is ${DISCOVERED_PHP_VERSION}"
 }
 
 php_ensure_present() {
@@ -261,13 +270,13 @@ php_ensure_present() {
   if ${ENSURE_FPM} ; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
   else
-    packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${PHP_VERSION}")
+    packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${DISCOVERED_PHP_VERSION}")
   fi
   system_repositories_ensure ppa:ondrej/php
-  packagesToEnsure=("${packagesToEnsure[@]}" "${PHP_VERSION}-common")
+  packagesToEnsure=("${packagesToEnsure[@]}" "${DISCOVERED_PHP_VERSION}-common")
   system_packages_ensure
   if ${ENSURE_FPM} ; then
-    localServiceName="php${PHP_VERSION}-fpm"
+    localServiceName="php${DISCOVERED_PHP_VERSION}-fpm"
   echo_stdout_verbose "Starting ${localServiceName}"
     service_start "${localServiceName}"
   fi
@@ -354,7 +363,7 @@ usage() {
 }
 
 main() {
-  if ${USE_COMMAND_LINE_OPTS}; then
+  if check_is_true ${USE_COMMAND_LINE_OPTS}; then
     echo_stdout "USE_COMMAND_LINE_OPTS=${USE_COMMAND_LINE_OPTS}"
     # Check for ${#} - the number of positional parameters supplied
     if [[ ${#} -eq 0 ]]; then
@@ -363,10 +372,10 @@ main() {
       exit 1
     else
       echo_stdout_verbose "Parse command line opts"
-      while getopts ":fhlnvb:d:m:p:r:s:w:" flag; do
+      while getopts ":fhlnpvb:d:m:P:r:s:w:" flag; do
         case "${flag}" in
           b)
-            ENSURE_BINARIES=true
+            ENSURE_BINARIES='true'
             echo_stdout_verbose "ENSURE_BINARIES use command-line opt of ${ENSURE_BINARIES}"
             binariesToEnsure=$OPTARG
             ;;
@@ -375,54 +384,53 @@ main() {
             echo_stdout_verbose "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
             ;;
           f)
-            ENSURE_FPM=true
+            ENSURE_FPM='true'
             echo_stdout_verbose "ENSURE_FPM use command-line opt of ${ENSURE_FPM}"
             ;;
           h)
-            SHOW_USAGE=true
+            SHOW_USAGE='true'
             echo_stdout_verbose "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
             ;;
           l )
-            databaseInstallLocalServer=true
-            echo_stdout_verbose "databaseInstallLocalServer use command-line opt of ${databaseInstallLocalServer}"
+            ENSURE_LOCAL_DATABASE_SERVER='true'
+            echo_stdout_verbose "ENSURE_LOCAL_DATABASE_SERVER use command-line opt of ${ENSURE_LOCAL_DATABASE_SERVER}"
             ;;
           m)
             MOODLE_VERSION=${OPTARG}
             echo_stdout_verbose "MOODLE_VERSION use command-line opt of ${MOODLE_VERSION}"
             ;;
           n)
-            DRY_RUN=true
+            DRY_RUN='true'
             echo_stdout_verbose "DRY_RUN use command-line opt of ${DRY_RUN}"
             ;;
           p)
-            ENSURE_REPOSITORY=true
+            ENSURE_PHP='true'
+            echo_stdout_verbose "ENSURE_PHP use command-line opt of ${ENSURE_PHP}"
+            DESIRED_PHP_VERSION=${OPTARG}
+            ;;
+          P)
+            ENSURE_REPOSITORY='true'
             echo_stdout_verbose "ENSURE_REPOSITORY use command-line opt of ${ENSURE_REPOSITORY}"
             repositoriesToEnsure=${OPTARG}
             ;;
           r)
-            ENSURE_ROLES=true
+            ENSURE_ROLES='true'
             echo_stdout_verbose "ENSURE_ROLES use command-line opt of ${ENSURE_ROLES}"
             rolesToEnsure=${OPTARG}
             ;;
           s)
-            ENSURE_SSL=true
+            ENSURE_SSL='true'
             echo_stdout_verbose "ENSURE_SSL use command-line opt of ${ENSURE_SSL}"
-            sslEngine=${OPTARG}
+            SSL_ENGINE=${OPTARG}
             ;;
           v)
-            VERBOSE=true
+            VERBOSE='true'
             echo_stdout_verbose "VERBOSE use command-line opt of ${VERBOSE}"
             ;;
           w)
-            ENSURE_WEBSERVER=true
+            ENSURE_WEBSERVER='true'
             echo_stdout_verbose "ENSURE_WEBSERVER use command-line opt of ${ENSURE_WEBSERVER}"
             WEBSERVER_ENGINE=${OPTARG}
-            if list_includes_item "${WEBSERVER_ENGINE_OPTIONS}" "${WEBSERVER_ENGINE}" ; then
-              echo_stdout_verbose "${WEBSERVER_ENGINE} present in list ${WEBSERVER_ENGINE_OPTIONS}"
-            else
-              echo_stderr "${WEBSERVER_ENGINE} not found in list ${WEBSERVER_ENGINE_OPTIONS}"
-              exit 1
-            fi
             ;;
           \? )
             echo_stderr "Invalid Option: -${OPTARG}"
@@ -437,23 +445,47 @@ main() {
     fi
   fi
 
-  for opt in  USE_COMMAND_LINE_OPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_REPOSITORY \
-              MOODLE_VERSION ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
+  for opt in  USE_COMMAND_LINE_OPTS DRY_RUN VERBOSE SHOW_USAGE ENSURE_BINARIES ENSURE_FPM ENSURE_REPOSITORY \
+              MOODLE_VERSION ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST; do
     readonly ${opt}
     echo_stdout_verbose "${opt} has value: ${!opt} ; Setting readonly"
   done
 
-  # option combination validation
-  # w - is it one of (apache,)
+  # option validation - check values and combinations
+  if [[ -n ${DATABASE_ENGINE} ]]; then
+    if list_includes_item "${DATABASE_ENGINE_OPTIONS}" "${DATABASE_ENGINE}" ; then
+      echo_stdout_verbose "${DATABASE_ENGINE} present in list ${DATABASE_ENGINE_OPTIONS}"
+    else
+      echo_stderr "${DATABASE_ENGINE} not found in list ${DATABASE_ENGINE_OPTIONS}"
+      exit 1
+    fi
+  fi
+  if check_is_true "${ENSURE_SSL}"; then
+    if list_includes_item "${SSL_ENGINE_OPTIONS}" "${SSL_ENGINE}" ; then
+      echo_stdout_verbose "${SSL_ENGINE} present in list ${SSL_ENGINE_OPTIONS}"
+    else
+      echo_stderr "${SSL_ENGINE} not found in list ${SSL_ENGINE_OPTIONS}"
+      exit 1
+    fi
+  fi
+  if [[ -n ${WEBSERVER_ENGINE} ]]; then
+    if list_includes_item "${WEBSERVER_ENGINE_OPTIONS}" "${WEBSERVER_ENGINE}" ; then
+      echo_stdout_verbose "${WEBSERVER_ENGINE} present in list ${WEBSERVER_ENGINE_OPTIONS}"
+    else
+      echo_stderr "${WEBSERVER_ENGINE} not found in list ${WEBSERVER_ENGINE_OPTIONS}"
+      exit 1
+    fi
+  fi
 
-  if ${SHOW_USAGE}; then
+
+  if check_is_true "${SHOW_USAGE}"; then
     usage
     exit 1
   fi
   check_user_is_root
-  if ${NON_ROOT_USER}; then
+  if check_is_true "${NON_ROOT_USER}"; then
     check_user_can_sudo_without_password_entry
-    if ${USER_REQUIRES_PASSWORD_TO_SUDO}; then
+    if check_is_true "${USER_REQUIRES_PASSWORD_TO_SUDO}"; then
       echo_stderr "User requires a password to issue sudo commands. Exiting"
       echo_stderr "Please re-run the script as root, or having sudo'd with a password"
       usage
@@ -463,7 +495,7 @@ main() {
       echo_stdout_verbose "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
-  # if ${ENSURE_REPOSITORY}; then
+  # if check_is_true ${ENSURE_REPOSITORY}; then
   #   echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_REPOSITORY"
   #   packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
   #   system_repositories_ensure "${repositoriesToEnsure}"
@@ -472,39 +504,39 @@ main() {
   # else
   #   system_packages_repositories_update
   # fi
-  if ${ENSURE_BINARIES}; then
+  if check_is_true "${ENSURE_BINARIES}"; then
     echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_BINARIES"
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
   fi
-  # if ${ENSURE_WEBSERVER}; then
-  #   echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_WEBSERVER"
-  #   apache_ensure_present
-  #   apache_get_status
-  #   apache_php_integration
-  # fi
-  # if ${ENSURE_PHP}; then
-  #   echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_PHP"
-  #   php_ensure_present
-  #   php_get_status
-  # fi
-  # if ${ENSURE_SSL}; then
-  #   echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_SSL"
-  # fi
-  # if ${ENSURE_VIRTUALHOST}; then
-  #   echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_VIRTUALHOST"
-  # fi
-  # if ${ENSURE_ROLES}; then
-  #   echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_ROLES"
-  #   # # Write sample website with PHPInfo
-  #   # # Automated download
-  #   # # Download Moodle
-  #   # # Write config
-  #   # # Install Database
-  #   # moodle_configure_directories
-  #   # moodle_download_extract
-  #   # moodle_write_config
-  # fi
+  if check_is_true "${ENSURE_WEBSERVER}"; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_WEBSERVER"
+    apache_ensure_present
+    apache_get_status
+    apache_php_integration
+  fi
+  if check_is_true "${ENSURE_PHP}"; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_PHP"
+    php_ensure_present
+    php_get_status
+  fi
+  if check_is_true "${ENSURE_SSL}"; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_SSL"
+  fi
+  if check_is_true "${ENSURE_VIRTUALHOST}"; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_VIRTUALHOST"
+  fi
+  if check_is_true "${ENSURE_ROLES}"; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_ROLES"
+    # # Write sample website with PHPInfo
+    # # Automated download
+    # # Download Moodle
+    # # Write config
+    # # Install Database
+    # moodle_configure_directories
+    # moodle_download_extract
+    # moodle_write_config
+  fi
 }
 
 main "$@"
