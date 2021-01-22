@@ -72,41 +72,45 @@ moodleVersion="310"
 # Functions
 
 apache_ensure_present() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   system_packages_ensure apache2
   service_enable apache2
   service_start apache2
 }
 
 apache_get_status() {
-  echo_to_stdout "Apache - get service status"
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+  echo_stdout_verbose "Apache - get service status"
   service_action status apache2
-  echo_to_stdout "Apache - get version"
+  echo_stdout_verbose "Apache - get version"
   run_command apache2 -V
-  echo_to_stdout "Apache - list loaded/enabled modules"
+  echo_stdout_verbose "Apache - list loaded/enabled modules"
   run_command apache2ctl -M
-  echo_to_stdout "Apache - list enabled sites"
+  echo_stdout_verbose "Apache - list enabled sites"
   run_command apachectl -S
-  echo_to_stdout "Apache - check configuration files for errors"
+  echo_stdout_verbose "Apache - check configuration files for errors"
   run_command apache2ctl -t
 }
 
 apache_ensure_fpm() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   php_get_version
   if [[ "${ENSURE_FPM}" = true ]]; then
-    echo_to_stdout "Enabling Apache modules and config for ENSURE_FPM."
+    echo_stdout_verbose "Enabling Apache modules and config for ENSURE_FPM."
     run_command a2enmod proxy_fcgi setenvif
     run_command a2enconf "php${PHP_VERSION}-fpm"
     system_packages_ensure "libapache2-mod-fcgid"
   else
-    echo_to_stdout "ENSURE_FPM is not required."
+    echo_stdout_verbose "ENSURE_FPM is not required."
     system_packages_ensure "libapache2-mod-php${PHP_VERSION}"
   fi
 }
 
 check_is_command_available() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local commandToCheck="$1"
   if command -v "${commandToCheck}" &> /dev/null; then
-    echo_to_stdout "${commandToCheck} command available"
+    echo_stdout_verbose "${commandToCheck} command available"
   else
     # propagate error to caller
     return $?
@@ -114,38 +118,48 @@ check_is_command_available() {
 }
 
 check_user_is_root() {
-  echo_to_stdout "Test if UID is 0 (root)"
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+  echo_stdout_verbose "Test if UID is 0 (root)"
   if [[ "${UID}" -eq 0 ]]; then
-    echo_to_stdout "Setting NON_ROOT_USER to true"
+    echo_stdout_verbose "Setting NON_ROOT_USER to true"
     NON_ROOT_USER=true
   fi
-  echo_to_stdout "UID value: ${UID}"
-  echo_to_stdout "NON_ROOT_USER value: ${NON_ROOT_USER}"
+  echo_stdout_verbose "UID value: ${UID}"
+  echo_stdout_verbose "NON_ROOT_USER value: ${NON_ROOT_USER}"
 }
 
 check_user_can_sudo_without_password_entry() {
-  echo_to_stdout "Test if user can sudo without entering a password"
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+  echo_stdout_verbose "Test if user can sudo without entering a password"
   if sudo -v &> /dev/null; then
     USER_REQUIRES_PASSWORD_TO_SUDO=false
-    echo_to_stdout "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
   else
-    echo_to_stdout "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
     # propagate error to caller
     return $?
   fi
 }
 
-echo_to_stderr() {
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
+echo_stderr() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ERROR: ${message}" >&2
 }
 
-echo_to_stdout() {
+echo_stdout() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ${message}" >&1
+}
+
+echo_stdout_verbose() {
+  local message="${*}"
   if [[ "${VERBOSE}" = true ]]; then
-    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&1
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${message}" >&1
   fi
 }
 
 moodle_configure_directories() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   # Add moodle user for moodledata / Change ownerships and permissions
   run_command adduser --system ${moodleUser}
   run_command mkdir -p ${moodleDataDir}
@@ -157,9 +171,10 @@ moodle_configure_directories() {
 }
 
 moodle_download_extract() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   # Download and extract Moodle
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
-  echo_to_stdout "Downloading and extracting ${moodleArchive}"
+  echo_stdout_verbose "Downloading and extracting ${moodleArchive}"
   run_command mkdir -p ${moodleDir}
   run_command wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
   run_command chown -R root:${apacheUser} ${moodleDir}
@@ -167,6 +182,7 @@ moodle_download_extract() {
 }
 
 moodle_write_config() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   FILE_CONFIG="${moodleDir}/config.php"
   echo "Writing file ${moodleDir}/config.php"
 
@@ -217,17 +233,19 @@ EOF
 }
 
 php_get_version() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   # Extract installed PHP version
   PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
-  echo_to_stdout "PHP version is ${PHP_VERSION}"
+  echo_stdout_verbose "PHP version is ${PHP_VERSION}"
 }
 
 php_ensure_present() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   if ! check_is_command_available php; then
     echo "PHP is not yet available. Adding."
     packagesToEnsure=("${packagesToEnsure[@]}" "php")
   else
-    echo_to_stdout "PHP is already available"
+    echo_stdout_verbose "PHP is already available"
   fi
   if [[ "${ENSURE_FPM}" = true ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
@@ -239,19 +257,20 @@ php_ensure_present() {
   system_packages_ensure
   if [[ "${ENSURE_FPM}" == 1 ]]; then
     localServiceName="php${PHP_VERSION}-fpm"
-  echo_to_stdout "Starting ${localServiceName}"
+  echo_stdout_verbose "Starting ${localServiceName}"
     service_start "${localServiceName}"
   fi
 }
 
 php_get_status() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   if ! check_is_command_available php; then
-    echo_to_stderr "PHP is not yet available. Exiting."
+    echo_stderr "PHP is not yet available. Exiting."
     exit
   else
-    echo_to_stdout "List all compiled PHP modules"
+    echo_stdout_verbose "List all compiled PHP modules"
     php -m
-  echo_to_stdout "List all PHP modules installed by package manager"
+  echo_stdout_verbose "List all PHP modules installed by package manager"
     dpkg --get-selections | grep -i php
   fi
 }
@@ -262,24 +281,26 @@ run_command() {
   fi
   printf -v cmd_str '%q ' "$@"
   if [[ "${DRY_RUN}" = true ]]; then
-    echo_to_stdout "DRY RUN: Not executing: ${SUDO}${cmd_str}"
+    echo_stdout_verbose "DRY RUN: Not executing: ${SUDO}${cmd_str}"
   else
     if [[ "${VERBOSE}" = true ]]; then
-      echo_to_stdout "VERBOSE: Preparing to execute: ${SUDO}${cmd_str}"
+      echo_stdout_verbose "Preparing to execute: ${SUDO}${cmd_str}"
     fi
     ${SUDO} "$@"
   fi
 }
 
 service_action() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local action="$1"
   local service="$2"
   run_command systemctl "${action}" "${service}"
 }
 
 system_packages_ensure() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   #uses global array "${packagesToEnsure[@]}"
-  #echo_to_stdout "Checking presence of packages ${packagesToEnsure}"
+  #echo_stdout_verbose "Checking presence of packages ${packagesToEnsure}"
   targetvalue=( "${packagesToEnsure[@]}" )
   declare -p targetvalue
   #echo "use apt list --installed"
@@ -289,112 +310,109 @@ system_packages_ensure() {
 }
 
 system_repositories_ensure() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local repositoriesToEnsure="$1"
 
   run_command add-apt-repository "${repositoriesToEnsure}"
 }
 
 system_packages_repositories_update() {
-  echo_to_stdout "Updating package repositories"
+  echo_stdout_verbose "Updating package repositories"
   run_command apt-get -qq update
 }
 
 usage() {
   # Display the usage
-  echo "Usage: ${0} [-fhlmnp] [-b binaries] [-d engine] [-r repository] [-s SSL provider] [-v virtualhost] [-w webservertype]" >&2
-  echo "  -f FILE  Use FILE for the list of servers. Default: ${SERVER_LIST}." >&2
-  echo '  -n       Dry run mode. Display the COMMAND that would have been executed and exit.' >&2
-  echo '  -s       Execute the COMMAND using sudo on the remote server.' >&2
-  echo '  -b                      Ensure binaries are present' >&2
-  echo '  -d                      Specify database engine (mariadb)' >&2
-  echo '  -f                      Use ENSURE_FPM with PHP and Webserver' >&2
-  echo '  -h                      Print this help text and exit' >&2
-  echo '  -l                      Local database server (uses option -d)' >&2
-  echo '  -m                      Install and configure Moodle' >&2
-  echo "  -n                      Dry run (don't make any changes)" >&2
-  echo '  -p                      Ensure PHP is present' >&2
-  echo '  -r                      Add repository to apt' >&2
-  echo '  -s                      Use SSL (openssl)' >&2
-  echo '  -v                      Ensure Virtualhost is present' >&2
-  echo '  -V       Verbose mode. Displays the server name before executing COMMAND.' >&2
-  echo '  -w                      Ensure Webserver is present (apache)' >&2
+  echo_stdout "Usage: ${0} [-fhlmnp] [-b binaries] [-d engine] [-r repository] [-s SSL provider] [-v virtualhost] [-w webservertype]"
+  echo_stdout "  -f FILE  Use FILE for the list of servers. Default: ${SERVER_LIST}."
+  echo_stdout '  -n       Dry run mode. Display the COMMAND that would have been executed and exit.'
+  echo_stdout '  -s       Execute the COMMAND using sudo on the remote server.'
+  echo_stdout '  -b                      Ensure binaries are present'
+  echo_stdout '  -d                      Specify database engine (mariadb)'
+  echo_stdout '  -f                      Use ENSURE_FPM with PHP and Webserver'
+  echo_stdout '  -h                      Print this help text and exit'
+  echo_stdout '  -l                      Local database server (uses option -d)'
+  echo_stdout '  -m                      Install and configure Moodle'
+  echo_stdout "  -n                      Dry run (don't make any changes)"
+  echo_stdout '  -p                      Ensure PHP is present'
+  echo_stdout '  -r                      Add repository to apt'
+  echo_stdout '  -s                      Use SSL (openssl)'
+  echo_stdout '  -v                      Ensure Virtualhost is present'
+  echo_stdout '  -V       Verbose mode. Displays the server name before executing COMMAND.'
+  echo_stdout '  -w                      Ensure Webserver is present (apache)'
 }
 
 main() {
   if ${USE_COMMAND_LINE_OPTS}; then
-    # We are going to determine VERBOSE logging on or off with an opt, but have not yet parsed it
-    VERBOSE=true
-    echo_to_stdout "USE_COMMAND_LINE_OPTS=${USE_COMMAND_LINE_OPTS}"
+    echo_stdout "USE_COMMAND_LINE_OPTS=${USE_COMMAND_LINE_OPTS}"
     # Check for ${#} - the number of positional parameters supplied
     if [[ ${#} -eq 0 ]]; then
-      echo_to_stderr "No command-line options provided"
+      echo_stdout "No command-line options provided"
       usage
       exit 1
     else
-      echo_to_stdout "Parse command line opts"
-      # Disable VERBOSE logging, and allow setting to derive from opt
-      VERBOSE=false
+      echo_stdout_verbose "Parse command line opts"
       while getopts ":fhlnvb:d:m:p:r:s:w:" flag; do
         case "${flag}" in
           b)
             ENSURE_BINARIES=true
-            echo_to_stdout "ENSURE_BINARIES use command-line opt of ${ENSURE_BINARIES}"
+            echo_stdout_verbose "ENSURE_BINARIES use command-line opt of ${ENSURE_BINARIES}"
             binariesToEnsure=$OPTARG
             ;;
           d)
             DATABASE_ENGINE=$OPTARG
-            echo_to_stdout "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
+            echo_stdout_verbose "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
             ;;
           f)
             ENSURE_FPM=true
-            echo_to_stdout "ENSURE_FPM use command-line opt of ${ENSURE_FPM}"
+            echo_stdout_verbose "ENSURE_FPM use command-line opt of ${ENSURE_FPM}"
             ;;
           h)
             SHOW_USAGE=true
-            echo_to_stdout "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
+            echo_stdout_verbose "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
             ;;
           l )
             databaseInstallLocalServer=true
-            echo_to_stdout "databaseInstallLocalServer use command-line opt of ${databaseInstallLocalServer}"
+            echo_stdout_verbose "databaseInstallLocalServer use command-line opt of ${databaseInstallLocalServer}"
             ;;
           m)
             MOODLE_VERSION=$OPTARG
-            echo_to_stdout "MOODLE_VERSION use command-line opt of ${MOODLE_VERSION}"
+            echo_stdout_verbose "MOODLE_VERSION use command-line opt of ${MOODLE_VERSION}"
             ;;
           n)
             DRY_RUN=true
-            echo_to_stdout "DRY_RUN use command-line opt of ${DRY_RUN}"
+            echo_stdout_verbose "DRY_RUN use command-line opt of ${DRY_RUN}"
             ;;
           p)
             ENSURE_REPOSITORY=true
-            echo_to_stdout "ENSURE_REPOSITORY use command-line opt of ${ENSURE_REPOSITORY}"
+            echo_stdout_verbose "ENSURE_REPOSITORY use command-line opt of ${ENSURE_REPOSITORY}"
             repositoriesToEnsure=$OPTARG
             ;;
           r)
             ENSURE_ROLES=true
-            echo_to_stdout "ENSURE_ROLES use command-line opt of ${ENSURE_ROLES}"
+            echo_stdout_verbose "ENSURE_ROLES use command-line opt of ${ENSURE_ROLES}"
             rolesToEnsure=$OPTARG
             ;;
           s)
             ENSURE_SSL=true
-            echo_to_stdout "ENSURE_SSL use command-line opt of ${ENSURE_SSL}"
+            echo_stdout_verbose "ENSURE_SSL use command-line opt of ${ENSURE_SSL}"
             sslEngine=$OPTARG
             ;;
           v)
             VERBOSE=true
-            echo_to_stdout "VERBOSE use command-line opt of ${VERBOSE}"
+            echo_stdout_verbose "VERBOSE use command-line opt of ${VERBOSE}"
             ;;
           w)
             ENSURE_WEBSERVER=true
-            echo_to_stdout "ENSURE_WEBSERVER use command-line opt of ${ENSURE_WEBSERVER}"
+            echo_stdout_verbose "ENSURE_WEBSERVER use command-line opt of ${ENSURE_WEBSERVER}"
             webserverType=$OPTARG
             ;;
           \? )
-            echo_to_stderr "Invalid Option: -$OPTARG"
+            echo_stderr "Invalid Option: -$OPTARG"
             exit 1
             ;;
           : )
-            echo_to_stderr "Invalid Option: -$OPTARG requires an argument"
+            echo_stderr "Invalid Option: -$OPTARG requires an argument"
             exit 1
             ;;
         esac
@@ -405,7 +423,7 @@ main() {
   for opt in  USE_COMMAND_LINE_OPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_REPOSITORY \
               MOODLE_VERSION ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
     readonly ${opt}
-    echo_to_stdout "${opt} has value: ${!opt} ; Setting readonly"
+    echo_stdout_verbose "${opt} has value: ${!opt} ; Setting readonly"
   done
 
   if ${SHOW_USAGE}; then
@@ -416,17 +434,17 @@ main() {
   if ${NON_ROOT_USER}; then
     check_user_can_sudo_without_password_entry
     if ${USER_REQUIRES_PASSWORD_TO_SUDO}; then
-      echo_to_stderr "User requires a password to issue sudo commands. Exiting"
-      echo_to_stderr "Please re-run the script as root, or having sudo'd with a password"
+      echo_stderr "User requires a password to issue sudo commands. Exiting"
+      echo_stderr "Please re-run the script as root, or having sudo'd with a password"
       usage
       exit 1
     else
       SUDO='sudo '
-      echo_to_stdout "User can issue sudo commands without entering a password. Continuing"
+      echo_stdout_verbose "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
   if ${ENSURE_REPOSITORY}; then
-    echo_to_stdout "Function main: ENSURE_REPOSITORY"
+    echo_stdout_verbose "Function main: ENSURE_REPOSITORY"
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_repositories_ensure "${repositoriesToEnsure}"
     system_packages_ensure
@@ -435,7 +453,7 @@ main() {
     system_packages_repositories_update
   fi
   if ${ENSURE_BINARIES}; then
-    echo_to_stdout "Function main: ENSURE_BINARIES"
+    echo_stdout_verbose "Function main: ENSURE_BINARIES"
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
   fi
