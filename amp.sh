@@ -78,27 +78,27 @@ apache_ensure_present() {
 }
 
 apache_get_status() {
-  log "Apache - get service status"
+  echo_to_stdout "Apache - get service status"
   service_action status apache2
-  log "Apache - get version"
+  echo_to_stdout "Apache - get version"
   run_command apache2 -V
-  log "Apache - list loaded/enabled modules"
+  echo_to_stdout "Apache - list loaded/enabled modules"
   run_command apache2ctl -M
-  log "Apache - list enabled sites"
+  echo_to_stdout "Apache - list enabled sites"
   run_command apachectl -S
-  log "Apache - check configuration files for errors"
+  echo_to_stdout "Apache - check configuration files for errors"
   run_command apache2ctl -t
 }
 
 apache_ensure_fpm() {
   php_get_version
   if [[ "${ENSURE_FPM}" = true ]]; then
-    log "Enabling Apache modules and config for ENSURE_FPM."
+    echo_to_stdout "Enabling Apache modules and config for ENSURE_FPM."
     run_command a2enmod proxy_fcgi setenvif
     run_command a2enconf "php${PHP_VERSION}-fpm"
     system_packages_ensure "libapache2-mod-fcgid"
   else
-    log "ENSURE_FPM is not required."
+    echo_to_stdout "ENSURE_FPM is not required."
     system_packages_ensure "libapache2-mod-php${PHP_VERSION}"
   fi
 }
@@ -106,7 +106,7 @@ apache_ensure_fpm() {
 check_is_command_available() {
   local commandToCheck="$1"
   if command -v "${commandToCheck}" &> /dev/null; then
-    log "${commandToCheck} command available"
+    echo_to_stdout "${commandToCheck} command available"
   else
     # propagate error to caller
     return $?
@@ -114,34 +114,34 @@ check_is_command_available() {
 }
 
 check_user_is_root() {
-  log "Test if UID is 0 (root)"
+  echo_to_stdout "Test if UID is 0 (root)"
   if [[ "${UID}" -eq 0 ]]; then
-    log "Setting NON_ROOT_USER to true"
+    echo_to_stdout "Setting NON_ROOT_USER to true"
     NON_ROOT_USER=true
   fi
-  log "UID value: ${UID}"
-  log "NON_ROOT_USER value: ${NON_ROOT_USER}"
+  echo_to_stdout "UID value: ${UID}"
+  echo_to_stdout "NON_ROOT_USER value: ${NON_ROOT_USER}"
 }
 
 check_user_can_sudo_without_password_entry() {
-  log "Test if user can sudo without entering a password"
+  echo_to_stdout "Test if user can sudo without entering a password"
   if sudo -v &> /dev/null; then
     USER_REQUIRES_PASSWORD_TO_SUDO=false
-    log "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    echo_to_stdout "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
   else
-    log "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    echo_to_stdout "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
     # propagate error to caller
     return $?
   fi
 }
 
-err() {
+echo_to_stderr() {
   echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
 }
 
-log() {
+echo_to_stdout() {
   if [[ "${VERBOSE}" = true ]]; then
-    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*"
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&1
   fi
 }
 
@@ -159,7 +159,7 @@ moodle_configure_directories() {
 moodle_download_extract() {
   # Download and extract Moodle
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
-  log "Downloading and extracting ${moodleArchive}"
+  echo_to_stdout "Downloading and extracting ${moodleArchive}"
   run_command mkdir -p ${moodleDir}
   run_command wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
   run_command chown -R root:${apacheUser} ${moodleDir}
@@ -219,7 +219,7 @@ EOF
 php_get_version() {
   # Extract installed PHP version
   PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
-  log "PHP version is ${PHP_VERSION}"
+  echo_to_stdout "PHP version is ${PHP_VERSION}"
 }
 
 php_ensure_present() {
@@ -227,7 +227,7 @@ php_ensure_present() {
     echo "PHP is not yet available. Adding."
     packagesToEnsure=("${packagesToEnsure[@]}" "php")
   else
-    log "PHP is already available"
+    echo_to_stdout "PHP is already available"
   fi
   if [[ "${ENSURE_FPM}" = true ]]; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
@@ -239,19 +239,19 @@ php_ensure_present() {
   system_packages_ensure
   if [[ "${ENSURE_FPM}" == 1 ]]; then
     localServiceName="php${PHP_VERSION}-fpm"
-  log "Starting ${localServiceName}"
+  echo_to_stdout "Starting ${localServiceName}"
     service_start "${localServiceName}"
   fi
 }
 
 php_get_status() {
   if ! check_is_command_available php; then
-    err "PHP is not yet available. Exiting."
+    echo_to_stderr "PHP is not yet available. Exiting."
     exit
   else
-    log "List all compiled PHP modules"
+    echo_to_stdout "List all compiled PHP modules"
     php -m
-  log "List all PHP modules installed by package manager"
+  echo_to_stdout "List all PHP modules installed by package manager"
     dpkg --get-selections | grep -i php
   fi
 }
@@ -262,10 +262,10 @@ run_command() {
   fi
   printf -v cmd_str '%q ' "$@"
   if [[ "${DRY_RUN}" = true ]]; then
-    log "DRY RUN: Not executing: ${SUDO}${cmd_str}" >&2
+    echo_to_stdout "DRY RUN: Not executing: ${SUDO}${cmd_str}"
   else
     if [[ "${VERBOSE}" = true ]]; then
-      log "VERBOSE: Preparing to execute: ${SUDO}${cmd_str}"
+      echo_to_stdout "VERBOSE: Preparing to execute: ${SUDO}${cmd_str}"
     fi
     ${SUDO} "$@"
   fi
@@ -279,7 +279,7 @@ service_action() {
 
 system_packages_ensure() {
   #uses global array "${packagesToEnsure[@]}"
-  #log "Checking presence of packages ${packagesToEnsure}"
+  #echo_to_stdout "Checking presence of packages ${packagesToEnsure}"
   targetvalue=( "${packagesToEnsure[@]}" )
   declare -p targetvalue
   #echo "use apt list --installed"
@@ -295,7 +295,7 @@ system_repositories_ensure() {
 }
 
 system_packages_repositories_update() {
-  log "Updating package repositories"
+  echo_to_stdout "Updating package repositories"
   run_command apt-get -qq update
 }
 
@@ -324,83 +324,77 @@ main() {
   if ${USE_COMMAND_LINE_OPTS}; then
     # We are going to determine VERBOSE logging on or off with an opt, but have not yet parsed it
     VERBOSE=true
-    log "USE_COMMAND_LINE_OPTS=${USE_COMMAND_LINE_OPTS}"
+    echo_to_stdout "USE_COMMAND_LINE_OPTS=${USE_COMMAND_LINE_OPTS}"
     # Check for ${#} - the number of positional parameters supplied
     if [[ ${#} -eq 0 ]]; then
-      err "No command-line options provided"
+      echo_to_stderr "No command-line options provided"
       usage
       exit 1
     else
-      log "Parse command line opts"
+      echo_to_stdout "Parse command line opts"
       # Disable VERBOSE logging, and allow setting to derive from opt
       VERBOSE=false
-      while getopts ":fhlnVb:d:m:p:r:s:v:w:" flag; do
+      while getopts ":fhlnvb:d:m:p:r:s:w:" flag; do
         case "${flag}" in
           b)
             ENSURE_BINARIES=true
-            log "ENSURE_BINARIES use command-line opt of ${ENSURE_BINARIES}"
+            echo_to_stdout "ENSURE_BINARIES use command-line opt of ${ENSURE_BINARIES}"
             binariesToEnsure=$OPTARG
             ;;
           d)
             DATABASE_ENGINE=$OPTARG
-            log "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
+            echo_to_stdout "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
             ;;
           f)
             ENSURE_FPM=true
-            log "ENSURE_FPM use command-line opt of ${ENSURE_FPM}"
+            echo_to_stdout "ENSURE_FPM use command-line opt of ${ENSURE_FPM}"
             ;;
           h)
             SHOW_USAGE=true
-            log "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
+            echo_to_stdout "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
             ;;
           l )
             databaseInstallLocalServer=true
-            log "databaseInstallLocalServer use command-line opt of ${databaseInstallLocalServer}"
+            echo_to_stdout "databaseInstallLocalServer use command-line opt of ${databaseInstallLocalServer}"
             ;;
           m)
-            ENSURE_MOODLE=true
-            log "ENSURE_MOODLE use command-line opt of ${ENSURE_MOODLE}"
-            moodleOpts=$OPTARG
+            MOODLE_VERSION=$OPTARG
+            echo_to_stdout "MOODLE_VERSION use command-line opt of ${MOODLE_VERSION}"
             ;;
           n)
             DRY_RUN=true
-            log "DRY_RUN use command-line opt of ${DRY_RUN}"
+            echo_to_stdout "DRY_RUN use command-line opt of ${DRY_RUN}"
             ;;
           p)
             ENSURE_REPOSITORY=true
-            log "ENSURE_REPOSITORY use command-line opt of ${ENSURE_REPOSITORY}"
+            echo_to_stdout "ENSURE_REPOSITORY use command-line opt of ${ENSURE_REPOSITORY}"
             repositoriesToEnsure=$OPTARG
             ;;
           r)
             ENSURE_ROLES=true
-            log "ENSURE_ROLES use command-line opt of ${ENSURE_ROLES}"
+            echo_to_stdout "ENSURE_ROLES use command-line opt of ${ENSURE_ROLES}"
             rolesToEnsure=$OPTARG
             ;;
           s)
             ENSURE_SSL=true
-            log "ENSURE_SSL use command-line opt of ${ENSURE_SSL}"
+            echo_to_stdout "ENSURE_SSL use command-line opt of ${ENSURE_SSL}"
             sslEngine=$OPTARG
             ;;
           v)
-            ENSURE_VIRTUALHOST=true
-            log "ENSURE_VIRTUALHOST use command-line opt of ${ENSURE_VIRTUALHOST}"
-            virtualhostOptions=$OPTARG
-            ;;
-          V)
             VERBOSE=true
-            log "VERBOSE use command-line opt of ${VERBOSE}"
+            echo_to_stdout "VERBOSE use command-line opt of ${VERBOSE}"
             ;;
           w)
             ENSURE_WEBSERVER=true
-            log "ENSURE_WEBSERVER use command-line opt of ${ENSURE_WEBSERVER}"
+            echo_to_stdout "ENSURE_WEBSERVER use command-line opt of ${ENSURE_WEBSERVER}"
             webserverType=$OPTARG
             ;;
           \? )
-            err "Invalid Option: -$OPTARG" 1>&2
+            echo_to_stderr "Invalid Option: -$OPTARG"
             exit 1
             ;;
           : )
-            err "Invalid Option: -$OPTARG requires an argument" 1>&2
+            echo_to_stderr "Invalid Option: -$OPTARG requires an argument"
             exit 1
             ;;
         esac
@@ -408,10 +402,10 @@ main() {
     fi
   fi
 
-  for opt in  USE_COMMAND_LINE_OPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_MOODLE ENSURE_REPOSITORY \
-              ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
+  for opt in  USE_COMMAND_LINE_OPTS DRY_RUN VERBOSE SHOW_USAGE DATABASE_ENGINE ENSURE_BINARIES ENSURE_FPM ENSURE_REPOSITORY \
+              MOODLE_VERSION ENSURE_ROLES ENSURE_SSL ENSURE_VIRTUALHOST WEBSERVER_ENGINE; do
     readonly ${opt}
-    log "${opt} has value: ${!opt} ; Setting readonly"
+    echo_to_stdout "${opt} has value: ${!opt} ; Setting readonly"
   done
 
   if ${SHOW_USAGE}; then
@@ -422,17 +416,17 @@ main() {
   if ${NON_ROOT_USER}; then
     check_user_can_sudo_without_password_entry
     if ${USER_REQUIRES_PASSWORD_TO_SUDO}; then
-      err "User requires a password to issue sudo commands. Exiting"
-      err "Please re-run the script as root, or having sudo'd with a password"
+      echo_to_stderr "User requires a password to issue sudo commands. Exiting"
+      echo_to_stderr "Please re-run the script as root, or having sudo'd with a password"
       usage
       exit 1
     else
       SUDO='sudo '
-      log "User can issue sudo commands without entering a password. Continuing"
+      echo_to_stdout "User can issue sudo commands without entering a password. Continuing"
     fi
   fi
   if ${ENSURE_REPOSITORY}; then
-    log "Function main: ENSURE_REPOSITORY"
+    echo_to_stdout "Function main: ENSURE_REPOSITORY"
     packagesToEnsure=("${packagesToEnsure[@]}" "software-properties-common")
     system_repositories_ensure "${repositoriesToEnsure}"
     system_packages_ensure
@@ -441,7 +435,7 @@ main() {
     system_packages_repositories_update
   fi
   if ${ENSURE_BINARIES}; then
-    log "Function main: ENSURE_BINARIES"
+    echo_to_stdout "Function main: ENSURE_BINARIES"
     packagesToEnsure=("${packagesToEnsure[@]}" "${binariesToEnsure}")
     system_packages_ensure
   fi
