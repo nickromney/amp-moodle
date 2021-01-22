@@ -92,7 +92,7 @@ apache_get_status() {
   run_command apache2ctl -t
 }
 
-apache_ensure_fpm() {
+apache_php_integration() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   php_get_version
   if ${ENSURE_FPM}; then
@@ -462,21 +462,32 @@ main() {
   fi
   if ${ENSURE_WEBSERVER}; then
     echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_WEBSERVER"
+    apache_ensure_present
+    apache_get_status
+    apache_php_integration
   fi
-  # apache_ensure_present
-  # #apache_get_status
-  # # With PHP enabled by GitHub Actions
-  # #php_ensure_present
-  # apache_ensure_fpm
-  # #php_get_status
-  # # Write sample website with PHPInfo
-  # # Automated download
-  # # Download Moodle
-  # # Write config
-  # # Install Database
-  # moodle_configure_directories
-  # moodle_download_extract
-  # moodle_write_config
+  if ${ENSURE_PHP}; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_PHP"
+    php_ensure_present
+  fi
+  php_get_status
+  if ${ENSURE_SSL}; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_SSL"
+  fi
+  if ${ENSURE_VIRTUALHOST}; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_VIRTUALHOST"
+  fi
+  if ${ENSURE_ROLES}; then
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]} - ENSURE_ROLES"
+    # # Write sample website with PHPInfo
+    # # Automated download
+    # # Download Moodle
+    # # Write config
+    # # Install Database
+    # moodle_configure_directories
+    # moodle_download_extract
+    # moodle_write_config
+  fi
 }
 
 main "$@"
