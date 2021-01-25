@@ -38,7 +38,7 @@ jobs:
 
     - name: Run amp.sh
       run: |
-        [[ -f ./amp.sh ]] && sudo ./amp.sh || echo "./amp.sh file not present"
+        [[ -f ./amp.sh ]] && sudo ./amp.sh -D mysql -w apache -s openssl -f -n -v -m 3.10 || echo "./amp.sh file not present"
 
     - name: Set test site
       run: |
