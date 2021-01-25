@@ -165,7 +165,7 @@ echo_stdout() {
 
 echo_stdout_verbose() {
   local message="${*}"
-  if ${VERBOSE}; then
+  if check_is_true "${VERBOSE}"; then
     echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${message}" >&1
   fi
 }
@@ -267,7 +267,7 @@ php_ensure_present() {
   else
     echo_stdout_verbose "PHP is already available"
   fi
-  if ${ENSURE_FPM} ; then
+  if check_is_true "${ENSURE_FPM}"; then
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-fcgid")
   else
     packagesToEnsure=("${packagesToEnsure[@]}" "libapache2-mod-php${DISCOVERED_PHP_VERSION}")
@@ -275,7 +275,7 @@ php_ensure_present() {
   system_repositories_ensure ppa:ondrej/php
   packagesToEnsure=("${packagesToEnsure[@]}" "${DISCOVERED_PHP_VERSION}-common")
   system_packages_ensure
-  if ${ENSURE_FPM} ; then
+  if check_is_true "${ENSURE_FPM}"; then
     localServiceName="php${DISCOVERED_PHP_VERSION}-fpm"
   echo_stdout_verbose "Starting ${localServiceName}"
     service_start "${localServiceName}"
@@ -300,10 +300,10 @@ run_command() {
     cat
   fi
   printf -v cmd_str '%q ' "$@"
-  if ${DRY_RUN} ; then
+  if check_is_true "${DRY_RUN}"; then
     echo_stdout_verbose "DRY RUN: Not executing: ${SUDO}${cmd_str}"
   else
-    if ${VERBOSE} ; then
+    if check_is_true "${VERBOSE}"; then
       echo_stdout_verbose "Preparing to execute: ${SUDO}${cmd_str}"
     fi
     ${SUDO} "$@"
