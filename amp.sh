@@ -193,7 +193,7 @@ moodle_configure_directories() {
 moodle_download_extract() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   # Download and extract Moodle
-  local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
+  local moodleArchive="https://download.moodle.org/download.php/direct/stable${MOODLE_VERSION}/moodle-latest-${MOODLE_VERSION}.tgz"
   echo_stdout_verbose "Downloading and extracting ${moodleArchive}"
   run_command mkdir -p ${moodleDir}
   run_command wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
@@ -372,7 +372,7 @@ main() {
       exit 1
     else
       echo_stdout_verbose "Parse command line opts"
-      while getopts ":fhlnpvb:d:m:P:r:s:w:" flag; do
+      while getopts ":dfhnpvb:D:m:P:r:s:w:" flag; do
         case "${flag}" in
           b)
             ENSURE_BINARIES='true'
@@ -380,6 +380,10 @@ main() {
             binariesToEnsure=$OPTARG
             ;;
           d)
+            ENSURE_LOCAL_DATABASE_SERVER='true'
+            echo_stdout_verbose "ENSURE_LOCAL_DATABASE_SERVER use command-line opt of ${ENSURE_LOCAL_DATABASE_SERVER}"
+            ;;
+          D)
             DATABASE_ENGINE=$OPTARG
             echo_stdout_verbose "DATABASE_ENGINE use command-line opt of ${DATABASE_ENGINE}"
             ;;
@@ -390,10 +394,6 @@ main() {
           h)
             SHOW_USAGE='true'
             echo_stdout_verbose "SHOW_USAGE use command-line opt of ${SHOW_USAGE}"
-            ;;
-          l )
-            ENSURE_LOCAL_DATABASE_SERVER='true'
-            echo_stdout_verbose "ENSURE_LOCAL_DATABASE_SERVER use command-line opt of ${ENSURE_LOCAL_DATABASE_SERVER}"
             ;;
           m)
             MOODLE_VERSION=${OPTARG}
@@ -584,3 +584,22 @@ main "$@"
 # install memcached locally
 # populate database
 # install Moosh locally
+
+## To do
+Support multi roles
+Support multi binaries
+Make packagesToEnsure per-function, rather than global
+Implement SSL Functions
+# Non-getopts options
+# Install a local database
+# - test for a server
+# - handle password generation
+# Virtualhosts
+# - domain, owner
+# - download, extract
+# - add PHP info test
+# - curl/wget test
+# - write config function (awk/sed/template/HEREDOC)
+# Add backup scripts
+# Add cron
+#
