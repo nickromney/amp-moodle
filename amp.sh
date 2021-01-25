@@ -343,23 +343,21 @@ system_packages_repositories_update() {
 
 usage() {
   # Display the usage
-  echo_stdout "Usage: ${0} [-fhlmnp] [-b binaries] [-d engine] [-r repository] [-s SSL provider] [-v virtualhost] [-w webservertype]"
-  echo_stdout "  -f FILE  Use FILE for the list of servers. Default: ${SERVER_LIST}."
+  echo_stdout "Usage: ${0} [-b binaries] [-d] [-D engine] [-f] [-h] [-m version] [-M option] [-n] [-p version] [-P repository] [-r role] [-s SSL provider] [-v virtualhost] [-w webservertype]"
+  echo_stdout '  -b       Ensure binaries are present'
+  echo_stdout '  -d       Local database server (uses engine from option -D)'
+  echo_stdout '  -D       Specify database engine (mariadb)'
+  echo_stdout '  -f       Use ENSURE_FPM with PHP and Webserver'
+  echo_stdout '  -h       Print this help text and exit'
+  echo_stdout '  -m       Install and configure Moodle'
+  echo_stdout '  -M       Moodle option'
   echo_stdout '  -n       Dry run mode. Display the COMMAND that would have been executed and exit.'
+  echo_stdout '  -p       Ensure PHP is present. Specify version'
+  echo_stdout '  -P       Add repository to apt'
+  echo_stdout '  -r       Add role'
   echo_stdout '  -s       Execute the COMMAND using sudo on the remote server.'
-  echo_stdout '  -b                      Ensure binaries are present'
-  echo_stdout '  -d                      Specify database engine (mariadb)'
-  echo_stdout '  -f                      Use ENSURE_FPM with PHP and Webserver'
-  echo_stdout '  -h                      Print this help text and exit'
-  echo_stdout '  -l                      Local database server (uses option -d)'
-  echo_stdout '  -m                      Install and configure Moodle'
-  echo_stdout "  -n                      Dry run (don't make any changes)"
-  echo_stdout '  -p                      Ensure PHP is present'
-  echo_stdout '  -r                      Add repository to apt'
-  echo_stdout '  -s                      Use SSL (openssl)'
-  echo_stdout '  -v                      Ensure Virtualhost is present'
-  echo_stdout '  -V       Verbose mode. Displays the server name before executing COMMAND.'
-  echo_stdout '  -w                      Ensure Webserver is present (apache)'
+  echo_stdout '  -v       Verbose mode. Displays the server name before executing COMMAND.'
+  echo_stdout '  -w       Ensure Webserver is present (apache)'
 }
 
 main() {
@@ -372,7 +370,7 @@ main() {
       exit 1
     else
       echo_stdout_verbose "Parse command line opts"
-      while getopts ":dfhnpvb:D:m:P:r:s:w:" flag; do
+      while getopts ":dfhnvb:D:m:p:P:r:s:w:" flag; do
         case "${flag}" in
           b)
             ENSURE_BINARIES='true'
