@@ -126,7 +126,11 @@ check_is_command_available() {
 
 check_is_true() {
   local valueToCheck="$1"
-  [[ ${valueToCheck} ]]
+  if [[ ${valueToCheck} = 'true' ]]; then
+    return 0
+  else
+    return 1
+  fi
 }
 
 check_user_is_root() {
@@ -146,10 +150,10 @@ check_user_can_sudo_without_password_entry() {
   if sudo -v &> /dev/null; then
     USER_REQUIRES_PASSWORD_TO_SUDO='false'
     echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    return 0
   else
     echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
-    # propagate error to caller
-    return $?
+    return 1
   fi
 }
 
@@ -474,8 +478,6 @@ main() {
       exit 1
     fi
   fi
-
-
   if check_is_true "${SHOW_USAGE}"; then
     usage
     exit 1
@@ -584,10 +586,10 @@ main "$@"
 # install Moosh locally
 
 ## To do
-Support multi roles
-Support multi binaries
-Make packagesToEnsure per-function, rather than global
-Implement SSL Functions
+# Support multi roles
+# Support multi binaries
+# Make packagesToEnsure per-function, rather than global
+# Implement SSL Functions
 # Non-getopts options
 # Install a local database
 # - test for a server
