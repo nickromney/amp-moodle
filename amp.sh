@@ -26,6 +26,39 @@ set -o pipefail
 # Turn on traces, useful while debugging but commented out by default
 # set -o xtrace
 
+# Set locale to avoid issues with apt-get
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+export LANGUAGE=en_US.UTF-8
+export LC_CTYPE=en_US.UTF-8
+
+ENSURE_BINARIES='false'
+
+DRY_RUN='false'
+ENSURE_BINARIES='false'
+ENSURE_FPM='false'
+ENSURE_LOCAL_DATABASE_SERVER='false'
+ENSURE_MOODLE='false'
+ENSURE_PHP='false'
+ENSURE_REPOSITORIES='false'
+ENSURE_ROLES='false'
+ENSURE_SSL='false'
+ENSURE_VIRTUALHOST='false'
+ENSURE_WEBSERVER='false'
+SHOW_USAGE='false'
+VERBOSE='false'
+DATABASE_ENGINE='mariadb'
+SSL_ENGINE='openssl'
+WEBSERVER_ENGINE='apache'
+
+# Used internally by the script
+DATABASE_ENGINE_OPTIONS='mariadb mysql'
+SSL_ENGINE_OPTIONS='openssl ubuntusnakeoil'
+WEBSERVER_ENGINE_OPTIONS='apache nginx nginxproxyingapache'
+USER_REQUIRES_PASSWORD_TO_SUDO='true'
+NON_ROOT_USER='true'
+
+
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   __i_am_main_script="0" # false
 
@@ -123,6 +156,251 @@ function help () {
   exit 1
 }
 
+apache_ensure_present() {
+  system_packages_ensure apache2
+  service_enable apache2
+  service_start apache2
+}
+
+apache_get_status() {
+  info "Apache - get service status"
+  service_action status apache2
+  info "Apache - get version"
+  run_command apache2 -V
+  info "Apache - list loaded/enabled modules"
+  run_command apache2ctl -M
+  info "Apache - list enabled sites"
+  run_command apachectl -S
+  info "Apache - check configuration files for errors"
+  run_command apache2ctl -t
+}
+
+apache_php_integration() {
+  php_get_version
+  if ${ENSURE_FPM}; then
+    info "Enabling Apache modules and config for ENSURE_FPM."
+    run_command a2enmod proxy_fcgi setenvif
+    run_command a2enconf "php${DISCOVERED_PHP_VERSION}-fpm"
+    system_packages_ensure "libapache2-mod-fcgid"
+  else
+    info "ENSURE_FPM is not required."
+    system_packages_ensure "libapache2-mod-php${DISCOVERED_PHP_VERSION}"
+  fi
+}
+
+check_is_command_available() {
+  local commandToCheck="$1"
+  if command -v "${commandToCheck}" &> /dev/null; then
+    info "${commandToCheck} command available"
+  else
+    # propagate error to caller
+    return $?
+  fi
+}
+
+check_is_true() {
+  local valueToCheck="$1"
+  if [[ ${valueToCheck} = 'true' ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+check_user_is_root() {
+  info "Test if UID is 0 (root)"
+  if [[ "${UID}" -eq 0 ]]; then
+    info "Setting NON_ROOT_USER to true"
+    NON_ROOT_USER='true'
+  fi
+  info "UID value: ${UID}"
+  info "NON_ROOT_USER value: ${NON_ROOT_USER}"
+}
+
+check_user_can_sudo_without_password_entry() {
+
+  info "Test if user can sudo without entering a password"
+  if sudo -v &> /dev/null; then
+    USER_REQUIRES_PASSWORD_TO_SUDO='false'
+    info "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    return 0
+  else
+    info "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
+    return 1
+  fi
+}
+
+# list_includes_item "10 11 12" "2"
+list_includes_item() {
+  local list="$1"
+  local item="$2"
+  [[ $list =~ (^|[[:space:]])"$item"($|[[:space:]]) ]]
+  # exit code 0 for "yes, list does include item"
+}
+
+moodle_configure_directories() {
+
+  # Add moodle user for moodledata / Change ownerships and permissions
+  run_command adduser --system ${moodleUser}
+  run_command mkdir -p ${moodleDataDir}
+  run_command chown -R ${apacheUser}:${apacheUser} ${moodleDataDir}
+  run_command chmod 0777 ${moodleDataDir}
+  run_command mkdir -p ${moodleDir}
+  run_command chown -R root:${apacheUser} ${moodleDir}
+  run_command chmod -R 0755 ${moodleDir}
+}
+
+moodle_download_extract() {
+
+  # Download and extract Moodle
+  local moodleArchive="https://download.moodle.org/download.php/direct/stable${MOODLE_VERSION}/moodle-latest-${MOODLE_VERSION}.tgz"
+  info "Downloading and extracting ${moodleArchive}"
+  run_command mkdir -p ${moodleDir}
+  run_command wget -qO - "${moodleArchive}" | tar zx -C ${moodleDir} --strip-components 1
+  run_command chown -R root:${apacheUser} ${moodleDir}
+  run_command chmod -R 0755 ${moodleDir}
+}
+
+moodle_write_config() {
+
+  FILE_CONFIG="${moodleDir}/config.php"
+  echo "Writing file ${moodleDir}/config.php"
+
+run_command tee "$FILE_CONFIG" > /dev/null << EOF
+<?php  // Moodle configuration file
+
+unset(\$CFG);
+global \$CFG;
+\$CFG = new stdClass();
+
+\$CFG->dbtype  = 'mysql';
+\$CFG->dblibrary = 'native';
+\$CFG->dbhost  = 'localhost';
+\$CFG->dbname  = 'test_db';
+\$CFG->dbuser  = 'root';
+\$CFG->dbpass  = 'root';
+\$CFG->prefix  = 'mdl_';
+\$CFG->dboptions = array (
+  'dbpersist' => 0,
+  'dbport' => '3306',
+  'dbsocket' => '',
+  'dbcollation' => 'utf8mb4_unicode_ci',
+);
+
+\$CFG->wwwroot   = 'https://${moodleSiteName}';
+\$CFG->dataroot  = '${moodleDataDir}';
+\$CFG->admin   = 'admin';
+
+\$CFG->directorypermissions = 0777;
+EOF
+
+#if memcached_enabled=1
+#Append
+run_command tee -a "$FILE_CONFIG" > /dev/null << EOF
+\$CFG->session_handler_class = '\core\session\memcached';
+\$CFG->session_memcached_save_path = '${memcachedServer}:11211';
+\$CFG->session_memcached_prefix = 'memc.sess.key.';
+\$CFG->session_memcached_acquire_lock_timeout = 120;
+\$CFG->session_memcached_lock_expire = 7200;
+EOF
+
+run_command tee -a "$FILE_CONFIG" > /dev/null << EOF
+require_once(__DIR__ . '/lib/setup.php');
+
+// There is no php closing tag in this file,
+// it is intentional because it prevents trailing whitespace problems!
+EOF
+}
+
+php_get_version() {
+
+  # Extract installed PHP version
+  DISCOVERED_PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -c 1-3)
+  info "PHP version is ${DISCOVERED_PHP_VERSION}"
+}
+
+php_ensure_present() {
+
+  if ! check_is_command_available php; then
+    echo "PHP is not yet available. Adding."
+    phpModulesToEnsure=("${phpModulesToEnsure[@]}" "php")
+  else
+    info "PHP is already available"
+  fi
+  if check_is_true "${ENSURE_FPM}"; then
+    phpModulesToEnsure=("${phpModulesToEnsure[@]}" "libapache2-mod-fcgid")
+  else
+    phpModulesToEnsure=("${phpModulesToEnsure[@]}" "libapache2-mod-php${DISCOVERED_PHP_VERSION}")
+  fi
+  system_repositories_ensure ppa:ondrej/php
+  phpModulesToEnsure=("${phpModulesToEnsure[@]}" "${DISCOVERED_PHP_VERSION}-common")
+  system_packages_ensure "${phpModulesToEnsure[@]}"
+  if check_is_true "${ENSURE_FPM}"; then
+    localServiceName="php${DISCOVERED_PHP_VERSION}-fpm"
+  info "Starting ${localServiceName}"
+    service_start "${localServiceName}"
+  fi
+}
+
+php_get_status() {
+
+  if ! check_is_command_available php; then
+    error "PHP is not yet available. Exiting."
+    exit
+  else
+    info "List all compiled PHP modules"
+    php -m
+  info "List all PHP modules installed by package manager"
+    dpkg --get-selections | grep -i php
+  fi
+}
+
+run_command() {
+  if [[ ! -t 0 ]]; then
+    cat
+  fi
+  printf -v cmd_str '%q ' "$@"
+  if check_is_true "${DRY_RUN}"; then
+    info "DRY RUN: Not executing: ${SUDO}${cmd_str}"
+  else
+    if check_is_true "${VERBOSE}"; then
+      info "Preparing to execute: ${SUDO}${cmd_str}"
+    fi
+    ${SUDO} "$@"
+  fi
+}
+
+service_action() {
+
+  local action="$1"
+  local service="$2"
+  run_command systemctl "${action}" "${service}"
+}
+
+system_packages_ensure() {
+  local packagesToEnsure=("$@")
+  for package in "${packagesToEnsure[@]}"; do
+    info "Ensuring presence of package ${package}"
+    apt -qq list "${package}" --installed
+    # Install if not present, but don't upgrade if present
+    run_command apt-get -qy install --no-upgrade "${package}"
+  done
+}
+
+system_repositories_ensure() {
+  local repositoriesToEnsure=("$@")
+  for repository in "${repositoriesToEnsure[@]}"; do
+    info "Ensuring repository ${repository}"
+    run_command add-apt-repository "${repository}"
+  done
+}
+
+system_packages_repositories_update() {
+  info "Updating package repositories"
+  run_command apt-get -qq update
+}
+
+
 
 ### Parse commandline options
 ##############################################################################
@@ -137,21 +415,22 @@ function help () {
 
 # shellcheck disable=SC2015
 [[ "${__usage+x}" ]] || read -r -d '' __usage <<-'EOF' || true # exits non-zero when EOF encountered
-  -b --binary    [arg] Ensure binary is present. Specify binary name. Can be repeated
-  -d --database        Ensure database server is installed locally. Uses --dbengine option
-  -D --dbengine  [arg] Specify database engine for connections [mysql|mariadb]
-  -h --help            This page
-  -n --dryrun          Enable dry run mode (do not make changes)
-  -N --no-color        Disable color output
-  -m --moodle    [arg] Ensure Moodle is present. Specify version
-  -M --moodleopt [arg] Add Moodle option. Can be repeated [installdb|moosh|memcached|localmemcached]
-  -p --php       [arg] Ensure PHP is present. Specify version [7.4|8.0]
-  -P --phpmod    [arg] Ensure PHP module is present. Can be repeated
-  -s --ssl       [arg] Ensure SSL is used. Specify provider [openssl|ubuntusnakeoil]
-  -v                   Enable verbose mode, print script as it is executed
-  -w --webserver [arg] Ensure webserver is present. Specify engine [apache|nginx]
-  -W --webroot   [arg] Specify webroot
-  -x --debug           Enables debug mode
+  -B --binary     [arg] Ensure binary is present. Specify binary name. Can be repeated.
+  -d --database         Ensure database server is installed locally. Uses --dbengine argumentoption
+  -D --dbengine   [arg] Specify database engine for connections. Default="mysql"
+  -h --help             This page
+  -n --dryrun           Enable dry run mode (do not make changes)
+  -N --no-color         Disable color output
+  -m --moodle     [arg] Ensure Moodle is present. Specify version.
+  -M --moodleopt  [arg] Add Moodle option. [installdb|moosh|memcached|localmemcached]. Can be repeated.
+  -p --php        [arg] Ensure PHP is present. Specify version [7.4|8.0]
+  -P --phpmod     [arg] Ensure PHP module is present. Can be repeated.
+  -R --repository [arg] Ensure Package repository is present. Can be repeated.
+  -s --ssl        [arg] Ensure SSL is used. Specify provider [openssl|ubuntusnakeoil].
+  -v --verbose          Enable verbose mode, print script as it is executed
+  -w --webserver  [arg] Ensure webserver is present. Specify engine.
+  -W --webroot    [arg] Specify webroot
+  -x --debug            Enables debug mode
 EOF
 
 # shellcheck disable=SC2015
@@ -381,23 +660,12 @@ __b3bp_err_report() {
 ### Command-line argument switches (like -x for debugmode, -h for showing helppage)
 ##############################################################################
 
-# debug mode
-if [[ "${arg_x:?}" = "1" ]]; then
-  set -o xtrace
-  PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
-  LOG_LEVEL="7"
-  # Enable error backtracing
-  trap '__b3bp_err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+if [[ -n "${arg_B:-}" ]]; then
+  ENSURE_BINARIES="true"
 fi
 
-# verbose mode
-if [[ "${arg_v:?}" = "1" ]]; then
-  set -o verbose
-fi
-
-# no color mode
-if [[ "${arg_N:?}" = "1" ]]; then
-  NO_COLOR="true"
+if [[ -n "${arg_R:-}" ]]; then
+  ENSURE_REPOSITORIES="true"
 fi
 
 # help mode
@@ -406,6 +674,24 @@ if [[ "${arg_h:?}" = "1" ]]; then
   help "Help using ${0}"
 fi
 
+# no color mode
+if [[ "${arg_N:?}" = "1" ]]; then
+  NO_COLOR="true"
+fi
+
+# verbose mode
+if [[ "${arg_v:?}" = "1" ]]; then
+  set -o verbose
+fi
+
+# debug mode
+if [[ "${arg_x:?}" = "1" ]]; then
+  set -o xtrace
+  PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+  LOG_LEVEL="7"
+  # Enable error backtracing
+  trap '__b3bp_err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+fi
 
 ### Validation. Error out if the things required for your script are not present
 ##############################################################################
@@ -422,6 +708,14 @@ info "__dir: ${__dir}"
 info "__base: ${__base}"
 info "OSTYPE: ${OSTYPE}"
 
+if [[ -n "${arg_B:-}" ]]; then
+  info "arg_B: ${#arg_B[@]}"
+  for binary in "${arg_B[@]}"; do
+    info " - ${binary}"
+  done
+else
+  info "arg_B: 0"
+fi
 info "arg_d: ${arg_d}"
 info "arg_D: ${arg_D}"
 info "arg_h: ${arg_h}"
@@ -445,47 +739,21 @@ if [[ -n "${arg_P:-}" ]]; then
 else
   info "arg_P: 0"
 fi
+if [[ -n "${arg_R:-}" ]]; then
+  info "arg_R: ${#arg_R[@]}"
+  for repository in "${arg_R[@]}"; do
+    info " - ${repository}"
+  done
+else
+  info "arg_R: 0"
+fi
 info "arg_s: ${arg_s}"
 info "arg_v: ${arg_v}"
 info "arg_w: ${arg_w}"
 info "arg_W: ${arg_W}"
 info "arg_x: ${arg_x}"
 
-# shellcheck disable=SC2015
-if [[ -n "${arg_b:-}" ]] && declare -p arg_b 2> /dev/null | grep -q '^declare \-a'; then
-  info "arg_b:"
-  for input_file in "${arg_b[@]}"; do
-    info " - ${input_file}"
-  done
-elif [[ -n "${arg_b:-}" ]]; then
-  info "arg_b: ${arg_b}"
-else
-  info "arg_b: 0"
-fi
-
-# shellcheck disable=SC2015
-if [[ -n "${arg_i:-}" ]] && declare -p arg_i 2> /dev/null | grep -q '^declare \-a'; then
-  info "arg_i:"
-  for input_file in "${arg_i[@]}"; do
-    info " - ${input_file}"
-  done
-elif [[ -n "${arg_i:-}" ]]; then
-  info "arg_i: ${arg_i}"
-else
-  info "arg_i: 0"
-fi
-
-# shellcheck disable=SC2015
-if [[ -n "${arg_x:-}" ]] && declare -p arg_x 2> /dev/null | grep -q '^declare \-a'; then
-  info "arg_x: ${#arg_x[@]}"
-elif [[ -n "${arg_x:-}" ]]; then
-  info "arg_x: ${arg_x}"
-else
-  info "arg_x: 0"
-fi
-
-info "$(echo -e "multiple lines example - line #1\\nmultiple lines example - line #2\\nimagine logging the output of 'ls -al /path/'")"
-
+#info "$(echo -e "multiple lines example - line #1\\nmultiple lines example - line #2\\nimagine logging the output of 'ls -al /path/'")"
 # All of these go to STDERR, so you can use STDOUT for piping machine readable information to other software
 # debug "Info useful to developers for debugging the application, not useful during operations."
 # info "Normal operational messages - may be harvested for reporting, measuring throughput, etc. - no action required."
@@ -495,3 +763,70 @@ info "$(echo -e "multiple lines example - line #1\\nmultiple lines example - lin
 # critical "Should be corrected immediately, but indicates failure in a primary system, an example is a loss of a backup ISP connection."
 # alert "Should be corrected immediately, therefore notify staff who can fix the problem. An example would be the loss of a primary ISP connection."
 # emergency "A \"panic\" condition usually affecting multiple apps/servers/sites. At this level it would usually notify all tech staff on call."
+
+### Main logic
+
+  check_user_is_root
+  if check_is_true "${NON_ROOT_USER}"; then
+    check_user_can_sudo_without_password_entry
+    if check_is_true "${USER_REQUIRES_PASSWORD_TO_SUDO}"; then
+      error "User requires a password to issue sudo commands. Exiting"
+      error "Please re-run the script as root, or having sudo'd with a password"
+      usage
+      exit 1
+    else
+      SUDO='sudo '
+      info "User can issue sudo commands without entering a password. Continuing"
+    fi
+  fi
+
+  if check_is_true "${ENSURE_BINARIES}"; then
+    for binary in "${arg_B[@]}"; do
+      system_packages_ensure "${binary}"
+    done
+  fi
+  if check_is_true "${ENSURE_REPOSITORIES}"; then
+    for repository in "${arg_R[@]}"; do
+      system_repositories_ensure "${repository}"
+    done
+  fi
+  if check_is_true "${ENSURE_WEBSERVER}"; then
+    system_packages_ensure apache2
+    service_action enable apache2
+    service_action start apache2
+  fi
+  if check_is_true "${ENSURE_PHP}"; then
+    if ! check_is_command_available php; then
+      echo "PHP is not yet available. Adding."
+      phpPackagesToEnsure=("${phpPackagesToEnsure[@]}" "php")
+    else
+      echo_stdout_verbose "PHP is already available"
+    fi
+    if check_is_true "${ENSURE_FPM}"; then
+      phpPackagesToEnsure=("${phpPackagesToEnsure[@]}" "libapache2-mod-fcgid")
+    else
+      phpPackagesToEnsure=("${phpPackagesToEnsure[@]}" "libapache2-mod-php${DISCOVERED_PHP_VERSION}")
+    fi
+    system_repositories_ensure ppa:ondrej/php
+    phpPackagesToEnsure=("${phpPackagesToEnsure[@]}" "${DISCOVERED_PHP_VERSION}-common")
+    for phpPackage in "${phpPackagesToEnsure[@]}"; do
+      system_packages_ensure "${phpPackage}"
+    done
+    if check_is_true "${ENSURE_FPM}"; then
+      localServiceName="php${DISCOVERED_PHP_VERSION}-fpm"
+    echo_stdout_verbose "Starting ${localServiceName}"
+      service_action start "${localServiceName}"
+    fi
+  fi
+  if check_is_true "${ENSURE_LOCAL_DATABASE_SERVER}"; then
+    info "Install local database server"
+  fi
+  if check_is_true "${ENSURE_SSL}"; then
+    info "Ensure SSL"
+  fi
+  if check_is_true "${ENSURE_VIRTUALHOST}"; then
+    info "Ensure Virtualhost"
+  fi
+  if check_is_true "${ENSURE_MOODLE}"; then
+    info "Ensure Moodle"
+  fi
