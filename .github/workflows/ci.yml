@@ -8,7 +8,7 @@ on:
 jobs:
   ci:
     name: Run amp.sh
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     env:
       DB_DATABASE: test_db
@@ -38,8 +38,8 @@ jobs:
 
     - name: Run amp.sh
       run: |
-        ./amp.sh -D mysql -w apache -s openssl -f -n -v -m 3.10
+        ./gptamp.sh -a -f -m 310
 
-    - name: Set test site
-      run: |
-        sudo ./virtualhost.sh create myblog.dev wordpress
+    # - name: Set test site
+    #   run: |
+    #     sudo ./virtualhost.sh create myblog.dev wordpress
