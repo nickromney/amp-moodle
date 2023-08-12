@@ -1,32 +1,78 @@
-#!/bin/bash
-#set -Eeuxo pipefail  # From https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
+#!/usr/bin/env bash
+# This shebang line uses the env command to locate the bash interpreter in the user's PATH
+#  environment variable. This means that the script will be executed with the bash interpreter
+#  that is found first in the user's PATH. This approach is more flexible and portable because
+#  it relies on the system's PATH to find the appropriate interpreter.
+#  It can be particularly useful in situations where the exact path to the interpreter
+#  might vary across different systems.
+
+# Exit on error. Append "|| true" if you expect an error.
+set -o errexit
+# Exit on error inside any functions or subshells.
+set -o errtrace
+# Do not allow use of undefined vars. Use ${VAR:-} to use an undefined VAR
+set -o nounset
+
 # Set locale to avoid issues with apt-get
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
+
+
 #####################################################
 # USE_COMMAND_LINE_OPTS determines whether to get flags (opts) from the command line
-USE_COMMAND_LINE_OPTS='true'
+# USE_COMMAND_LINE_OPTS='true'
 # Control logic defaults
 # These are set as defaults
 # If USE_COMMAND_LINE_OPTS='true', then they may be overridden by command-line input
 
-DRY_RUN='false'
-ENSURE_BINARIES='false'
-ENSURE_FPM='false'
-ENSURE_LOCAL_DATABASE_SERVER='false'
-ENSURE_PHP='false'
-ENSURE_REPOSITORY='false'
-ENSURE_ROLES='false'
-ENSURE_SSL='false'
-ENSURE_VIRTUALHOST='false'
-ENSURE_WEBSERVER='false'
-SHOW_USAGE='false'
-VERBOSE='false'
-DATABASE_ENGINE='mariadb'
-SSL_ENGINE='openssl'
-WEBSERVER_ENGINE='apache'
+declare -A options
+
+# Initialize default options
+options=(
+  ["USE_COMMAND_LINE_OPTS"]=true
+  ["DRY_RUN"]=false
+  ["ENSURE_BINARIES"]=false
+  ["ENSURE_FPM"]=false
+  ["ENSURE_LOCAL_DATABASE_SERVER"]=false
+  ["ENSURE_PHP"]=false
+  ["ENSURE_REPOSITORY"]=false
+  ["ENSURE_ROLES"]=false
+  ["ENSURE_SSL"]=false
+  ["ENSURE_VIRTUALHOST"]=false
+  ["ENSURE_WEBSERVER"]=false
+  ["SHOW_USAGE"]=false
+  ["VERBOSE"]=false
+  ["DATABASE_ENGINE"]='mariadb'
+  ["SSL_ENGINE"]='openssl'
+  ["WEBSERVER_ENGINE"]='apache'
+)
+
+# Handle command-line options
+handle_options() {
+  while getopts ":b:dD:fhm:np:P:r:s:vw:" flag; do
+    case "${flag}" in
+      b) options["ENSURE_BINARIES"]=true; binariesToEnsure="$OPTARG" ;;
+      d) options["ENSURE_LOCAL_DATABASE_SERVER"]=true ;;
+      D) options["DATABASE_ENGINE"]=$OPTARG ;;
+      f) options["ENSURE_FPM"]=true ;;
+      h) options["SHOW_USAGE"]=true ;;
+      m) options["MOODLE_VERSION"]=$OPTARG ;;
+      n) options["DRY_RUN"]=true ;;
+      p) options["ENSURE_PHP"]=true; desiredPhpVersion="$OPTARG" ;;
+      P) options["ENSURE_REPOSITORY"]=true; repositoriesToEnsure="$OPTARG" ;;
+      r) options["ENSURE_ROLES"]=true; rolesToEnsure="$OPTARG" ;;
+      s) options["ENSURE_SSL"]=true; sslEngine="$OPTARG" ;;
+      v) options["ENSURE_VIRTUALHOST"]=true; domain="$OPTARG" ;;
+      w) options["ENSURE_WEBSERVER"]=true; webserverType="$OPTARG" ;;
+      \?) echo_stderr "Invalid Option: -${OPTARG}" && exit 1 ;;
+      :) echo_stderr "Invalid Option: -${OPTARG} requires an argument" && exit 1 ;;
+    esac
+  done
+}
+
+
 declare -a packagesToEnsure
 
 # Used internally by the script
