@@ -132,15 +132,19 @@ run_command() {
 
 # Function to install Apache web server
 install_apache() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
     # Install Apache and enable required modules
     echo_stdout_verbose "Installing Apache..."
     run_command apt-get install --yes apache2
 
     if $INSTALL_FPM; then
+        echo_stdout_verbose "Installing PHP FPM..."
+        run_command apt-get install --yes "php${PHP_VERSION}-fpm"
+        echo_stdout_verbose "Installing Apache FCGI..."
+        run_command apt-get install --yes "libapache2-mod-fcgid"
         echo_stdout_verbose "Configuring Apache for FPM..."
         run_command a2enmod proxy_fcgi setenvif
         run_command a2enconf "php${PHP_VERSION}-fpm"
-        run_command apt-get install --yes "libapache2-mod-fcgid"
         run_command service "php${PHP_VERSION}-fpm" start
     else
         echo_stdout_verbose "Configuring Apache without FPM..."
@@ -153,6 +157,7 @@ install_apache() {
 }
 
 create_apache_vhost() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
     local siteName=""
     local documentRoot=""
     local adminEmail=""
@@ -209,6 +214,7 @@ cert_provider() {
 }
 
 cert_request() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
     local domain=""
     local email=""
     local san_entries=""
@@ -233,7 +239,7 @@ cert_request() {
 
     # Install Certbot
     run_command apt-get update
-    run_command apt-get install -y certbot python3-certbot-apache
+    run_command apt-get install --yes certbot python3-certbot-apache
 
     # Prepare SAN entries
     local san_flag=""
@@ -247,6 +253,7 @@ cert_request() {
 
 # Function to install PHP and required extensions
 install_php() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
     echo_stdout_verbose "Checking PHP configuration..."
 
@@ -301,9 +308,9 @@ install_php() {
         # The xmlrpc extension is recommended (required for networking and web services).
         # The zip extension is required.
 
-        run_command apt install -y --no-install-recommends "php${PHP_VERSION}"
+        run_command apt install --yes --no-install-recommends "php${PHP_VERSION}"
 
-        run_command apt-get install -y "libapache2-mod-php${PHP_VERSION}" \
+        run_command apt-get install --yes "libapache2-mod-php${PHP_VERSION}" \
             "php${PHP_VERSION}-common" \
             "php${PHP_VERSION}-curl" \
             "php${PHP_VERSION}-gd" \
@@ -317,7 +324,7 @@ install_php() {
 
                 if [ "${DB_TYPE}" == "pgsql" ]; then
                     # Install php-pgsql extension for PostgreSQL
-                    run_command apt-get install -y "php${PHP_VERSION}-pgsql"
+                    run_command apt-get install - "php${PHP_VERSION}-pgsql"
                 else
                     # Install php-mysqli extension for MySQL and MariaDB
                     # Note php-mysql is deprecated in PHP 7.0 and removed in PHP 7.2
@@ -328,8 +335,10 @@ install_php() {
 }
 
 moodle_config_files() {
-    local configDist="config-dist.php"
-    local configFile="config.php"
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+    local configDir="${1}"
+    local configDist="${configDir}/config-dist.php"
+    configFile="${configDir}/config.php"
 
     if [ -f "${configDist}" ]; then
         if [ -f "${configFile}" ]; then
@@ -361,6 +370,7 @@ moodle_config_files() {
 
 
 moodle_configure_directories() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local moodleUser="${1}"
   local apacheUser="${2}"
   local moodleDataDir="${3}"
@@ -378,6 +388,7 @@ moodle_configure_directories() {
 }
 
 moodle_download_extract() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
   local apacheUser="${2}"
   local moodleVersion="${3}"
@@ -421,7 +432,7 @@ main() {
     if $INSTALL_MOODLE; then
         moodle_configure_directories "${moodleUser}" "${apacheUser}" "${moodleDataDir}" "${moodleDir}"
         moodle_download_extract "${moodleDir}" "${apacheUser}" "${MOODLE_VERSION}"
-        moodle_config_files
+        moodle_config_files "${moodleDir}"
         create_apache_vhost \
             --site-name "${moodleSiteName}" \
             --document-root "/var/www/html/${moodleSiteName}" \
