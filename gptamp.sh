@@ -152,6 +152,98 @@ install_apache() {
     echo_stdout_verbose "Apache installation and configuration completed."
 }
 
+create_apache_vhost() {
+    local siteName=""
+    local documentRoot=""
+    local adminEmail=""
+    local sslCertFile=""
+    local sslKeyFile=""
+    local includeFile=""
+    local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --site-name) shift; siteName="$1"; shift ;;
+            --document-root) shift; documentRoot="$1"; shift ;;
+            --admin-email) shift; adminEmail="$1"; shift ;;
+            --ssl-cert-file) shift; sslCertFile="$1"; shift ;;
+            --ssl-key-file) shift; sslKeyFile="$1"; shift ;;
+            --include-file) shift; includeFile="$1"; shift ;;
+            --log-dir) shift; logDir="$1"; shift ;;
+            *) echo_stderr "Invalid option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$siteName" ] || [ -z "$documentRoot" ] || [ -z "$adminEmail" ] || [ -z "$sslCertFile" ] || [ -z "$sslKeyFile" ]; then
+        echo_stderr "Missing or incomplete parameters. Usage: create_apache_vhost --site-name siteName --document-root documentRoot --admin-email adminEmail --ssl-cert-file sslCertFile --ssl-key-file sslKeyFile [--include-file includeFile] [--log-dir logDir]"
+        exit 1
+    fi
+
+    echo "<IfModule mod_ssl.c>
+    <VirtualHost *:80>
+        ServerName ${siteName}
+        Redirect / https://${siteName}/
+    </VirtualHost>
+    <VirtualHost *:443>
+        ServerAdmin ${adminEmail}
+        DocumentRoot ${documentRoot}
+        ServerName ${siteName}
+        ServerAlias ${siteName}
+        ErrorLog ${logDir}/error.log
+        CustomLog ${logDir}/access.log combined
+        SSLCertificateFile ${sslCertFile}
+        SSLCertificateKeyFile ${sslKeyFile}
+        ${includeFile:+Include ${includeFile}}
+    </VirtualHost>
+</IfModule>"
+}
+
+cert_provider() {
+    local provider=""
+    case "$1" in
+        staging) provider="https://acme-staging-v02.api.letsencrypt.org/directory" ;;
+        production) provider="https://acme-v02.api.letsencrypt.org/directory" ;;
+        *) echo_stderr "Invalid provider option: $1"; exit 1 ;;
+    esac
+    echo "$provider"
+}
+
+cert_request() {
+    local domain=""
+    local email=""
+    local san_entries=""
+    local challenge_type="dns"
+    local provider="https://acme-staging-v02.api.letsencrypt.org/directory"  # Default to Let's Encrypt sandbox
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --domain) shift; domain="$1"; shift ;;
+            --email) shift; email="$1"; shift ;;
+            --san) shift; san_entries="$1"; shift ;;
+            --challenge) shift; challenge_type="$1"; shift ;;
+            --provider) shift; provider="$1"; shift ;;
+            *) echo_stderr "Invalid option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$domain" ] || [ -z "$email" ]; then
+        echo_stderr "Missing or incomplete parameters. Usage: install_and_request_cert --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
+        exit 1
+    fi
+
+    # Install Certbot
+    run_command apt-get update
+    run_command apt-get install -y certbot python3-certbot-apache
+
+    # Prepare SAN entries
+    local san_flag=""
+    if [ -n "$san_entries" ]; then
+        san_flag="--expand --cert-name $domain"
+    fi
+
+    # Request SSL certificate
+    run_command certbot --apache -d "$domain" $san_flag -m "$email" --agree-tos --${challenge_type}-challenge --server $provider
+}
 
 # Function to install PHP and required extensions
 install_php() {
@@ -330,6 +422,15 @@ main() {
         moodle_configure_directories "${moodleUser}" "${apacheUser}" "${moodleDataDir}" "${moodleDir}"
         moodle_download_extract "${moodleDir}" "${apacheUser}" "${MOODLE_VERSION}"
         moodle_config_files
+        create_apache_vhost \
+            --site-name "${moodleSiteName}" \
+            --document-root "/var/www/html/${moodleSiteName}" \
+            --admin-email "admin@example.com" \
+            --ssl-cert-file "/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem" \
+            --ssl-key-file "/etc/letsencrypt/live/${moodleSiteName}/privkey.pem" \
+            --include-file "/path/to/custom/include/file.conf"
+        provider=$(cert_provider "staging")
+        cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
     fi
 }
 
