@@ -351,14 +351,14 @@ moodle_config_files() {
         echo_stdout_verbose "Setting up database configuration in ${configFile}..."
         # Modify values in config.php using sed (if config.php was copied)
         if [ -f "${configFile}" ]; then
-            sed -i "s/\$CFG->dbtype\s*=\s*'pgsql';/\$CFG->dbtype = '${DB_TYPE}';/" "${configFile}"
-            sed -i "s/\$CFG->dbhost\s*=\s*'localhost';/\$CFG->dbhost = '${DB_HOST}';/" "${configFile}"
-            sed -i "s/\$CFG->dbname\s*=\s*'moodle';/\$CFG->dbname = '${DB_NAME}';/" "${configFile}"
-            sed -i "s/\$CFG->dbuser\s*=\s*'username';/\$CFG->dbuser = '${DB_USER}';/" "${configFile}"
-            sed -i "s/\$CFG->dbpass\s*=\s*'password';/\$CFG->dbpass = '${DB_PASS}';/" "${configFile}"
-            sed -i "s/\$CFG->prefix\s*=\s*'mdl_';/\$CFG->prefix = '${DB_PREFIX}';/" "${configFile}"
-            sed -i "s|\$CFG->wwwroot.*|\$CFG->wwwroot   = 'https://${moodleSiteName}';|" "${configFile}"
-            sed -i "s|\$CFG->dataroot.*|\$CFG->dataroot  = '${moodleDataDir}';|" "${configFile}"
+            run_command sed -i "s/\$CFG->dbtype\s*=\s*'pgsql';/\$CFG->dbtype = '${DB_TYPE}';/" "${configFile}"
+            run_command sed -i "s/\$CFG->dbhost\s*=\s*'localhost';/\$CFG->dbhost = '${DB_HOST}';/" "${configFile}"
+            run_command sed -i "s/\$CFG->dbname\s*=\s*'moodle';/\$CFG->dbname = '${DB_NAME}';/" "${configFile}"
+            run_command sed -i "s/\$CFG->dbuser\s*=\s*'username';/\$CFG->dbuser = '${DB_USER}';/" "${configFile}"
+            run_command sed -i "s/\$CFG->dbpass\s*=\s*'password';/\$CFG->dbpass = '${DB_PASS}';/" "${configFile}"
+            run_command sed -i "s/\$CFG->prefix\s*=\s*'mdl_';/\$CFG->prefix = '${DB_PREFIX}';/" "${configFile}"
+            run_command sed -i "s|\$CFG->wwwroot.*|\$CFG->wwwroot   = 'https://${moodleSiteName}';|" "${configFile}"
+            run_command sed -i "s|\$CFG->dataroot.*|\$CFG->dataroot  = '${moodleDataDir}';|" "${configFile}"
 
             echo_stdout_verbose "Configuration file changes completed."
         fi
@@ -394,15 +394,34 @@ moodle_download_extract() {
   local moodleVersion="${3}"
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
 
-  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-  # Download and extract Moodle
-  echo_stdout_verbose "Downloading and extracting ${moodleArchive}"
-  run_command mkdir -p "${moodleDir}"
-  run_command wget -qO "${moodle-latest-${moodleVersion}.tgz}" "${moodleArchive}"
-  run_command tar zx -C "${moodleDir}" --strip-components 1 -f "${moodle-latest-${moodleVersion}.tgz}"
-  run_command chown -R root:"${apacheUser}" "${moodleDir}"
-  run_command chmod -R 0755 "${moodleDir}"
+  # Check if Moodle directory already exists
+  if [ -d "${moodleDir}" ]; then
+    echo_stdout_verbose "Moodle directory ${moodleDir} already exists. Skipping download and extraction."
+    return
+  fi
+
+  # Check if local download already exists
+  if [ -f "moodle-latest-${moodleVersion}.tgz" ]; then
+    echo_stdout_verbose "Local Moodle archive moodle-latest-${moodleVersion}.tgz already exists. Skipping download."
+  else
+    # Download Moodle
+    echo_stdout_verbose "Downloading ${moodleArchive}"
+    run_command wget -q "${moodleArchive}"
+  fi
+
+  # Check if Moodle archive has been extracted
+  if [ -d "${moodleDir}/lib" ]; then
+    echo_stdout_verbose "Moodle archive has already been extracted. Skipping extraction."
+  else
+    # Extract Moodle
+    echo_stdout_verbose "Extracting ${moodleArchive}"
+    run_command mkdir -p "${moodleDir}"
+    run_command tar zx -C "${moodleDir}" --strip-components 1 -f "moodle-latest-${moodleVersion}.tgz"
+    run_command chown -R root:"${apacheUser}" "${moodleDir}"
+    run_command chmod -R 0755 "${moodleDir}"
+  fi
 }
+
 
 usage() {
     echo_stdout "Usage: $0 [options]"
