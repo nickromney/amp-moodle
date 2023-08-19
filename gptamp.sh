@@ -9,7 +9,7 @@
 # Set up error handling
 set -euo pipefail
 
-# Set locale to avoid issues with apt-get
+# Set locale to avoid issues with apt
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
@@ -19,10 +19,10 @@ export LC_CTYPE=en_US.UTF-8
 # I tend to leave these as false, and set with command line options
 VERBOSE=true
 DRY_RUN=false
-INSTALL_APACHE=false
-INSTALL_MOODLE=false
-INSTALL_PHP=false
-INSTALL_FPM=false
+APACHE_INSTALL=false
+MOODLE_INSTALL=false
+PHP_INSTALL=false
+FPM_INSTALL=false
 MOODLE_VERSION="311"
 PHP_VERSION="7.2"
 
@@ -51,11 +51,24 @@ USER_REQUIRES_PASSWORD_TO_SUDO='true'
 NON_ROOT_USER='true'
 SUDO=''
 
+# Detect package manager to be more portable across different Linux distributions
+if command -v dpkg >/dev/null 2>&1; then
+    package_manager="dpkg -s"
+elif command -v rpm >/dev/null 2>&1; then
+    package_manager="rpm -q"
+else
+    echo_stderr "Error: Package manager not found."
+    return 1
+fi
 
 # helper functions
 check_is_command_available() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-  local commandToCheck="$1"
+  local commandToCheck="${1:-}"
+  if [[ -z "${commandToCheck}" ]]; then
+    echo_stderr "Error: Null input received"
+    return 1
+  fi
   if command -v "${commandToCheck}" &> /dev/null; then
     echo_stdout_verbose "${commandToCheck} command available"
   else
@@ -114,6 +127,88 @@ echo_stdout_verbose() {
   fi
 }
 
+package_ensure() {
+    local no_install_recommends_flag=""
+    if [ "$1" == "--no-install-recommends" ]; then
+        no_install_recommends_flag="--no-install-recommends"
+        shift
+    fi
+
+    local packages=("$@")
+    local missing_packages=()
+
+    for package in "${packages[@]}"
+    do
+        if ! $package_manager "$package" >/dev/null 2>&1; then
+            missing_packages+=("$package")
+        fi
+    done
+
+    if [ ${#missing_packages[@]} -gt 0 ]; then
+        echo_stdout_verbose "Installing missing packages: ${missing_packages[*]}"
+        if [ "$package_manager" == "dpkg -s" ]; then
+            run_command apt update
+            run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
+        elif [ "$package_manager" == "rpm -q" ]; then
+            run_command yum update -y
+            run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
+        fi
+    else
+        echo_stdout_verbose "All packages are already installed."
+    fi
+}
+
+repository_ensure() {
+    local repositories=("$@")
+    local missing_repositories=()
+
+    if [ "$package_manager" == "dpkg -s" ]; then
+        for repository in "${repositories[@]}"
+        do
+            if ! grep -q "^deb .*$repository" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
+                missing_repositories+=("$repository")
+            fi
+        done
+    elif [ "$package_manager" == "rpm -q" ]; then
+        for repository in "${repositories[@]}"
+        do
+            if ! yum repolist all | grep -q "$repository"; then
+                missing_repositories+=("$repository")
+            fi
+        done
+    fi
+
+    if [ ${#missing_repositories[@]} -gt 0 ]; then
+        echo_stdout_verbose "Adding missing repositories: ${missing_repositories[*]}"
+        if [ "$package_manager" == "dpkg -s" ]; then
+            for repository in "${missing_repositories[@]}"
+            do
+                run_command add-apt-repository "$repository"
+            done
+            run_command apt update
+        elif [ "$package_manager" == "rpm -q" ]; then
+            for repository in "${missing_repositories[@]}"
+            do
+                run_command yum-config-manager --add-repo "$repository"
+            done
+            run_command yum update -y
+        fi
+    else
+        echo_stdout_verbose "All repositories are already added."
+    fi
+}
+
+replace_file_value() {
+    local current_value="$1"
+    local new_value="$2"
+    local file_path="$3"
+
+    if [ -f "$file_path" ]; then
+        run_command sed -i "s|$current_value|$new_value|" "$file_path"
+        echo_stdout_verbose "Replaced $current_value with $new_value in $file_path"
+    fi
+}
+
 run_command() {
   if [[ ! -t 0 ]]; then
     cat
@@ -131,28 +226,34 @@ run_command() {
 
 
 # Function to install Apache web server
-install_apache() {
+apache_install() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-    # Install Apache and enable required modules
-    echo_stdout_verbose "Installing Apache..."
-    run_command apt-get install --yes apache2
+    # Install Apache if not already installed
+    package_ensure apache2
 
-    if $INSTALL_FPM; then
+    if $FPM_INSTALL; then
         echo_stdout_verbose "Installing PHP FPM..."
-        run_command apt-get install --yes "php${PHP_VERSION}-fpm"
-        echo_stdout_verbose "Installing Apache FCGI..."
-        run_command apt-get install --yes "libapache2-mod-fcgid"
+        package_ensure "php${PHP_VERSION}-fpm"
+        package_ensure "libapache2-mod-fcgid"
         echo_stdout_verbose "Configuring Apache for FPM..."
         run_command a2enmod proxy_fcgi setenvif
         run_command a2enconf "php${PHP_VERSION}-fpm"
-        run_command service "php${PHP_VERSION}-fpm" start
+        if [[ -x "$(command -v systemctl)" ]]; then
+          run_command systemctl start "php${PHP_VERSION}-fpm"
+        else
+          run_command service "php${PHP_VERSION}-fpm" start
+        fi
     else
         echo_stdout_verbose "Configuring Apache without FPM..."
-        run_command apt-get install --yes "libapache2-mod-php${PHP_VERSION}"
+        package_ensure "libapache2-mod-php${PHP_VERSION}"
     fi
 
     # Restart Apache
-    run_command service apache2 restart
+    if [[ -x "$(command -v systemctl)" ]]; then
+      run_command systemctl restart apache2
+    else
+      run_command systemctl restart apache2
+    fi
     echo_stdout_verbose "Apache installation and configuration completed."
 }
 
@@ -184,26 +285,28 @@ create_apache_vhost() {
         exit 1
     fi
 
-    echo "<IfModule mod_ssl.c>
-    <VirtualHost *:80>
-        ServerName ${siteName}
-        Redirect / https://${siteName}/
-    </VirtualHost>
-    <VirtualHost *:443>
-        ServerAdmin ${adminEmail}
-        DocumentRoot ${documentRoot}
-        ServerName ${siteName}
-        ServerAlias ${siteName}
-        ErrorLog ${logDir}/error.log
-        CustomLog ${logDir}/access.log combined
-        SSLCertificateFile ${sslCertFile}
-        SSLCertificateKeyFile ${sslKeyFile}
-        ${includeFile:+Include ${includeFile}}
-    </VirtualHost>
-</IfModule>"
+cat <<EOF > apache_vhost.conf
+<IfModule mod_ssl.c>
+<VirtualHost *:80>
+    ServerName ${siteName}
+    Redirect / https://${siteName}/
+</VirtualHost>
+<VirtualHost *:443>
+    ServerAdmin ${adminEmail}
+    DocumentRoot ${documentRoot}
+    ServerName ${siteName}
+    ServerAlias ${siteName}
+    ErrorLog ${logDir}/error.log
+    CustomLog ${logDir}/access.log combined
+    SSLCertificateFile ${sslCertFile}
+    SSLCertificateKeyFile ${sslKeyFile}
+    ${includeFile:+Include ${includeFile}}
+</VirtualHost>
+</IfModule>
+EOF
 }
 
-cert_provider() {
+acme_cert_provider() {
     local provider=""
     case "$1" in
         staging) provider="https://acme-staging-v02.api.letsencrypt.org/directory" ;;
@@ -213,7 +316,7 @@ cert_provider() {
     echo "$provider"
 }
 
-cert_request() {
+acme_cert_request() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
     local domain=""
     local email=""
@@ -233,13 +336,12 @@ cert_request() {
     done
 
     if [ -z "$domain" ] || [ -z "$email" ]; then
-        echo_stderr "Missing or incomplete parameters. Usage: install_and_request_cert --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
+        echo_stderr "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
         exit 1
     fi
 
-    # Install Certbot
-    run_command apt-get update
-    run_command apt-get install --yes certbot python3-certbot-apache
+    # Check if Certbot and python3-certbot-apache are installed
+    package_ensure certbot python3-certbot-apache
 
     # Prepare SAN entries
     local san_flag=""
@@ -248,11 +350,11 @@ cert_request() {
     fi
 
     # Request SSL certificate
-    run_command certbot --apache -d "$domain" $san_flag -m "$email" --agree-tos --${challenge_type}-challenge --server $provider
+    run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
 # Function to install PHP and required extensions
-install_php() {
+php_install() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
     echo_stdout_verbose "Checking PHP configuration..."
@@ -264,7 +366,15 @@ install_php() {
     run_command php -m > installed_extensions.txt
 
     # List of required extensions
-    declare -a required_extensions=("ctype" "curl" "dom" "gd" "iconv" "intl" "json" "mbstring" "mysqli" "openssl" "pcre" "SimpleXML" "soap" "SPL" "tokenizer" "xml" "xmlrpc" "zip")
+    declare -a required_extensions=("ctype" "curl" "dom" "gd" "iconv" "intl" "json" "mbstring" "openssl" "pcre" "SimpleXML" "soap" "SPL" "tokenizer" "xml" "xmlrpc" "zip")
+
+    if [ "${DB_TYPE}" == "pgsql" ]; then
+        # Add "pgsql" extension for PostgreSQL
+        required_extensions+=("pgsql")
+    else
+        # Add "mysqli" extension for MySQL and MariaDB
+        required_extensions+=("mysqli")
+    fi
 
     # Check if required extensions are installed
     for extension in "${required_extensions[@]}"
@@ -275,8 +385,6 @@ install_php() {
             exit 1
         fi
     done
-
-    echo_stdout_verbose "PHP configuration check completed."
 
     # If PHP configuration check succeeded, no need to install PHP
     if [[ $? -eq 0 ]]; then
@@ -308,9 +416,9 @@ install_php() {
         # The xmlrpc extension is recommended (required for networking and web services).
         # The zip extension is required.
 
-        run_command apt install --yes --no-install-recommends "php${PHP_VERSION}"
+        package_ensure --no-install-recommends "php${PHP_VERSION}"
 
-        run_command apt-get install --yes "libapache2-mod-php${PHP_VERSION}" \
+        declare -a extensions=("libapache2-mod-php${PHP_VERSION}" \
             "php${PHP_VERSION}-common" \
             "php${PHP_VERSION}-curl" \
             "php${PHP_VERSION}-gd" \
@@ -320,18 +428,20 @@ install_php() {
             "php${PHP_VERSION}-soap" \
             "php${PHP_VERSION}-xml" \
             "php${PHP_VERSION}-xmlrpc" \
-            "php${PHP_VERSION}-zip"
+            "php${PHP_VERSION}-zip")
 
-                if [ "${DB_TYPE}" == "pgsql" ]; then
-                    # Install php-pgsql extension for PostgreSQL
-                    run_command apt-get install - "php${PHP_VERSION}-pgsql"
-                else
-                    # Install php-mysqli extension for MySQL and MariaDB
-                    # Note php-mysql is deprecated in PHP 7.0 and removed in PHP 7.2
-                    # Note we are not supporting all the different database types that Moodle supports
-                    run_command apt-get install -y "php${PHP_VERSION}-mysqli"
-                fi
-      fi
+            if [ "${DB_TYPE}" == "pgsql" ]; then
+                # Add php-pgsql extension for PostgreSQL
+                extensions+=("php${PHP_VERSION}-pgsql")
+            else
+                # Add php-mysqli extension for MySQL and MariaDB
+                # Note php-mysql is deprecated in PHP 7.0 and removed in PHP 7.2
+                # Note we are not supporting all the different database types that Moodle supports
+                extensions+=("php${PHP_VERSION}-mysqli")
+            fi
+
+            package_ensure "${extensions[@]}"
+    fi
 }
 
 moodle_config_files() {
@@ -351,14 +461,15 @@ moodle_config_files() {
         echo_stdout_verbose "Setting up database configuration in ${configFile}..."
         # Modify values in config.php using sed (if config.php was copied)
         if [ -f "${configFile}" ]; then
-            run_command sed -i "s/\$CFG->dbtype\s*=\s*'pgsql';/\$CFG->dbtype = '${DB_TYPE}';/" "${configFile}"
-            run_command sed -i "s/\$CFG->dbhost\s*=\s*'localhost';/\$CFG->dbhost = '${DB_HOST}';/" "${configFile}"
-            run_command sed -i "s/\$CFG->dbname\s*=\s*'moodle';/\$CFG->dbname = '${DB_NAME}';/" "${configFile}"
-            run_command sed -i "s/\$CFG->dbuser\s*=\s*'username';/\$CFG->dbuser = '${DB_USER}';/" "${configFile}"
-            run_command sed -i "s/\$CFG->dbpass\s*=\s*'password';/\$CFG->dbpass = '${DB_PASS}';/" "${configFile}"
-            run_command sed -i "s/\$CFG->prefix\s*=\s*'mdl_';/\$CFG->prefix = '${DB_PREFIX}';/" "${configFile}"
-            run_command sed -i "s|\$CFG->wwwroot.*|\$CFG->wwwroot   = 'https://${moodleSiteName}';|" "${configFile}"
-            run_command sed -i "s|\$CFG->dataroot.*|\$CFG->dataroot  = '${moodleDataDir}';|" "${configFile}"
+
+            replace_file_value "\$CFG->dbtype\s*=\s*'pgsql';" "\$CFG->dbtype = '${DB_TYPE}';" "$configFile"
+            replace_file_value "\$CFG->dbhost\s*=\s*'localhost';" "\$CFG->dbhost = '${DB_HOST}';" "$configFile"
+            replace_file_value "\$CFG->dbname\s*=\s*'moodle';" "\$CFG->dbname = '${DB_NAME}';" "$configFile"
+            replace_file_value "\$CFG->dbuser\s*=\s*'username';" "\$CFG->dbuser = '${DB_USER}';" "$configFile"
+            replace_file_value "\$CFG->dbpass\s*=\s*'password';" "\$CFG->dbpass = '${DB_PASS}';" "$configFile"
+            replace_file_value "\$CFG->prefix\s*=\s*'mdl_';" "\$CFG->prefix = '${DB_PREFIX}';" "$configFile"
+            replace_file_value "\$CFG->wwwroot.*" "\$CFG->wwwroot   = 'https://${moodleSiteName}';" "$configFile"
+            replace_file_value "\$CFG->dataroot.*" "\$CFG->dataroot  = '${moodleDataDir}';" "$configFile"
 
             echo_stdout_verbose "Configuration file changes completed."
         fi
@@ -422,6 +533,45 @@ moodle_download_extract() {
   fi
 }
 
+# Interesting function. May not use much.
+moodle_plugins() {
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+  local moodleDir="${1}"
+  local apacheUser="${2}"
+  local moodleVersionSemVer="${3}"
+
+  echo_stdout_verbose "Configuring Moodle plugins..."
+
+  # Download and install plugins
+  local plugins=(
+    "mod_certificate https://github.com/moodlehq/moodle-mod_certificate/archive/refs/tags/v3.10.0.zip"
+    "mod_forum https://github.com/moodle/moodle-mod_forum/archive/refs/tags/v3.10.0.zip"
+    "theme_boost https://github.com/moodle/moodle-theme_boost/archive/refs/tags/v3.10.0.zip"
+  )
+
+  for plugin in "${plugins[@]}"; do
+    plugin_name="${plugin%% *}"
+    plugin_url="${plugin#* }"
+    plugin_dir="${moodleDir}/mod/${plugin_name}"
+
+    echo_stdout_verbose "Checking for plugin ${plugin_name}..."
+    if [ ! -d "${plugin_dir}" ]; then
+      echo_stdout_verbose "Plugin ${plugin_name} not found. Downloading and installing..."
+      run_command mkdir -p "${plugin_dir}"
+      run_command wget -qO "${plugin_name}.zip" "${plugin_url}"
+      run_command unzip -q "${plugin_name}.zip" -d "${plugin_dir}"
+      run_command rm "${plugin_name}.zip"
+      run_command chown -R root:"${apacheUser}" "${plugin_dir}"
+      run_command chmod -R 0755 "${plugin_dir}"
+      echo_stdout_verbose "Plugin ${plugin_name} installed."
+    else
+      echo_stdout_verbose "Plugin ${plugin_name} already installed. Skipping installation."
+    fi
+  done
+
+  echo_stdout_verbose "Configuration completed."
+}
+
 
 usage() {
     echo_stdout "Usage: $0 [options]"
@@ -438,17 +588,15 @@ usage() {
 # Main function
 main() {
 
-    if $INSTALL_PHP; then
-        run_command apt-get update
-        install_php
+    if $PHP_INSTALL; then
+        php_install
     fi
 
-    if $INSTALL_APACHE; then
-        run_command apt-get update
-        install_apache
+    if $APACHE_INSTALL; then
+        apache_install
     fi
 
-    if $INSTALL_MOODLE; then
+    if $MOODLE_INSTALL; then
         moodle_configure_directories "${moodleUser}" "${apacheUser}" "${moodleDataDir}" "${moodleDir}"
         moodle_download_extract "${moodleDir}" "${apacheUser}" "${MOODLE_VERSION}"
         moodle_config_files "${moodleDir}"
@@ -459,20 +607,20 @@ main() {
             --ssl-cert-file "/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem" \
             --ssl-key-file "/etc/letsencrypt/live/${moodleSiteName}/privkey.pem" \
             --include-file "/path/to/custom/include/file.conf"
-        provider=$(cert_provider "staging")
-        cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+        provider=$(acme_cert_provider "staging")
+        acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
     fi
 }
 
     # Parse command line options
     while getopts ":afhm:np:v" opt; do
         case "${opt}" in
-            a) INSTALL_APACHE=true ;;
-            f) INSTALL_FPM=true ;;
+            a) APACHE_INSTALL=true ;;
+            f) FPM_INSTALL=true ;;
             h) usage ;;
-            m) INSTALL_MOODLE=true; MOODLE_VERSION=${OPTARG:-"${MOODLE_VERSION}"} ;;
+            m) MOODLE_INSTALL=true; MOODLE_VERSION=${OPTARG:-"${MOODLE_VERSION}"} ;;
             n) DRY_RUN=true ;;
-            p) INSTALL_PHP=true; PHP_VERSION=${OPTARG:-"${PHP_VERSION}"} ;;
+            p) PHP_INSTALL=true; PHP_VERSION=${OPTARG:-"${PHP_VERSION}"} ;;
             v) VERBOSE=true ;;
             \?) echo_stderr "Invalid option: -$OPTARG" >&2
                 usage ;;
@@ -485,11 +633,11 @@ main() {
 
     if check_is_true "${VERBOSE}"; then
         chosen_options=""
-        if $INSTALL_APACHE; then chosen_options+="Install Apache, "; fi
-        if $INSTALL_FPM; then chosen_options+="Install Apache with FPM, "; fi
-        if $INSTALL_MOODLE; then chosen_options+="Install Moodle version $MOODLE_VERSION, "; fi
+        if $APACHE_INSTALL; then chosen_options+="Install Apache, "; fi
+        if $FPM_INSTALL; then chosen_options+="Install Apache with FPM, "; fi
+        if $MOODLE_INSTALL; then chosen_options+="Install Moodle version $MOODLE_VERSION, "; fi
         if $DRY_RUN; then chosen_options+="DRY RUN, "; fi
-        if $INSTALL_PHP; then chosen_options+="Install PHP version $PHP_VERSION, "; fi
+        if $PHP_INSTALL; then chosen_options+="Install PHP version $PHP_VERSION, "; fi
         chosen_options="${chosen_options%, }"
 
         echo_stdout_verbose "Options chosen: $chosen_options"
@@ -522,5 +670,12 @@ main
 # Add option to install mysql locally
 # Add option to install moodle with git rather than download
 
+# [2023-08-13T09:07:03+0000]: VERBOSE: Preparing to execute: sudo certbot --apache -d moodle.romn.co -m admin@example.com --agree-tos --http-challenge --server https://acme-staging-v02.api.letsencrypt.org/directory
+# usage:
+#   certbot [SUBCOMMAND] [options] [-d DOMAIN] [-d DOMAIN] ...
 
+# Certbot can obtain and install HTTPS/TLS/SSL certificates.  By default,
+# it will attempt to use a webserver both for obtaining and installing the
+# certificate.
+# certbot: error: unrecognized arguments: --http-challenge
 
