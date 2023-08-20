@@ -188,6 +188,11 @@ package_ensure() {
 
 
 repository_ensure() {
+    if [ "$package_manager" == "brew list" ]; then
+        echo_stdout_verbose "Homebrew does not require repository addition. Skipping."
+        return
+    fi
+
     local repositories=("$@")
     local missing_repositories=()
 
@@ -227,6 +232,7 @@ repository_ensure() {
     fi
 }
 
+
 replace_file_value() {
     local current_value="$1"
     local new_value="$2"
@@ -243,15 +249,23 @@ run_command() {
     cat
   fi
   printf -v cmd_str '%q ' "$@"
+
+  # Decide whether to use sudo based on the command
+  local use_sudo=$SUDO
+  if [[ "$1" == "brew" ]]; then
+    use_sudo=""
+  fi
+
   if check_is_true "${DRY_RUN}"; then
-    echo_stdout_verbose "Not executing: ${SUDO}${cmd_str}"
+    echo_stdout_verbose "Not executing: ${use_sudo}${cmd_str}"
   else
     if check_is_true "${VERBOSE}"; then
-      echo_stdout_verbose "Preparing to execute: ${SUDO}${cmd_str}"
+      echo_stdout_verbose "Preparing to execute: ${use_sudo}${cmd_str}"
     fi
-    ${SUDO} "$@"
+    ${use_sudo} "$@"
   fi
 }
+
 
 
 # Function to install Apache web server
@@ -371,8 +385,8 @@ acme_cert_request() {
 php_install() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    # Install PHP and required extensions
-    run_command add-apt-repository ppa:ondrej/php
+    echo_stdout_verbose "Ensuring PHP repository..."
+    repository_ensure ppa:ondrej/php
 
     echo_stdout_verbose "Installing PHP and required extensions..."
 
@@ -660,8 +674,7 @@ main() {
     fi
 }
 
-# Parse command line options
-while getopts ":ad:fhm:np:v" opt; do
+while getopts ":ad:fhm::np::v" opt; do
     case "${opt}" in
         a) APACHE_INSTALL=true ;;
         d)
@@ -677,27 +690,32 @@ while getopts ":ad:fhm:np:v" opt; do
         h) usage ;;
         m)
             MOODLE_INSTALL=true
-            MOODLE_VERSION="$OPTARG"
+            if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+                MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
+                if [[ ${OPTARG:0:1} == "-" ]]; then
+                    OPTIND=$((OPTIND - 1))
+                fi
+            else
+                MOODLE_VERSION=${OPTARG}
+            fi
             ;;
         n) DRY_RUN=true ;;
         p)
             PHP_INSTALL=true
-            PHP_VERSION="$OPTARG"
+            if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+                PHP_VERSION="${DEFAULT_PHP_VERSION}"
+                if [[ ${OPTARG:0:1} == "-" ]]; then
+                    OPTIND=$((OPTIND - 1))
+                fi
+            else
+                PHP_VERSION=${OPTARG}
+            fi
             ;;
         v) VERBOSE=true ;;
         \?) echo_stderr "Invalid option: -$OPTARG" >&2
             usage ;;
         :)
-            if [ "$OPTARG" == "m" ]; then
-                MOODLE_INSTALL=true
-                MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
-            elif [ "$OPTARG" == "p" ]; then
-                PHP_INSTALL=true
-                PHP_VERSION="${DEFAULT_PHP_VERSION}"
-            else
-                echo_stderr "Option -$OPTARG requires an argument."
-                usage
-            fi
+            # Do nothing. We're handling this in the cases for -m and -p above.
             ;;
     esac
 done
