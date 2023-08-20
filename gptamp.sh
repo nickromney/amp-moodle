@@ -23,8 +23,11 @@ APACHE_INSTALL=false
 MOODLE_INSTALL=false
 PHP_INSTALL=false
 FPM_INSTALL=false
-MOODLE_VERSION="311"
-PHP_VERSION="7.2"
+DEFAULT_MOODLE_VERSION="311"
+DEFAULT_PHP_VERSION="7.2"
+MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
+PHP_VERSION="${DEFAULT_PHP_VERSION}"
+
 
 # Moodle database
 DB_TYPE="mysqli"
@@ -51,15 +54,31 @@ USER_REQUIRES_PASSWORD_TO_SUDO='true'
 NON_ROOT_USER='true'
 SUDO=''
 
-# Detect package manager to be more portable across different Linux distributions
-if command -v dpkg >/dev/null 2>&1; then
-    package_manager="dpkg -s"
-elif command -v rpm >/dev/null 2>&1; then
-    package_manager="rpm -q"
-else
-    echo_stderr "Error: Package manager not found."
-    return 1
-fi
+# Although they're non-alphabetical
+# we rely on these in other functions
+echo_stderr() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ERROR: ${message}" >&2
+}
+
+echo_stdout() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ${message}" >&1
+}
+
+echo_stdout_verbose() {
+  local message="${*}"
+  local prefix=""
+
+  # If DRY RUN mode is active, prefix the message
+  if check_is_true "${DRY_RUN}"; then
+    prefix="DRY RUN: "
+  fi
+
+  if check_is_true "${VERBOSE}"; then
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${prefix}${message}" >&1
+  fi
+}
 
 # helper functions
 check_is_command_available() {
@@ -110,21 +129,18 @@ check_user_can_sudo_without_password_entry() {
   fi
 }
 
-echo_stderr() {
-  local message="${*}"
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ERROR: ${message}" >&2
-}
-
-echo_stdout() {
-  local message="${*}"
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ${message}" >&1
-}
-
-echo_stdout_verbose() {
-  local message="${*}"
-  if check_is_true "${VERBOSE}"; then
-    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${message}" >&1
-  fi
+package_manager_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+    if command -v dpkg >/dev/null 2>&1; then
+        package_manager="dpkg -s"
+    elif command -v rpm >/dev/null 2>&1; then
+        package_manager="rpm -q"
+    elif command -v brew >/dev/null 2>&1; then
+        package_manager="brew list"
+    else
+        echo_stderr "Error: Package manager not found."
+        exit 1
+    fi
 }
 
 package_ensure() {
@@ -139,8 +155,16 @@ package_ensure() {
 
     for package in "${packages[@]}"
     do
-        if ! $package_manager "$package" >/dev/null 2>&1; then
-            missing_packages+=("$package")
+        if [ "$package_manager" == "brew list" ]; then
+            # Using brew, the package is missing if the command fails
+            if ! brew list "$package" >/dev/null 2>&1; then
+                missing_packages+=("$package")
+            fi
+        else
+            # For other package managers, use the generic approach
+            if ! $package_manager "$package" >/dev/null 2>&1; then
+                missing_packages+=("$package")
+            fi
         fi
     done
 
@@ -152,11 +176,16 @@ package_ensure() {
         elif [ "$package_manager" == "rpm -q" ]; then
             run_command yum update -y
             run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
+        elif [ "$package_manager" == "brew list" ]; then
+            for package in "${missing_packages[@]}"; do
+                run_command brew install "$package"
+            done
         fi
     else
         echo_stdout_verbose "All packages are already installed."
     fi
 }
+
 
 repository_ensure() {
     local repositories=("$@")
@@ -215,7 +244,7 @@ run_command() {
   fi
   printf -v cmd_str '%q ' "$@"
   if check_is_true "${DRY_RUN}"; then
-    echo_stdout_verbose "DRY RUN: Not executing: ${SUDO}${cmd_str}"
+    echo_stdout_verbose "Not executing: ${SUDO}${cmd_str}"
   else
     if check_is_true "${VERBOSE}"; then
       echo_stdout_verbose "Preparing to execute: ${SUDO}${cmd_str}"
@@ -252,55 +281,41 @@ apache_install() {
     if [[ -x "$(command -v systemctl)" ]]; then
       run_command systemctl restart apache2
     else
-      run_command systemctl restart apache2
+      run_command service apache2 restart
     fi
     echo_stdout_verbose "Apache installation and configuration completed."
 }
 
-create_apache_vhost() {
+apache_create_vhost() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-    local siteName=""
-    local documentRoot=""
-    local adminEmail=""
-    local sslCertFile=""
-    local sslKeyFile=""
-    local includeFile=""
+    local config=("$@")
     local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --site-name) shift; siteName="$1"; shift ;;
-            --document-root) shift; documentRoot="$1"; shift ;;
-            --admin-email) shift; adminEmail="$1"; shift ;;
-            --ssl-cert-file) shift; sslCertFile="$1"; shift ;;
-            --ssl-key-file) shift; sslKeyFile="$1"; shift ;;
-            --include-file) shift; includeFile="$1"; shift ;;
-            --log-dir) shift; logDir="$1"; shift ;;
-            *) echo_stderr "Invalid option: $1"; exit 1 ;;
-        esac
+    # Check if required configuration options are provided
+    local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
+    for option in "${required_options[@]}"; do
+        if [[ -z "${config[$option]}" ]]; then
+            echo_stderr "Missing required configuration option: $option"
+            exit 1
+        fi
     done
 
-    if [ -z "$siteName" ] || [ -z "$documentRoot" ] || [ -z "$adminEmail" ] || [ -z "$sslCertFile" ] || [ -z "$sslKeyFile" ]; then
-        echo_stderr "Missing or incomplete parameters. Usage: create_apache_vhost --site-name siteName --document-root documentRoot --admin-email adminEmail --ssl-cert-file sslCertFile --ssl-key-file sslKeyFile [--include-file includeFile] [--log-dir logDir]"
-        exit 1
-    fi
-
-cat <<EOF > apache_vhost.conf
+    cat <<EOF > apache_vhost.conf
 <IfModule mod_ssl.c>
 <VirtualHost *:80>
-    ServerName ${siteName}
-    Redirect / https://${siteName}/
+    ServerName ${config["site-name"]}
+    Redirect / https://${config["site-name"]}/
 </VirtualHost>
 <VirtualHost *:443>
-    ServerAdmin ${adminEmail}
-    DocumentRoot ${documentRoot}
-    ServerName ${siteName}
-    ServerAlias ${siteName}
+    ServerAdmin ${config["admin-email"]}
+    DocumentRoot ${config["document-root"]}
+    ServerName ${config["site-name"]}
+    ServerAlias ${config["site-name"]}
     ErrorLog ${logDir}/error.log
     CustomLog ${logDir}/access.log combined
-    SSLCertificateFile ${sslCertFile}
-    SSLCertificateKeyFile ${sslKeyFile}
-    ${includeFile:+Include ${includeFile}}
+    SSLCertificateFile ${config["ssl-cert-file"]}
+    SSLCertificateKeyFile ${config["ssl-key-file"]}
+    ${config["include-file"]:+Include ${config["include-file"]}}
 </VirtualHost>
 </IfModule>
 EOF
@@ -353,9 +368,57 @@ acme_cert_request() {
     run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
-# Function to install PHP and required extensions
 php_install() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    # Install PHP and required extensions
+    run_command add-apt-repository ppa:ondrej/php
+
+    echo_stdout_verbose "Installing PHP and required extensions..."
+
+    package_ensure --no-install-recommends "php${PHP_VERSION}"
+
+        # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
+        ## The ctype extension is required (provided by common)
+        # The curl extension is required (required for networking and web services).
+        ## The dom extension is required (provided by xml)
+        # The gd extension is recommended (required for manipulating images).
+        ## The iconv extension is required (provided by common)
+        # The intl extension is recommended.
+        # The json extension is required.
+        # The mbstring extension is required.
+        # The openssl extension is recommended (required for networking and web services).
+        ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
+        # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
+        ## The SimpleXML extension is required (provided by xml)
+        # The soap extension is recommended (required for web services).
+        ## The SPL extension is required (provided by core)
+        ## The tokenizer extension is recommended (provided by core)
+        # The xml extension is required.
+        # The xmlrpc extension is recommended (required for networking and web services).
+        # The zip extension is required.
+
+    declare -a extensions=("libapache2-mod-php${PHP_VERSION}" \
+        "php${PHP_VERSION}-common" \
+        "php${PHP_VERSION}-curl" \
+        "php${PHP_VERSION}-gd" \
+        "php${PHP_VERSION}-intl" \
+        "php${PHP_VERSION}-json" \
+        "php${PHP_VERSION}-mbstring" \
+        "php${PHP_VERSION}-soap" \
+        "php${PHP_VERSION}-xml" \
+        "php${PHP_VERSION}-xmlrpc" \
+        "php${PHP_VERSION}-zip")
+
+    if [ "${DB_TYPE}" == "pgsql" ]; then
+        # Add php-pgsql extension for PostgreSQL
+        extensions+=("php${PHP_VERSION}-pgsql")
+    else
+        # Add php-mysqli extension for MySQL and MariaDB
+        extensions+=("php${PHP_VERSION}-mysqli")
+    fi
+
+    package_ensure "${extensions[@]}"
 
     echo_stdout_verbose "Checking PHP configuration..."
 
@@ -386,63 +449,41 @@ php_install() {
         fi
     done
 
-    # If PHP configuration check succeeded, no need to install PHP
-    if [[ $? -eq 0 ]]; then
-        echo_stdout_verbose "Required PHP extensions are already installed. Skipping PHP installation."
-    else
-        # Install PHP and required extensions
-
-        run_command add-apt-repository ppa:ondrej/php
-
-        echo_stdout_verbose "Installing PHP and required extensions..."
-
-        # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
-        ## The ctype extension is required (provided by common)
-        # The curl extension is required (required for networking and web services).
-        ## The dom extension is required (provided by xml)
-        # The gd extension is recommended (required for manipulating images).
-        ## The iconv extension is required (provided by common)
-        # The intl extension is recommended.
-        # The json extension is required.
-        # The mbstring extension is required.
-        # The openssl extension is recommended (required for networking and web services).
-        ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
-        # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
-        ## The SimpleXML extension is required (provided by xml)
-        # The soap extension is recommended (required for web services).
-        ## The SPL extension is required (provided by core)
-        ## The tokenizer extension is recommended (provided by core)
-        # The xml extension is required.
-        # The xmlrpc extension is recommended (required for networking and web services).
-        # The zip extension is required.
-
-        package_ensure --no-install-recommends "php${PHP_VERSION}"
-
-        declare -a extensions=("libapache2-mod-php${PHP_VERSION}" \
-            "php${PHP_VERSION}-common" \
-            "php${PHP_VERSION}-curl" \
-            "php${PHP_VERSION}-gd" \
-            "php${PHP_VERSION}-intl" \
-            "php${PHP_VERSION}-json" \
-            "php${PHP_VERSION}-mbstring" \
-            "php${PHP_VERSION}-soap" \
-            "php${PHP_VERSION}-xml" \
-            "php${PHP_VERSION}-xmlrpc" \
-            "php${PHP_VERSION}-zip")
-
-            if [ "${DB_TYPE}" == "pgsql" ]; then
-                # Add php-pgsql extension for PostgreSQL
-                extensions+=("php${PHP_VERSION}-pgsql")
-            else
-                # Add php-mysqli extension for MySQL and MariaDB
-                # Note php-mysql is deprecated in PHP 7.0 and removed in PHP 7.2
-                # Note we are not supporting all the different database types that Moodle supports
-                extensions+=("php${PHP_VERSION}-mysqli")
-            fi
-
-            package_ensure "${extensions[@]}"
-    fi
+    echo_stdout_verbose "Required PHP extensions are already installed."
 }
+
+
+moodle_dependencies() {
+  # From https://github.com/moodlehq/moodle-php-apache/blob/master/root/tmp/setup/php-extensions.sh
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+  declare -a runtime=("ghostscript" \
+   "libaio1" \
+   "libcurl4" \
+   "libgss3" \
+   "libicu72" \
+   "libmcrypt-dev" \
+   "libxml2" \
+   "libxslt1.1" \
+    "libzip-dev" \
+    "sassc" \
+    "unzip" \
+    "zip")
+
+    package_ensure "${runtime[@]}"
+
+    if [ "${DB_TYPE}" == "pgsql" ]; then
+        # Add php-pgsql extension for PostgreSQL
+        declare -a database=("libpq5")
+    else
+        # Add php-mysqli extension for MySQL and MariaDB
+        # Note php-mysql is deprecated in PHP 7.0 and removed in PHP 7.2
+        # Note we are not supporting all the different database types that Moodle supports
+        declare -a database=("libmariadb3")
+    fi
+
+    package_ensure "${database[@]}"
+}
+
 
 moodle_config_files() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -577,16 +618,20 @@ usage() {
     echo_stdout "Usage: $0 [options]"
     echo_stdout "Options:"
     echo_stdout "  -a    Install Apache web server"
+    echo_stdout "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
     echo_stdout "  -f    Install Apache with FPM"
     echo_stdout "  -m    Install Moodle version (default: ${MOODLE_VERSION})"
     echo_stdout "  -n    Dry run (show commands without executing)"
     echo_stdout "  -p    Install PHP version (default: ${PHP_VERSION})"
-    echo_stdout "  Note: Options -m -p and require an argument."
-    exit 1
+    echo_stdout "  Note: Options -d, -m, and -p require an argument."
+    exit 0
 }
+
 
 # Main function
 main() {
+
+    package_manager_ensure
 
     if $PHP_INSTALL; then
         php_install
@@ -599,37 +644,66 @@ main() {
     if $MOODLE_INSTALL; then
         moodle_configure_directories "${moodleUser}" "${apacheUser}" "${moodleDataDir}" "${moodleDir}"
         moodle_download_extract "${moodleDir}" "${apacheUser}" "${MOODLE_VERSION}"
+        moodle_dependencies
         moodle_config_files "${moodleDir}"
-        create_apache_vhost \
-            --site-name "${moodleSiteName}" \
-            --document-root "/var/www/html/${moodleSiteName}" \
-            --admin-email "admin@example.com" \
-            --ssl-cert-file "/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem" \
-            --ssl-key-file "/etc/letsencrypt/live/${moodleSiteName}/privkey.pem" \
-            --include-file "/path/to/custom/include/file.conf"
+        config=(
+          ["site-name"]="${moodleSiteName}"
+          ["document-root"]="/var/www/html/${moodleSiteName}"
+          ["admin-email"]="admin@${moodleSiteName}"
+          ["ssl-cert-file"]="/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem"
+          ["ssl-key-file"]="/etc/letsencrypt/live/${moodleSiteName}/privkey.pem"
+          ["include-file"]="/path/to/include.conf"
+        )
+        apache_create_vhost "${config[@]}"
         provider=$(acme_cert_provider "staging")
         acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
     fi
 }
 
-    # Parse command line options
-    while getopts ":afhm:np:v" opt; do
-        case "${opt}" in
-            a) APACHE_INSTALL=true ;;
-            f) FPM_INSTALL=true ;;
-            h) usage ;;
-            m) MOODLE_INSTALL=true; MOODLE_VERSION=${OPTARG:-"${MOODLE_VERSION}"} ;;
-            n) DRY_RUN=true ;;
-            p) PHP_INSTALL=true; PHP_VERSION=${OPTARG:-"${PHP_VERSION}"} ;;
-            v) VERBOSE=true ;;
-            \?) echo_stderr "Invalid option: -$OPTARG" >&2
-                usage ;;
-            :)
-              echo_stderr "Option -$OPTARG requires an argument."
-              usage
-              ;;
-        esac
-    done
+# Parse command line options
+while getopts ":ad:fhm:np:v" opt; do
+    case "${opt}" in
+        a) APACHE_INSTALL=true ;;
+        d)
+            case "${OPTARG}" in
+                mysql|pgsql) DB_TYPE=${OPTARG} ;;
+                *)
+                    echo_stderr "Unsupported database type: $OPTARG. Supported types are 'mysql' and 'pgsql'."
+                    usage
+                    ;;
+            esac
+            ;;
+        f) FPM_INSTALL=true ;;
+        h) usage ;;
+        m)
+            MOODLE_INSTALL=true
+            MOODLE_VERSION="$OPTARG"
+            ;;
+        n) DRY_RUN=true ;;
+        p)
+            PHP_INSTALL=true
+            PHP_VERSION="$OPTARG"
+            ;;
+        v) VERBOSE=true ;;
+        \?) echo_stderr "Invalid option: -$OPTARG" >&2
+            usage ;;
+        :)
+            if [ "$OPTARG" == "m" ]; then
+                MOODLE_INSTALL=true
+                MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
+            elif [ "$OPTARG" == "p" ]; then
+                PHP_INSTALL=true
+                PHP_VERSION="${DEFAULT_PHP_VERSION}"
+            else
+                echo_stderr "Option -$OPTARG requires an argument."
+                usage
+            fi
+            ;;
+    esac
+done
+
+
+
 
     if check_is_true "${VERBOSE}"; then
         chosen_options=""
@@ -643,10 +717,9 @@ main() {
         echo_stdout_verbose "Options chosen: $chosen_options"
     fi
 
-    # if DRY_RUN, check if user is root
     if check_is_true "${DRY_RUN}"; then
-        echo_stdout_verbose "DRY RUN: No need to check if user is root."
-        echo_stdout_verbose "DRY RUN: No need to check if user can sudo without password entry."
+        echo_stdout_verbose "No need to check if user is root."
+        echo_stdout_verbose "No need to check if user can sudo without password entry."
     else
         check_user_is_root
         if check_is_true "${NON_ROOT_USER}"; then
