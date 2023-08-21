@@ -79,22 +79,31 @@ apply_template() {
     echo "$template"
 }
 
-check_is_command_available() {
-  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-  local commandToCheck="${1:-}"
-  echo_stdout_verbose "Checking if command ${commandToCheck} is available"
-  if [[ -z "${commandToCheck}" ]]; then
-    echo_stderr "Error: Null input received"
-    return 1
-  fi
-  if command -v "${commandToCheck}" &> /dev/null; then
-    echo_stdout_verbose "${commandToCheck} command available"
-  else
-    # propagate error to caller
-    echo_stderr "Error: ${commandToCheck} command not available"
-    return $?
-  fi
+check_command() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    local should_exit_on_failure=false  # Default to false
+
+    # Check if the first argument is the flag for exit on failure
+    if [[ "$1" == "--exit-on-failure" ]]; then
+        should_exit_on_failure=true
+        shift  # Remove the flag from the arguments list
+    fi
+
+    for command in "$@"
+    do
+        if type -P "${command}" &>/dev/null ; then
+            echo_stdout_verbose "Dependency is present: ${command}"
+        else
+            echo_stderr "Dependency not found: ${command}, please install it and run this script again."
+            if [[ "$should_exit_on_failure" == true ]]; then
+                exit 1
+            fi
+        fi
+    done
 }
+
+
 
 echo_stderr() {
   local message="${*}"
@@ -124,7 +133,7 @@ echo_stdout_verbose() {
 package_manager_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-        if check_is_command_available apt; then
+        if check_command apt; then
             package_manager="apt"
         else
             echo_stderr "Error: Package manager not found."
@@ -759,7 +768,7 @@ php_verify() {
     local should_exit_on_failure=${1:-false}  # Default to false
 
     # Check if PHP is installed
-    if check_is_command_available "php"; then
+    if check_command "php"; then
         echo_stdout_verbose "PHP is installed."
         run_command php -v
     else
@@ -778,21 +787,18 @@ php_ensure() {
     php_verify
 
     # If PHP is already installed, simply return
-    if check_is_command_available "php"; then
+    if check_command "php"; then
         return 0
     fi
 
-    distro="$(lsb_release -is)"
-    codename="$(lsb_release -sc)"
-
     echo_stdout_verbose "Ensuring PHP repository..."
 
-    if [ "$distro" == "Ubuntu" ]; then
+    if [ "$DISTRO" == "Ubuntu" ]; then
       php_repository="ppa:ondrej/php"
-    elif [ "$distro" == "Debian" ]; then
-      php_repository="deb https://packages.sury.org/php/ $codename main"
+    elif [ "$DISTRO" == "Debian" ]; then
+      php_repository="deb https://packages.sury.org/php/ $CODENAME main"
     else
-      echo "Unsupported distro: $distro"
+      echo_stderr "Unsupported distro: $DISTRO"
       exit 1
     fi
 
@@ -802,13 +808,12 @@ php_ensure() {
 
     echo_stdout_verbose "Installing PHP core..."
 
-
-    if [ "$distro" == "Ubuntu" ]; then
-      php_package="php${PHP_VERSION}-${codename}"
-    elif [ "$distro" == "Debian" ]; then
-      php_package="php${PHP_VERSION}-${codename}"
+    if [ "$DISTRO" == "Ubuntu" ]; then
+      php_package="php${PHP_VERSION}-${CODENAME}"
+    elif [ "$DISTRO" == "Debian" ]; then
+      php_package="php${PHP_VERSION}-${CODENAME}"
     else
-      echo "Unsupported distro: $distro"
+      echo_stderr "Unsupported distro: $DISTRO"
       exit 1
     fi
 
@@ -876,14 +881,57 @@ usage() {
     exit 0
 }
 
+# Define a function to detect the distribution and codename
+detect_distro_and_codename() {
+    if command -v lsb_release &> /dev/null; then
+        DISTRO="$(lsb_release -is)"
+        CODENAME="$(lsb_release -sc)"
+    elif [[ -f /etc/os-release ]]; then
+        # Load values from /etc/os-release
+        . /etc/os-release
+        DISTRO="$ID"
+        CODENAME="$VERSION_CODENAME"
+    else
+        echo_stderr "Unable to determine distribution."
+        echo_stderr "Please run this script on a supported distribution."
+        echo_stderr "Supported distributions are: Ubuntu, Debian."
+        exit 1
+    fi
+}
+
 # Script evaluation starts here
 
-# Check if the necessary dependencies are available before proceeding
+# Run the function to detect the distribution and codename
+detect_distro_and_codename
 
-# check_is_command_available wget
-# check_is_command_available tar
-# check_is_command_available unzip
-# check_is_command_available lsb_release
+# Make them readonly
+readonly DISTRO
+readonly CODENAME
+
+# Supported distributions
+SUPPORTED_DISTROS=("Ubuntu" "Debian")
+
+is_distro_supported() {
+    local distro="$1"
+    for supported_distro in "${SUPPORTED_DISTROS[@]}"; do
+        if [[ "$supported_distro" == "$distro" ]]; then
+            return 0  # Found
+        fi
+    done
+    return 1  # Not found
+}
+
+# ...
+
+if ! is_distro_supported "$DISTRO"; then
+    echo_stderr "Unsupported distro: $DISTRO"
+    exit 1
+fi
+
+
+
+# Check if the necessary dependencies are available before proceeding
+check_command --exit-on-failure tar unzip wget
 
 # Parse command line options
 while [[ $# -gt 0 ]]; do
