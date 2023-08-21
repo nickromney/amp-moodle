@@ -272,22 +272,24 @@ run_command() {
     printf -v cmd_str '%q ' "$@"
 
     # Decide whether to use sudo based on the command and global USE_SUDO setting
-    local cmd_prefix=""
-    if $USE_SUDO && [[ "$1" != "brew" ]]; then
-        cmd_prefix="sudo "
+    local cmd=("$@")
+
+    if $USE_SUDO && [[ "${cmd[0]}" != "brew" ]]; then
+        cmd=("sudo" "${cmd[@]}")
     fi
 
     if [[ "${DRY_RUN}" == "true" ]]; then
-        echo_stdout_verbose "Not executing: ${cmd_prefix}${cmd_str}"
+        echo_stdout_verbose "Not executing: ${cmd_str}"
         return
     fi
 
     if [[ "${VERBOSE}" == "true" ]]; then
-        echo_stdout_verbose "Preparing to execute: ${cmd_prefix}${cmd_str}"
+        echo_stdout_verbose "Preparing to execute: ${cmd_str}"
     fi
 
-    "${cmd_prefix}$@"
+    "${cmd[@]}"
 }
+
 
 
 
@@ -634,44 +636,6 @@ moodle_ensure() {
       fi
 }
 
-# Interesting function. May not use much.
-moodle_plugins() {
-  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-  local moodleDir="${1}"
-  local webserverUser="${2}"
-  local moodleVersionSemVer="${3}"
-
-  echo_stdout_verbose "Configuring Moodle plugins..."
-
-  # Download and install plugins
-  local plugins=(
-    "mod_certificate https://github.com/moodlehq/moodle-mod_certificate/archive/refs/tags/v3.10.0.zip"
-    "mod_forum https://github.com/moodle/moodle-mod_forum/archive/refs/tags/v3.10.0.zip"
-    "theme_boost https://github.com/moodle/moodle-theme_boost/archive/refs/tags/v3.10.0.zip"
-  )
-
-  for plugin in "${plugins[@]}"; do
-    plugin_name="${plugin%% *}"
-    plugin_url="${plugin#* }"
-    plugin_dir="${moodleDir}/mod/${plugin_name}"
-
-    echo_stdout_verbose "Checking for plugin ${plugin_name}..."
-    if [ ! -d "${plugin_dir}" ]; then
-      echo_stdout_verbose "Plugin ${plugin_name} not found. Downloading and installing..."
-      run_command mkdir -p "${plugin_dir}"
-      run_command wget -qO "${plugin_name}.zip" "${plugin_url}"
-      run_command unzip -q "${plugin_name}.zip" -d "${plugin_dir}"
-      run_command rm "${plugin_name}.zip"
-      run_command chown -R root:"${webserverUser}" "${plugin_dir}"
-      run_command chmod -R 0755 "${plugin_dir}"
-      echo_stdout_verbose "Plugin ${plugin_name} installed."
-    else
-      echo_stdout_verbose "Plugin ${plugin_name} already installed. Skipping installation."
-    fi
-  done
-
-  echo_stdout_verbose "Configuration completed."
-}
 
 nginx_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -716,7 +680,7 @@ server {
     listen 80;
     server_name {{site_name}};
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://\$host\$request_uri;
     }
 }
 
@@ -735,7 +699,7 @@ server {
     access_log ${logDir}/{{site_name}}.access.log;
 
     location / {
-        try_files $uri $uri/ =404;
+        try_files \$uri \$uri/ =404;
     }
 
     location ~ \.php$ {
