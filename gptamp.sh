@@ -56,6 +56,20 @@ USE_SUDO=false
 CI_MODE=false
 
 # helper functions
+
+apply_template() {
+    local template="$1"
+    shift
+    local substitutions=("$@")
+
+    for substitution in "${substitutions[@]}"; do
+        IFS="=" read -r key value <<< "$substitution"
+        template="${template//\{\{$key\}\}/$value}"
+    done
+
+    echo "$template"
+}
+
 check_is_command_available() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local commandToCheck="${1:-}"
@@ -108,49 +122,105 @@ package_ensure() {
 
     for package in "${packages[@]}"
     do
-        if [ "$package_manager" == "brew list" ]; then
-            # Using brew, the package is missing if the command fails
-            if ! brew list "$package" >/dev/null 2>&1; then
-                missing_packages+=("$package")
-            fi
-        else
-            # For other package managers, use the generic approach
-            if ! $package_manager "$package" >/dev/null 2>&1; then
-                missing_packages+=("$package")
-            fi
+      if [ "$package_manager" == "dpkg -s" ]; then
+
+        # check if package is installed using dpkg
+        if ! dpkg -s "$package" > /dev/null 2>&1; then
+          missing_packages+=("$package")
         fi
+
+      elif [ "$package_manager" == "rpm -q" ]; then
+
+        # check if package is installed using rpm
+        if ! rpm -q "$package" > /dev/null 2>&1; then
+          missing_packages+=("$package")
+        fi
+
+      elif [ "$package_manager" == "yum list installed" ]; then
+
+        # check if package is installed using yum
+        if ! yum list installed "$package" > /dev/null 2>&1; then
+          missing_packages+=("$package")
+        fi
+
+      elif [ "$package_manager" == "dnf list installed" ]; then
+
+        # check if package is installed using dnf
+        if ! dnf list installed "$package" > /dev/null 2>&1; then
+          missing_packages+=("$package")
+        fi
+
+      elif [ "$package_manager" == "brew list" ]; then
+
+        # check if package is installed using brew
+        if ! brew list "$package" > /dev/null 2>&1; then
+          missing_packages+=("$package")
+        fi
+
+      fi
     done
 
     if [ ${#missing_packages[@]} -gt 0 ]; then
-        echo_stdout_verbose "Installing missing packages: ${missing_packages[*]}"
-        if [ "$package_manager" == "dpkg -s" ]; then
-            run_command apt update
-            run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
-        elif [ "$package_manager" == "rpm -q" ]; then
-            run_command yum update -y
-            run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
-        elif [ "$package_manager" == "brew list" ]; then
-            for package in "${missing_packages[@]}"; do
-                run_command brew install "$package"
-            done
-        fi
+
+      echo_stdout_verbose "Installing missing packages: ${missing_packages[*]}"
+
+      if [ "$package_manager" == "dpkg -s" ]; then
+
+        run_command apt update
+        run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
+
+      elif [ "$package_manager" == "rpm -q" ]; then
+
+        run_command yum update -y
+        run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
+
+      elif [ "$package_manager" == "yum list installed" ]; then
+
+        run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
+
+      elif [ "$package_manager" == "dnf list installed" ]; then
+
+        run_command dnf install -y $no_install_recommends_flag "${missing_packages[@]}"
+
+      elif [ "$package_manager" == "brew list" ]; then
+
+        for package in "${missing_packages[@]}"; do
+          run_command brew install "$package"
+        done
+
+      fi
+
+    fi
     else
         echo_stdout_verbose "All packages are already installed."
     fi
 }
 
 package_manager_ensure() {
-    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-    if command -v dpkg >/dev/null 2>&1; then
-        package_manager="dpkg -s"
-    elif command -v rpm >/dev/null 2>&1; then
-        package_manager="rpm -q"
-    elif command -v brew >/dev/null 2>&1; then
-        package_manager="brew list"
-    else
-        echo_stderr "Error: Package manager not found."
-        exit 1
-    fi
+
+  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+  if command -v dpkg >/dev/null 2>&1; then
+    package_manager="dpkg -s"
+
+  elif command -v rpm >/dev/null 2>&1; then
+    package_manager="rpm -q"
+
+  elif command -v yum >/dev/null 2>&1; then
+    package_manager="yum list installed"
+
+  elif command -v dnf >/dev/null 2>&1; then
+    package_manager="dnf list installed"
+
+  elif command -v brew >/dev/null 2>&1; then
+   package_manager="brew list"
+
+  else
+    echo_stderr "Error: Package manager not found."
+    exit 1
+
+  fi
+
 }
 
 repository_ensure() {
@@ -170,44 +240,105 @@ repository_ensure() {
             fi
         done
     elif [ "$package_manager" == "rpm -q" ]; then
-        for repository in "${repositories[@]}"
-        do
-            if ! yum repolist all | grep -q "$repository"; then
-                missing_repositories+=("$repository")
-            fi
-        done
-    fi
+
+    # Check rpm repositories
+    for repository in "${repositories[@]}"; do
+      if ! rpm -qa --queryformat '%{REPO}' | grep -q "$repository"; then
+        missing_repositories+=("$repository")
+      fi
+    done
+
+  elif [ "$package_manager" == "yum list installed" ]; then
+
+    # Check yum repositories
+    for repository in "${repositories[@]}"; do
+      if ! yum repolist all | grep -q "$repository"; then
+        missing_repositories+=("$repository")
+      fi
+    done
+
+  elif [ "$package_manager" == "dnf list installed" ]; then
+
+    # Check dnf repositories
+    for repository in "${repositories[@]}"; do
+      if ! dnf repolist all | grep -q "$repository"; then
+        missing_repositories+=("$repository")
+      fi
+    done
+
+  fi
 
     if [ ${#missing_repositories[@]} -gt 0 ]; then
-        echo_stdout_verbose "Adding missing repositories: ${missing_repositories[*]}"
-        if [ "$package_manager" == "dpkg -s" ]; then
-            for repository in "${missing_repositories[@]}"
-            do
-                run_command add-apt-repository "$repository"
-            done
-            run_command apt update
-        elif [ "$package_manager" == "rpm -q" ]; then
-            for repository in "${missing_repositories[@]}"
-            do
-                run_command yum-config-manager --add-repo "$repository"
-            done
-            run_command yum update -y
-        fi
+
+      echo_stdout_verbose "Adding missing repositories: ${missing_repositories[*]}"
+
+      if [ "$package_manager" == "dpkg -s" ]; then
+
+        for repository in "${missing_repositories[@]}"; do
+          run_command add-apt-repository "$repository"
+        done
+        run_command apt update
+
+      elif [ "$package_manager" == "rpm -q" ]; then
+
+        for repository in "${missing_repositories[@]}"; do
+          run_command rpm -Uvh "$repository"
+        done
+        run_command rpm --rebuilddb
+
+      elif [ "$package_manager" == "yum list installed" ]; then
+
+        for repository in "${missing_repositories[@]}"; do
+          run_command yum-config-manager --add-repo "$repository"
+        done
+        run_command yum update -y
+
+      elif [ "$package_manager" == "dnf list installed" ]; then
+
+        for repository in "${missing_repositories[@]}"; do
+          run_command dnf config-manager --add-repo "$repository"
+        done
+        run_command dnf update -y
+
+      fi
+
     else
-        echo_stdout_verbose "All repositories are already added."
+
+      echo_stdout_verbose "All repositories are already added."
+
     fi
 }
 
-
 replace_file_value() {
-    local current_value="$1"
-    local new_value="$2"
-    local file_path="$3"
 
-    if [ -f "$file_path" ]; then
-        run_command sed -i "s|$current_value|$new_value|" "$file_path"
-        echo_stdout_verbose "Replaced $current_value with $new_value in $file_path"
+  local current_value="$1"
+  local new_value="$2"
+  local file_path="$3"
+
+  # Acquire lock on file
+  exec 200>"$file_path"
+  flock -x 200 || exit 1
+
+  if [ -f "$file_path" ]; then
+
+    # Check if current value already exists
+    if grep -q "$current_value" "$file_path"; then
+
+      echo_stdout_verbose "Value $current_value already set in $file_path"
+
+    else
+
+      # Value not present, go ahead and replace
+      run_command sed -i "s|$current_value|$new_value|" "$file_path"
+      echo_stdout_verbose "Replaced $current_value with $new_value in $file_path"
+
     fi
+
+  fi
+
+  # Release lock
+  flock -u 200
+
 }
 
 run_command() {
@@ -284,18 +415,7 @@ acme_cert_request() {
     run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
-apply_template() {
-    local template="$1"
-    shift
-    local substitutions=("$@")
 
-    for substitution in "${substitutions[@]}"; do
-        IFS="=" read -r key value <<< "$substitution"
-        template="${template//\{\{$key\}\}/$value}"
-    done
-
-    echo "$template"
-}
 
 # Function to ensure Apache web server is installed and configured
 apache_ensure() {
@@ -394,89 +514,7 @@ apache_create_vhost() {
 
 
 
-php_ensure() {
-    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    echo_stdout_verbose "Ensuring PHP repository..."
-    repository_ensure ppa:ondrej/php
-
-    echo_stdout_verbose "Installing PHP and required extensions..."
-
-    package_ensure --no-install-recommends "php${PHP_VERSION}"
-
-        # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
-        ## The ctype extension is required (provided by common)
-        # The curl extension is required (required for networking and web services).
-        ## The dom extension is required (provided by xml)
-        # The gd extension is recommended (required for manipulating images).
-        ## The iconv extension is required (provided by common)
-        # The intl extension is recommended.
-        # The json extension is required.
-        # The mbstring extension is required.
-        # The openssl extension is recommended (required for networking and web services).
-        ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
-        # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
-        ## The SimpleXML extension is required (provided by xml)
-        # The soap extension is recommended (required for web services).
-        ## The SPL extension is required (provided by core)
-        ## The tokenizer extension is recommended (provided by core)
-        # The xml extension is required.
-        # The xmlrpc extension is recommended (required for networking and web services).
-        # The zip extension is required.
-
-    declare -a extensions=("libapache2-mod-php${PHP_VERSION}" \
-        "php${PHP_VERSION}-common" \
-        "php${PHP_VERSION}-curl" \
-        "php${PHP_VERSION}-gd" \
-        "php${PHP_VERSION}-intl" \
-        "php${PHP_VERSION}-json" \
-        "php${PHP_VERSION}-mbstring" \
-        "php${PHP_VERSION}-soap" \
-        "php${PHP_VERSION}-xml" \
-        "php${PHP_VERSION}-xmlrpc" \
-        "php${PHP_VERSION}-zip")
-
-    if [ "${DB_TYPE}" == "pgsql" ]; then
-        # Add php-pgsql extension for PostgreSQL
-        extensions+=("php${PHP_VERSION}-pgsql")
-    else
-        # Add php-mysqli extension for MySQL and MariaDB
-        extensions+=("php${PHP_VERSION}-mysqli")
-    fi
-
-    package_ensure "${extensions[@]}"
-
-    echo_stdout_verbose "Checking PHP configuration..."
-
-    # Check PHP configuration
-    run_command php -v
-
-    # Get installed extensions and store in a file
-    run_command php -m > installed_extensions.txt
-
-    # List of required extensions
-    declare -a required_extensions=("ctype" "curl" "dom" "gd" "iconv" "intl" "json" "mbstring" "openssl" "pcre" "SimpleXML" "soap" "SPL" "tokenizer" "xml" "xmlrpc" "zip")
-
-    if [ "${DB_TYPE}" == "pgsql" ]; then
-        # Add "pgsql" extension for PostgreSQL
-        required_extensions+=("pgsql")
-    else
-        # Add "mysqli" extension for MySQL and MariaDB
-        required_extensions+=("mysqli")
-    fi
-
-    # Check if required extensions are installed
-    for extension in "${required_extensions[@]}"
-    do
-        if ! grep -q -w "$extension" installed_extensions.txt; then
-            echo_stderr "PHP extension $extension is not installed."
-            echo_stderr "Please install the required PHP extensions and try again."
-            exit 1
-        fi
-    done
-
-    echo_stdout_verbose "Required PHP extensions are already installed."
-}
 
 moodle_dependencies() {
   # From https://github.com/moodlehq/moodle-php-apache/blob/master/root/tmp/setup/php-extensions.sh
@@ -581,7 +619,9 @@ moodle_download_extract() {
   else
     # Download Moodle
     echo_stdout_verbose "Downloading ${moodleArchive}"
-    run_command wget -q "${moodleArchive}"
+    # Use -O to not overwrite existing file
+    run_command wget -O "moodle-latest-${moodleVersion}.tgz" "${moodleArchive}"
+
   fi
 
   # Check if Moodle archive has been extracted
@@ -725,23 +765,91 @@ server {
     run_command systemctl reload nginx
 }
 
+php_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-usage() {
-    echo_stdout "Usage: $0 [options]"
-    echo_stdout "Options:"
-    echo_stdout "  -a    Ensure Apache web server is installed"
-    echo_stdout "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
-    echo_stdout "  -e    Ensure Nginx web server is installed"
-    echo_stdout "  -f    Enable FPM for the web server (requires -a or -e)"
-    echo_stdout "  -h    Display this help message"
-    echo_stdout "  -m    Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
-    echo_stdout "  -M    Ensure Memcached is installed"
-    echo_stdout "  -n    Dry run (show commands without executing)"
-    echo_stdout "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
-    echo_stdout "  -v    Enable verbose output"
-    echo_stdout "  Note: Options -d, -m, and -p require an argument but have defaults."
-    exit 0
+    echo_stdout_verbose "Ensuring PHP repository..."
+    repository_ensure ppa:ondrej/php
+
+    echo_stdout_verbose "Installing PHP and required extensions..."
+
+    package_ensure --no-install-recommends "php${PHP_VERSION}"
+
+        # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
+        ## The ctype extension is required (provided by common)
+        # The curl extension is required (required for networking and web services).
+        ## The dom extension is required (provided by xml)
+        # The gd extension is recommended (required for manipulating images).
+        ## The iconv extension is required (provided by common)
+        # The intl extension is recommended.
+        # The json extension is required.
+        # The mbstring extension is required.
+        # The openssl extension is recommended (required for networking and web services).
+        ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
+        # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
+        ## The SimpleXML extension is required (provided by xml)
+        # The soap extension is recommended (required for web services).
+        ## The SPL extension is required (provided by core)
+        ## The tokenizer extension is recommended (provided by core)
+        # The xml extension is required.
+        # The xmlrpc extension is recommended (required for networking and web services).
+        # The zip extension is required.
+
+    declare -a extensions=("libapache2-mod-php${PHP_VERSION}" \
+        "php${PHP_VERSION}-common" \
+        "php${PHP_VERSION}-curl" \
+        "php${PHP_VERSION}-gd" \
+        "php${PHP_VERSION}-intl" \
+        "php${PHP_VERSION}-json" \
+        "php${PHP_VERSION}-mbstring" \
+        "php${PHP_VERSION}-soap" \
+        "php${PHP_VERSION}-xml" \
+        "php${PHP_VERSION}-xmlrpc" \
+        "php${PHP_VERSION}-zip")
+
+    if [ "${DB_TYPE}" == "pgsql" ]; then
+        # Add php-pgsql extension for PostgreSQL
+        extensions+=("php${PHP_VERSION}-pgsql")
+    else
+        # Add php-mysqli extension for MySQL and MariaDB
+        extensions+=("php${PHP_VERSION}-mysqli")
+    fi
+
+    package_ensure "${extensions[@]}"
+
+    echo_stdout_verbose "Checking PHP configuration..."
+
+    # Check PHP configuration
+    run_command php -v
+
+    # Get installed extensions and store in a file
+    run_command php -m > installed_extensions.txt
+
+    # List of required extensions
+    declare -a required_extensions=("ctype" "curl" "dom" "gd" "iconv" "intl" "json" "mbstring" "openssl" "pcre" "SimpleXML" "soap" "SPL" "tokenizer" "xml" "xmlrpc" "zip")
+
+    if [ "${DB_TYPE}" == "pgsql" ]; then
+        # Add "pgsql" extension for PostgreSQL
+        required_extensions+=("pgsql")
+    else
+        # Add "mysqli" extension for MySQL and MariaDB
+        required_extensions+=("mysqli")
+    fi
+
+    # Check if required extensions are installed
+    for extension in "${required_extensions[@]}"
+    do
+        if ! grep -q -w "$extension" installed_extensions.txt; then
+            echo_stderr "PHP extension $extension is not installed."
+            echo_stderr "Please install the required PHP extensions and try again."
+            exit 1
+        fi
+    done
+
+    echo_stdout_verbose "Required PHP extensions are already installed."
 }
+
+
 
 # Main function
 main() {
@@ -758,7 +866,6 @@ main() {
 
     if $NGINX_ENSURE; then
         nginx_ensure
-        nginx_configure_for_php
     fi
 
     if $MOODLE_ENSURE; then
@@ -789,125 +896,144 @@ main() {
       fi
 }
 
-# Pre-check for --ci long option
-if [[ "$1" == "--ci" ]]; then
-    CI_MODE=true
-    shift 1  # remove the CI flag from arguments
-fi
+usage() {
+    echo_stdout "Usage: $0 [options]"
+    echo_stdout "Options:"
+    echo_stdout "  -a    Ensure Apache web server is installed"
+    echo_stdout "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
+    echo_stdout "  -e    Ensure Nginx web server is installed"
+    echo_stdout "  -f    Enable FPM for the web server (requires -a or -e)"
+    echo_stdout "  -h    Display this help message"
+    echo_stdout "  -m    Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
+    echo_stdout "  -M    Ensure Memcached is installed"
+    echo_stdout "  -n    Dry run (show commands without executing)"
+    echo_stdout "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
+    echo_stdout "  -v    Enable verbose output"
+    echo_stdout "  Note: Options -d, -m, and -p require an argument but have defaults."
+    exit 0
+}
 
-while getopts ":ad:cefhm:M::np:sv" opt; do
-    case "${opt}" in
-        a) APACHE_ENSURE=true ;;
-        c) CI_MODE=true ;;
-        d)
-            case "${OPTARG}" in
-                mysql|pgsql) DB_TYPE=${OPTARG} ;;
-                *)
-                    echo_stderr "Unsupported database type: $OPTARG. Supported types are 'mysql' and 'pgsql'."
-                    usage
-                    ;;
-            esac
-            ;;
-        e) NGINX_ENSURE=true; FPM_ENSURE=true ;;
-        f) FPM_ENSURE=true ;;
-        h) usage ;;
-        M)
-            MEMCACHED_ENSURE=true
-            if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
-                MEMCACHED_MODE="network"
-                if [[ ${OPTARG:0:1} == "-" ]]; then
-                    OPTIND=$((OPTIND - 1))
-                fi
-            elif [[ ${OPTARG} == "local" ]]; then
-                MEMCACHED_MODE="local"
-            elif [[ ${OPTARG} == "network" ]]; then
-                MEMCACHED_MODE="network"
-            else
-                echo_stderr "Invalid mode for Memcached: $OPTARG. Supported modes are 'local' and 'network'."
-                usage
-            fi
-            ;;
-        m)
-            MOODLE_ENSURE=true
-            if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
-                MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
-                if [[ ${OPTARG:0:1} == "-" ]]; then
-                    OPTIND=$((OPTIND - 1))
-                fi
-            else
-                MOODLE_VERSION=${OPTARG}
-            fi
-            ;;
-        n) DRY_RUN=true ;;
-        p)
-            PHP_ENSURE=true
-            if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
-                PHP_VERSION="${DEFAULT_PHP_VERSION}"
-                if [[ ${OPTARG:0:1} == "-" ]]; then
-                    OPTIND=$((OPTIND - 1))
-                fi
-            else
-                PHP_VERSION=${OPTARG}
-            fi
-            ;;
-        s) USE_SUDO=true ;;
-        v) VERBOSE=true ;;
-        \?) echo_stderr "Invalid option: -$OPTARG" >&2
-            usage ;;
-        :)
-            # Do nothing. We're handling this in the cases for -m and -p above.
-            ;;
-    esac
-done
+# Script evaluation starts here
 
-# If not in CI mode, do the sudo checks
-if ! $CI_MODE; then
-    # Check if user is root
-    if [[ $EUID -eq 0 ]]; then
-        USE_SUDO=false
-    else
-        # Check if sudo is available and the user has sudo privileges
-        if $USE_SUDO && ! command -v sudo &>/dev/null; then
-            echo "sudo command not found. Please run as root or install sudo."
-            exit 1
-        elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
-            echo "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
-            exit 1
-        fi
-    fi
-fi
+  # Pre-check for --ci long option
+  if [[ "$1" == "--ci" ]]; then
+      CI_MODE=true
+      shift 1  # remove the CI flag from arguments
+  fi
 
-    # Check mutual exclusivity of web servers
-    if [[ "${APACHE_ENSURE}" == "true" && "${NGINX_ENSURE}" == "true" ]]; then
-        echo_stderr "Options -a and -e are mutually exclusive. Please select only one web server."
-        usage
-    fi
+  while getopts ":ad:cefhm:M::np:sv" opt; do
+      case "${opt}" in
+          a) APACHE_ENSURE=true ;;
+          c) CI_MODE=true ;;
+          d)
+              case "${OPTARG}" in
+                  mysql|pgsql) DB_TYPE=${OPTARG} ;;
+                  *)
+                      echo_stderr "Unsupported database type: $OPTARG. Supported types are 'mysql' and 'pgsql'."
+                      usage
+                      ;;
+              esac
+              ;;
+          e) NGINX_ENSURE=true; FPM_ENSURE=true ;;
+          f) FPM_ENSURE=true ;;
+          h) usage ;;
+          M)
+              MEMCACHED_ENSURE=true
+              if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+                  MEMCACHED_MODE="network"
+                  if [[ ${OPTARG:0:1} == "-" ]]; then
+                      OPTIND=$((OPTIND - 1))
+                  fi
+              elif [[ ${OPTARG} == "local" ]]; then
+                  MEMCACHED_MODE="local"
+              elif [[ ${OPTARG} == "network" ]]; then
+                  MEMCACHED_MODE="network"
+              else
+                  echo_stderr "Invalid mode for Memcached: $OPTARG. Supported modes are 'local' and 'network'."
+                  usage
+              fi
+              ;;
+          m)
+              MOODLE_ENSURE=true
+              if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+                  MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
+                  if [[ ${OPTARG:0:1} == "-" ]]; then
+                      OPTIND=$((OPTIND - 1))
+                  fi
+              else
+                  MOODLE_VERSION=${OPTARG}
+              fi
+              ;;
+          n) DRY_RUN=true ;;
+          p)
+              PHP_ENSURE=true
+              if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+                  PHP_VERSION="${DEFAULT_PHP_VERSION}"
+                  if [[ ${OPTARG:0:1} == "-" ]]; then
+                      OPTIND=$((OPTIND - 1))
+                  fi
+              else
+                  PHP_VERSION=${OPTARG}
+              fi
+              ;;
+          s) USE_SUDO=true ;;
+          v) VERBOSE=true ;;
+          \?) echo_stderr "Invalid option: -$OPTARG" >&2
+              usage ;;
+          :)
+              # Do nothing. We're handling this in the cases for -m and -p above.
+              ;;
+      esac
+  done
 
-    # Checking if -f is selected on its own without -a or -e
-    if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
-        echo_stderr "Option -f requires either -a or -e to be selected."
-        usage
-    fi
+  # If not in CI mode, do the sudo checks
+  if ! $CI_MODE; then
+      # Check if user is root
+      if [[ $EUID -eq 0 ]]; then
+          USE_SUDO=false
+      else
+          # Check if sudo is available and the user has sudo privileges
+          if $USE_SUDO && ! command -v sudo &>/dev/null; then
+              echo_stderr "sudo command not found. Please run as root or install sudo."
+              exit 1
+          elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
+              echo_stderr "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
+              exit 1
+          fi
+      fi
+  fi
 
-    if [[ "${VERBOSE}" == "true" ]]; then
-        chosen_options=""
+  # Check mutual exclusivity of web servers
+  if [[ "${APACHE_ENSURE}" == "true" && "${NGINX_ENSURE}" == "true" ]]; then
+      echo_stderr "Options -a and -e are mutually exclusive. Please select only one web server."
+      usage
+  fi
 
-        if $APACHE_ENSURE; then chosen_options+="-a: Ensure Apache web server, "; fi
-        if [[ -n "${DB_TYPE}" ]]; then chosen_options+="-d: Database type set to ${DB_TYPE}, "; fi
-        if $NGINX_ENSURE; then chosen_options+="-e: Ensure Nginx web server, "; fi
-        if $FPM_ENSURE; then chosen_options+="-f: Ensure FPM for web servers, "; fi
-        if $MOODLE_ENSURE; then chosen_options+="-m: Ensure Moodle version $MOODLE_VERSION, "; fi
-        if $MEMCACHED_ENSURE; then
-            chosen_options+="-M: Ensure Memcached support, "
-            if [[ "$MEMCACHED_MODE" == "local" ]]; then
-                chosen_options+="Ensure local Memcached instance, "
-            fi
-        fi
-        if $DRY_RUN; then chosen_options+="-n: DRY RUN, "; fi
-        if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
+  # Checking if -f is selected on its own without -a or -e
+  if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
+      echo_stderr "Option -f requires either -a or -e to be selected."
+      usage
+  fi
 
-        chosen_options="${chosen_options%, }"
-    fi
+  if [[ "${VERBOSE}" == "true" ]]; then
+      chosen_options=""
+
+      if $APACHE_ENSURE; then chosen_options+="-a: Ensure Apache web server, "; fi
+      if [[ -n "${DB_TYPE}" ]]; then chosen_options+="-d: Database type set to ${DB_TYPE}, "; fi
+      if $NGINX_ENSURE; then chosen_options+="-e: Ensure Nginx web server, "; fi
+      if $FPM_ENSURE; then chosen_options+="-f: Ensure FPM for web servers, "; fi
+      if $MOODLE_ENSURE; then chosen_options+="-m: Ensure Moodle version $MOODLE_VERSION, "; fi
+      if $MEMCACHED_ENSURE; then
+          chosen_options+="-M: Ensure Memcached support, "
+          if [[ "$MEMCACHED_MODE" == "local" ]]; then
+              chosen_options+="Ensure local Memcached instance, "
+          fi
+      fi
+      if $DRY_RUN; then chosen_options+="-n: DRY RUN, "; fi
+      if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
+
+      chosen_options="${chosen_options%, }"
+  fi
 
 # Run the main function
 main
