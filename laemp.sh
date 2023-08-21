@@ -113,28 +113,12 @@ echo_stdout_verbose() {
 package_manager_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    os_type=$(uname -s)
-
-    if [ "$os_type" == "Darwin" ]; then  # macOS
-        if check_is_command_available brew; then
-            package_manager="brew"
-        elif check_is_command_available apt; then
-            package_manager="apt"
-        fi
-    else  # Assuming Linux or other UNIX-like OS
         if check_is_command_available apt; then
             package_manager="apt"
-        elif check_is_command_available brew; then
-            package_manager="brew"
-        elif check_is_command_available yum; then
-            package_manager="yum"
-        elif check_is_command_available dnf; then
-            package_manager="dnf"
         else
             echo_stderr "Error: Package manager not found."
             exit 1
         fi
-    fi
 }
 
 
@@ -161,21 +145,6 @@ package_ensure() {
                     missing_packages+=("$package")
                 fi
                 ;;
-            yum)
-                if ! yum list installed "$package" >/dev/null 2>&1; then
-                    missing_packages+=("$package")
-                fi
-                ;;
-            dnf)
-                if ! dnf list installed "$package" >/dev/null 2>&1; then
-                    missing_packages+=("$package")
-                fi
-                ;;
-            brew)
-                if ! brew list "$package" >/dev/null 2>&1; then
-                    missing_packages+=("$package")
-                fi
-                ;;
             *)
                 echo_stderr "Error: Unsupported package manager."
                 exit 1
@@ -191,14 +160,6 @@ package_ensure() {
                 run_command apt update
                 run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
                 ;;
-            yum|dnf)
-                run_command "${package_manager}" install -y "${missing_packages[@]}"
-                ;;
-            brew)
-                for package in "${missing_packages[@]}"; do
-                    run_command brew install "$package"
-                done
-                ;;
             *)
                 echo_stderr "Error: Unsupported package manager."
                 exit 1
@@ -210,11 +171,6 @@ package_ensure() {
 }
 
 repository_ensure() {
-    if [ "$package_manager" == "brew" ]; then
-        echo_stdout_verbose "Homebrew does not require repository addition. Skipping."
-        return
-    fi
-
     local repositories=("$@")
     local missing_repositories=()
 
@@ -223,13 +179,6 @@ repository_ensure() {
             for repository in "${repositories[@]}"
             do
                 if ! run_command grep -q "^deb .*$repository" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
-                    missing_repositories+=("$repository")
-                fi
-            done
-            ;;
-        yum|dnf)
-            for repository in "${repositories[@]}"; do
-                if ! run_command "${package_manager}" repolist all | run_command grep -q "$repository"; then
                     missing_repositories+=("$repository")
                 fi
             done
@@ -249,18 +198,6 @@ repository_ensure() {
                     run_command add-apt-repository "$repository"
                 done
                 run_command apt update
-                ;;
-            yum)
-                for repository in "${missing_repositories[@]}"; do
-                    run_command yum-config-manager --add-repo "$repository"
-                done
-                run_command yum update -y
-                ;;
-            dnf)
-                for repository in "${missing_repositories[@]}"; do
-                    run_command dnf config-manager --add-repo "$repository"
-                done
-                run_command dnf update -y
                 ;;
             *)
                 echo_stderr "Error: Unsupported package manager."
@@ -391,21 +328,6 @@ apache_ensure() {
     # and exit if not
     php_verify true
 
-    os_type=$(uname)
-    if [[ "$os_type" == "Darwin" ]]; then
-        service_command="brew services"
-
-        # Install Apache (httpd) and PHP-FPM for macOS
-        package_ensure httpd
-
-        if $FPM_ENSURE; then
-            echo_stdout_verbose "On macOS, PHP comes with FPM by default. No additional configuration required."
-        fi
-
-        # Enable and Restart Apache for macOS
-        run_command "${service_command}" restart httpd
-
-    else
         service_command="systemctl"
 
         # Install Apache and necessary modules for non-macOS systems
@@ -440,10 +362,8 @@ apache_ensure() {
             package_ensure "libapache2-mod-php${PHP_VERSION}"
         fi
 
-        # Enable and Restart Apache for non-macOS systems
         run_command $service_command enable apache2
         run_command $service_command restart apache2
-    fi
 
     echo_stdout_verbose "Apache installation and configuration completed."
 }
@@ -851,20 +771,37 @@ php_ensure() {
         return 0
     fi
 
+    distro="$(lsb_release -is)"
+    codename="$(lsb_release -sc)"
+
     echo_stdout_verbose "Ensuring PHP repository..."
 
-    # If the package manager is not brew, then add the PHP repository.
-    if [ "$package_manager" != "brew" ]; then
-        repository_ensure ppa:ondrej/php
+    if [ "$distro" == "Ubuntu" ]; then
+      php_repository="ppa:ondrej/php"
+    elif [ "$distro" == "Debian" ]; then
+      php_repository="deb https://packages.sury.org/php/ $codename main"
+    else
+      echo "Unsupported distro: $distro"
+      exit 1
+    fi
+
+    if [ "$package_manager" == "apt" ]; then
+      repository_ensure "$php_repository"
     fi
 
     echo_stdout_verbose "Installing PHP core..."
 
-    if [ "$package_manager" == "brew" ]; then
-        package_ensure "php@${PHP_VERSION}"
+
+    if [ "$distro" == "Ubuntu" ]; then
+      php_package="php${PHP_VERSION}-${codename}"
+    elif [ "$distro" == "Debian" ]; then
+      php_package="php${PHP_VERSION}-${codename}"
     else
-        package_ensure --no-install-recommends "php${PHP_VERSION}"
+      echo "Unsupported distro: $distro"
+      exit 1
     fi
+
+    package_install "$php_package"
 
     # Verify PHP installation at end of function
     php_verify true
@@ -1041,9 +978,7 @@ usage() {
   if $VERBOSE; then
       chosen_options=""
 
-      if $APACHE_ENSURE; then chosen_options+="-a: Ensure Apache web server, "; fi
       if [[ -n "${DB_TYPE}" ]]; then chosen_options+="-d: Database type set to ${DB_TYPE}, "; fi
-      if $NGINX_ENSURE; then chosen_options+="-e: Ensure Nginx web server, "; fi
       if $FPM_ENSURE; then chosen_options+="-f: Ensure FPM for web servers, "; fi
       if $MOODLE_ENSURE; then chosen_options+="-m: Ensure Moodle version $MOODLE_VERSION, "; fi
       if $MEMCACHED_ENSURE; then
@@ -1054,7 +989,8 @@ usage() {
       fi
       if $DRY_RUN; then chosen_options+="-n: DRY RUN, "; fi
       if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
-
+      if $APACHE_ENSURE; then chosen_options+="-w: Webserver type set to Apache, "; fi
+      if $NGINX_ENSURE; then chosen_options+="-w: Webserver type set to Nginx, "; fi
       chosen_options="${chosen_options%, }"
 
       echo_stdout_verbose "Chosen options: ${chosen_options}"
