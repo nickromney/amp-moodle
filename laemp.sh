@@ -57,6 +57,15 @@ CI_MODE=false
 
 # helper functions
 
+die() {
+    echo "$1" >&2
+    exit 1
+}
+
+
+
+
+
 apply_template() {
     local template="$1"
     shift
@@ -73,6 +82,7 @@ apply_template() {
 check_is_command_available() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local commandToCheck="${1:-}"
+  echo_stdout_verbose "Checking if command ${commandToCheck} is available"
   if [[ -z "${commandToCheck}" ]]; then
     echo_stderr "Error: Null input received"
     return 1
@@ -81,6 +91,7 @@ check_is_command_available() {
     echo_stdout_verbose "${commandToCheck} command available"
   else
     # propagate error to caller
+    echo_stderr "Error: ${commandToCheck} command not available"
     return $?
   fi
 }
@@ -867,69 +878,100 @@ usage() {
 
 # Script evaluation starts here
 
-  # Pre-check for --ci long option
-  if [[ "$1" == "--ci" ]]; then
-      CI_MODE=true
-      shift 1  # remove the CI flag from arguments
-  fi
+# Check if the necessary dependencies are available before proceeding
 
-  while getopts ":cd:fhm:M::np:svw:" opt; do
-      case "${opt}" in
-          c) CI_MODE=true ;;
-          d)
-              case "${OPTARG}" in
-                  mysql|pgsql) DB_TYPE=${OPTARG} ;;
-                  *)
-                      echo_stderr "Unsupported database type: $OPTARG. Supported types are 'mysql' and 'pgsql'."
-                      usage
-                      ;;
-              esac
-              ;;
-          f) FPM_ENSURE=true ;;
-          h) usage ;;
-          M)
-              MEMCACHED_ENSURE=true
-              if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
-                  MEMCACHED_MODE="network"
-                  if [[ ${OPTARG:0:1} == "-" ]]; then
-                      OPTIND=$((OPTIND - 1))
-                  fi
-              elif [[ ${OPTARG} == "local" ]]; then
-                  MEMCACHED_MODE="local"
-              elif [[ ${OPTARG} == "network" ]]; then
-                  MEMCACHED_MODE="network"
-              else
-                  echo_stderr "Invalid mode for Memcached: $OPTARG. Supported modes are 'local' and 'network'."
-                  usage
-              fi
-              ;;
-          m)
-              MOODLE_ENSURE=true
-              if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
-                  MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
-                  if [[ ${OPTARG:0:1} == "-" ]]; then
-                      OPTIND=$((OPTIND - 1))
-                  fi
-              else
-                  MOODLE_VERSION=${OPTARG}
-              fi
-              ;;
-          n) DRY_RUN=true ;;
-          p)
-              PHP_ENSURE=true
-              if [[ ${OPTARG:0:1} == "-" ]]; then
-                  PHP_VERSION="${DEFAULT_PHP_VERSION}"
-                  OPTIND=$((OPTIND - 1))
-              elif [[ -z ${OPTARG} ]]; then
-                  PHP_VERSION="${DEFAULT_PHP_VERSION}"
-              else
-                  PHP_VERSION=${OPTARG}
-              fi
-              ;;
-          s) USE_SUDO=true ;;
-          v) VERBOSE=true ;;
-          w)
-            case "${OPTARG}" in
+# check_is_command_available wget
+# check_is_command_available tar
+# check_is_command_available unzip
+# check_is_command_available lsb_release
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    key="$1"
+
+    case $key in
+        -c|--ci)
+            CI_MODE=true
+            shift
+            ;;
+
+        -d|--database)
+            if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
+                die "-d|--database option requires an argument"
+            fi
+            case "$2" in
+                mysql|pgsql)
+                    DB_TYPE="$2"
+                    ;;
+                *)
+                    die "Unsupported database type: $2. Supported types are 'mysql' and 'pgsql'."
+                    ;;
+            esac
+            shift 2
+            ;;
+
+        -f|--fpm)
+            FPM_ENSURE=true
+            shift
+            ;;
+
+        -h|--help)
+            usage
+            ;;
+
+        -M|--memcached)
+            MEMCACHED_ENSURE=true
+            if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
+                MEMCACHED_MODE="network"
+            else
+                case "$2" in
+                    local)
+                        MEMCACHED_MODE="local"
+                        ;;
+                    network)
+                        MEMCACHED_MODE="network"
+                        ;;
+                    *)
+                        die "Invalid mode for Memcached: $2. Supported modes are 'local' and 'network'."
+                        ;;
+                esac
+                shift
+            fi
+            shift
+            ;;
+
+        -m|--moodle)
+            MOODLE_ENSURE=true
+            MOODLE_VERSION="${2:-$DEFAULT_MOODLE_VERSION}"
+            shift 2
+            ;;
+
+        -n|--nop)
+            DRY_RUN=true
+            shift
+            ;;
+
+        -p|--php)
+            PHP_ENSURE=true
+            PHP_VERSION="${2:-$DEFAULT_PHP_VERSION}"
+            shift 2
+            ;;
+
+        -s|--sudo)
+            USE_SUDO=true
+            shift
+            ;;
+
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+
+        -w|--web)
+            if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
+                die "-w|--web option requires an argument"
+            fi
+            case "$2" in
                 apache)
                     APACHE_ENSURE=true
                     ;;
@@ -938,19 +980,21 @@ usage() {
                     NGINX_ENSURE=true
                     FPM_ENSURE=true
                     ;;
-                  *)
-                      echo_stderr "Unsupported web server type: $OPTARG. Supported types are 'apache' and 'nginx'."
-                      usage
-                      ;;
-              esac
-              ;;
-          \?) echo_stderr "Invalid option: -$OPTARG" >&2
-              usage ;;
-          :)
-              # Do nothing. We're handling this in the cases for -m and -p above.
-              ;;
-      esac
-  done
+                *)
+                    die "Unsupported web server type: $2. Supported types are 'apache' and 'nginx'."
+                    ;;
+            esac
+            shift 2
+            ;;
+
+        *)
+            # unknown option
+            die "Unknown option: $1"
+            ;;
+    esac
+done
+
+
 
   # If not in CI mode, do the sudo checks
   if ! $CI_MODE; then
