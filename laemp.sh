@@ -852,7 +852,8 @@ detect_distro_and_codename() {
         CODENAME="$(lsb_release -sc)"
     elif [[ -f /etc/os-release ]]; then
         # Load values from /etc/os-release
-        . /etc/os-release
+        # shellcheck disable=SC1091
+        source /etc/os-release
         DISTRO="$ID"
         CODENAME="$VERSION_CODENAME"
     else
