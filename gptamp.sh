@@ -21,7 +21,9 @@ VERBOSE=true
 DRY_RUN=false
 APACHE_ENSURE=false
 FPM_ENSURE=false
+MEMCACHED_ENSURE=false
 MOODLE_ENSURE=false
+NGINX_ENSURE=false
 PHP_ENSURE=false
 DEFAULT_MOODLE_VERSION="311"
 DEFAULT_PHP_VERSION="7.2"
@@ -38,21 +40,20 @@ DB_PASS="moodle"
 DB_PREFIX="mdl_"
 
 # Users
-apacheUser="www-data"
+webserverUser="www-data"
 moodleUser="moodle"
 
 # Site name
 moodleSiteName="moodle.romn.co"
 
 # Directories
-apacheDocumentRoot="/var/www/html"
-moodleDir="${apacheDocumentRoot}/${moodleSiteName}"
+documentRoot="/var/www/html"
+moodleDir="${documentRoot}/${moodleSiteName}"
 moodleDataDir="/home/${moodleUser}/moodledata"
 
 # Used internally by the script
-USER_REQUIRES_PASSWORD_TO_SUDO='true'
-NON_ROOT_USER='true'
-SUDO=''
+USE_SUDO=false
+CI_MODE=false
 
 # helper functions
 check_is_command_available() {
@@ -67,30 +68,6 @@ check_is_command_available() {
   else
     # propagate error to caller
     return $?
-  fi
-}
-
-check_user_is_root() {
-  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-  echo_stdout_verbose "Test if UID is 0 (root)"
-  if [[ "${UID}" -eq 0 ]]; then
-    echo_stdout_verbose "Setting NON_ROOT_USER to true"
-    NON_ROOT_USER='true'
-  fi
-  echo_stdout_verbose "UID value: ${UID}"
-  echo_stdout_verbose "NON_ROOT_USER value: ${NON_ROOT_USER}"
-}
-
-check_user_can_sudo_without_password_entry() {
-  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-  echo_stdout_verbose "Test if user can sudo without entering a password"
-  if sudo -v &> /dev/null; then
-    USER_REQUIRES_PASSWORD_TO_SUDO='false'
-    echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
-    return 0
-  else
-    echo_stdout_verbose "USER_REQUIRES_PASSWORD_TO_SUDO value: ${USER_REQUIRES_PASSWORD_TO_SUDO}"
-    return 1
   fi
 }
 
@@ -234,31 +211,32 @@ replace_file_value() {
 }
 
 run_command() {
-  if [[ ! -t 0 ]]; then
-    cat
-  fi
-  printf -v cmd_str '%q ' "$@"
+    if [[ ! -t 0 ]]; then
+        cat
+    fi
 
-  # Decide whether to use sudo based on the command
-  local use_sudo=$SUDO
-  if [[ "$1" == "brew" ]]; then
-    use_sudo=""
-  fi
+    printf -v cmd_str '%q ' "$@"
+
+    # Decide whether to use sudo based on the command and global USE_SUDO setting
+    local cmd_prefix=""
+    if $USE_SUDO && [[ "$1" != "brew" ]]; then
+        cmd_prefix="sudo "
+    fi
 
     if [[ "${DRY_RUN}" == "true" ]]; then
-        echo_stdout_verbose "Not executing: ${use_sudo}${cmd_str}"
+        echo_stdout_verbose "Not executing: ${cmd_prefix}${cmd_str}"
         return
     fi
 
     if [[ "${VERBOSE}" == "true" ]]; then
-        echo_stdout_verbose "Preparing to execute: ${use_sudo}${cmd_str}"
+        echo_stdout_verbose "Preparing to execute: ${cmd_prefix}${cmd_str}"
     fi
 
-    ${use_sudo} "$@"
+    "${cmd_prefix}$@"
 }
 
 
-# Functions which achieve the goal of this script
+
 acme_cert_provider() {
     local provider=""
     case "$1" in
@@ -306,41 +284,68 @@ acme_cert_request() {
     run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
+apply_template() {
+    local template="$1"
+    shift
+    local substitutions=("$@")
+
+    for substitution in "${substitutions[@]}"; do
+        IFS="=" read -r key value <<< "$substitution"
+        template="${template//\{\{$key\}\}/$value}"
+    done
+
+    echo "$template"
+}
+
 # Function to ensure Apache web server is installed and configured
 apache_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
     # Install Apache if not already installed
     package_ensure apache2
+
+    # Ensure essential modules
+    package_ensure "libapache2-mod-ssl"  # For SSL/TLS support
+    package_ensure "libapache2-mod-headers"  # For HTTP header manipulation
+    package_ensure "libapache2-mod-rewrite"  # For URL rewriting, useful for many web apps
+    package_ensure "libapache2-mod-deflate"  # For response compression
+    package_ensure "libapache2-mod-expires"  # For setting expiration HTTP headers
+
+    # Enable essential Apache modules
+    run_command a2enmod ssl
+    run_command a2enmod headers
+    run_command a2enmod rewrite
+    run_command a2enmod deflate
+    run_command a2enmod expires
 
     if $FPM_ENSURE; then
         echo_stdout_verbose "Installing PHP FPM..."
         package_ensure "php${PHP_VERSION}-fpm"
         package_ensure "libapache2-mod-fcgid"
+
         echo_stdout_verbose "Configuring Apache for FPM..."
         run_command a2enmod proxy_fcgi setenvif
         run_command a2enconf "php${PHP_VERSION}-fpm"
-        if [[ -x "$(command -v systemctl)" ]]; then
-          run_command systemctl start "php${PHP_VERSION}-fpm"
-        else
-          run_command service "php${PHP_VERSION}-fpm" start
-        fi
+
+        run_command systemctl enable "php${PHP_VERSION}-fpm"
+        run_command systemctl start "php${PHP_VERSION}-fpm"
     else
         echo_stdout_verbose "Configuring Apache without FPM..."
         package_ensure "libapache2-mod-php${PHP_VERSION}"
     fi
 
-    # Restart Apache
-    if [[ -x "$(command -v systemctl)" ]]; then
-      run_command systemctl restart apache2
-    else
-      run_command service apache2 restart
-    fi
+    # Enable and Restart Apache
+    run_command systemctl enable apache2
+    run_command systemctl restart apache2
+
     echo_stdout_verbose "Apache installation and configuration completed."
 }
 
+
 apache_create_vhost() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-    local config=("$@")
+
+    declare -n config=$1
     local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
 
     # Check if required configuration options are provided
@@ -352,26 +357,40 @@ apache_create_vhost() {
         fi
     done
 
-    cat <<EOF > apache_vhost.conf
-<IfModule mod_ssl.c>
+    local vhost_template="
 <VirtualHost *:80>
-    ServerName ${config["site-name"]}
-    Redirect / https://${config["site-name"]}/
+    ServerName {{site_name}}
+    Redirect / https://{{site_name}}/
 </VirtualHost>
+
+<IfModule mod_ssl.c>
 <VirtualHost *:443>
-    ServerAdmin ${config["admin-email"]}
-    DocumentRoot ${config["document-root"]}
-    ServerName ${config["site-name"]}
-    ServerAlias ${config["site-name"]}
+    ServerAdmin {{admin_email}}
+    DocumentRoot {{document_root}}
+    ServerName {{site_name}}
     ErrorLog ${logDir}/error.log
     CustomLog ${logDir}/access.log combined
-    SSLCertificateFile ${config["ssl-cert-file"]}
-    SSLCertificateKeyFile ${config["ssl-key-file"]}
-    ${config["include-file"]:+Include ${config["include-file"]}}
+    SSLCertificateFile {{ssl_cert_file}}
+    SSLCertificateKeyFile {{ssl_key_file}}
+    {{include_file}}
 </VirtualHost>
 </IfModule>
-EOF
+"
+
+    local vhost_config
+    vhost_config=$(apply_template "$vhost_template" \
+        "site_name=${config["site-name"]}" \
+        "document_root=${config["document-root"]}" \
+        "admin_email=${config["admin-email"]}" \
+        "ssl_cert_file=${config["ssl-cert-file"]}" \
+        "ssl_key_file=${config["ssl-key-file"]}" \
+        "include_file=${config["include-file"]:+Include ${config["include-file"]}}"
+    )
+
+    echo "$vhost_config" > "/etc/apache2/sites-available/${config["site-name"]}.conf"
+    run_command a2ensite "${config["site-name"]}"
 }
+
 
 
 
@@ -528,7 +547,7 @@ moodle_config_files() {
 moodle_configure_directories() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local moodleUser="${1}"
-  local apacheUser="${2}"
+  local webserverUser="${2}"
   local moodleDataDir="${3}"
   local moodleDir="${4}"
 
@@ -536,17 +555,17 @@ moodle_configure_directories() {
   # Add moodle user for moodledata / Change ownerships and permissions
   run_command adduser --system "${moodleUser}"
   run_command mkdir -p "${moodleDataDir}"
-  run_command chown -R "${apacheUser}:${apacheUser}" "${moodleDataDir}"
+  run_command chown -R "${webserverUser}:${webserverUser}" "${moodleDataDir}"
   run_command chmod 0777 "${moodleDataDir}"
   run_command mkdir -p "${moodleDir}"
-  run_command chown -R root:"${apacheUser}" "${moodleDir}"
+  run_command chown -R root:"${webserverUser}" "${moodleDir}"
   run_command chmod -R 0755 "${moodleDir}"
 }
 
 moodle_download_extract() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
-  local apacheUser="${2}"
+  local webserverUser="${2}"
   local moodleVersion="${3}"
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
 
@@ -573,7 +592,7 @@ moodle_download_extract() {
     echo_stdout_verbose "Extracting ${moodleArchive}"
     run_command mkdir -p "${moodleDir}"
     run_command tar zx -C "${moodleDir}" --strip-components 1 -f "moodle-latest-${moodleVersion}.tgz"
-    run_command chown -R root:"${apacheUser}" "${moodleDir}"
+    run_command chown -R root:"${webserverUser}" "${moodleDir}"
     run_command chmod -R 0755 "${moodleDir}"
   fi
 }
@@ -582,7 +601,7 @@ moodle_download_extract() {
 moodle_plugins() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
-  local apacheUser="${2}"
+  local webserverUser="${2}"
   local moodleVersionSemVer="${3}"
 
   echo_stdout_verbose "Configuring Moodle plugins..."
@@ -606,7 +625,7 @@ moodle_plugins() {
       run_command wget -qO "${plugin_name}.zip" "${plugin_url}"
       run_command unzip -q "${plugin_name}.zip" -d "${plugin_dir}"
       run_command rm "${plugin_name}.zip"
-      run_command chown -R root:"${apacheUser}" "${plugin_dir}"
+      run_command chown -R root:"${webserverUser}" "${plugin_dir}"
       run_command chmod -R 0755 "${plugin_dir}"
       echo_stdout_verbose "Plugin ${plugin_name} installed."
     else
@@ -617,20 +636,112 @@ moodle_plugins() {
   echo_stdout_verbose "Configuration completed."
 }
 
+nginx_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    # Install Nginx if not already installed
+    package_ensure nginx
+
+    # Should always be true, but just in case
+    if $FPM_ENSURE; then
+        echo_stdout_verbose "Installing PHP FPM for Nginx..."
+        package_ensure "php${PHP_VERSION}-fpm"
+    fi
+
+    # Enable and start PHP FPM
+    run_command systemctl enable "php${PHP_VERSION}-fpm"
+    run_command systemctl start "php${PHP_VERSION}-fpm"
+
+    # Enable and restart Nginx
+    run_command systemctl enable nginx
+    run_command systemctl restart nginx
+
+    echo_stdout_verbose "Nginx installation and configuration completed."
+}
+
+nginx_create_vhost() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    declare -n config=$1
+    local logDir="${NGINX_LOG_DIR:-/var/log/nginx}"
+
+    # Check if required configuration options are provided
+    local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
+    for option in "${required_options[@]}"; do
+        if [[ -z "${config[$option]}" ]]; then
+            echo_stderr "Missing required configuration option: $option"
+            exit 1
+        fi
+    done
+
+    local vhost_template="
+server {
+    listen 80;
+    server_name {{site_name}};
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name {{site_name}};
+
+    root {{document_root}};
+    index index.php;
+
+    server_tokens off;
+    ssl_certificate {{ssl_cert_file}};
+    ssl_certificate_key {{ssl_key_file}};
+
+    error_log ${logDir}/{{site_name}}.error.log;
+    access_log ${logDir}/{{site_name}}.access.log;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+    }
+
+    {{include_file}}
+}
+"
+
+    local vhost_config
+    vhost_config=$(apply_template "$vhost_template" \
+        "site_name=${config["site-name"]}" \
+        "document_root=${config["document-root"]}" \
+        "admin_email=${config["admin-email"]}" \
+        "ssl_cert_file=${config["ssl-cert-file"]}" \
+        "ssl_key_file=${config["ssl-key-file"]}" \
+        "include_file=${config["include-file"]}"
+    )
+
+    echo "$vhost_config" > "/etc/nginx/sites-available/${config["site-name"]}.conf"
+    run_command ln -s "/etc/nginx/sites-available/${config["site-name"]}.conf" "/etc/nginx/sites-enabled/"
+    run_command systemctl reload nginx
+}
+
 
 usage() {
     echo_stdout "Usage: $0 [options]"
     echo_stdout "Options:"
-    echo_stdout "  -a    Install Apache web server"
+    echo_stdout "  -a    Ensure Apache web server is installed"
     echo_stdout "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
-    echo_stdout "  -f    Install Apache with FPM"
-    echo_stdout "  -m    Install Moodle version (default: ${MOODLE_VERSION})"
+    echo_stdout "  -e    Ensure Nginx web server is installed"
+    echo_stdout "  -f    Enable FPM for the web server (requires -a or -e)"
+    echo_stdout "  -h    Display this help message"
+    echo_stdout "  -m    Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
+    echo_stdout "  -M    Ensure Memcached is installed"
     echo_stdout "  -n    Dry run (show commands without executing)"
-    echo_stdout "  -p    Install PHP version (default: ${PHP_VERSION})"
-    echo_stdout "  Note: Options -d, -m, and -p require an argument."
+    echo_stdout "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
+    echo_stdout "  -v    Enable verbose output"
+    echo_stdout "  Note: Options -d, -m, and -p require an argument but have defaults."
     exit 0
 }
-
 
 # Main function
 main() {
@@ -645,28 +756,49 @@ main() {
         apache_ensure
     fi
 
+    if $NGINX_ENSURE; then
+        nginx_ensure
+        nginx_configure_for_php
+    fi
+
     if $MOODLE_ENSURE; then
-        moodle_configure_directories "${moodleUser}" "${apacheUser}" "${moodleDataDir}" "${moodleDir}"
-        moodle_download_extract "${moodleDir}" "${apacheUser}" "${MOODLE_VERSION}"
+        moodle_configure_directories "${moodleUser}" "${webserverUser}" "${moodleDataDir}" "${moodleDir}"
+        moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
         moodle_dependencies
         moodle_config_files "${moodleDir}"
-        config=(
-          ["site-name"]="${moodleSiteName}"
-          ["document-root"]="/var/www/html/${moodleSiteName}"
-          ["admin-email"]="admin@${moodleSiteName}"
-          ["ssl-cert-file"]="/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem"
-          ["ssl-key-file"]="/etc/letsencrypt/live/${moodleSiteName}/privkey.pem"
-          ["include-file"]="/path/to/include.conf"
-        )
-        apache_create_vhost "${config[@]}"
         provider=$(acme_cert_provider "staging")
         acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
-    fi
+
+        declare -A vhost_config=(
+            ["site-name"]="${moodleSiteName}"
+            ["document-root"]="/var/www/html/${moodleSiteName}"
+            ["admin-email"]="admin@${moodleSiteName}"
+            ["ssl-cert-file"]="/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem"
+            ["ssl-key-file"]="/etc/letsencrypt/live/${moodleSiteName}/privkey.pem"
+        )
+
+        if $APACHE_ENSURE; then
+            apache_create_vhost vhost_config
+        fi
+
+        if $NGINX_ENSURE; then
+            nginx_create_vhost vhost_config
+        fi
+
+
+      fi
 }
 
-while getopts ":ad:fhm::np::v" opt; do
+# Pre-check for --ci long option
+if [[ "$1" == "--ci" ]]; then
+    CI_MODE=true
+    shift 1  # remove the CI flag from arguments
+fi
+
+while getopts ":ad:cefhm:M::np:sv" opt; do
     case "${opt}" in
         a) APACHE_ENSURE=true ;;
+        c) CI_MODE=true ;;
         d)
             case "${OPTARG}" in
                 mysql|pgsql) DB_TYPE=${OPTARG} ;;
@@ -676,8 +808,25 @@ while getopts ":ad:fhm::np::v" opt; do
                     ;;
             esac
             ;;
+        e) NGINX_ENSURE=true; FPM_ENSURE=true ;;
         f) FPM_ENSURE=true ;;
         h) usage ;;
+        M)
+            MEMCACHED_ENSURE=true
+            if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+                MEMCACHED_MODE="network"
+                if [[ ${OPTARG:0:1} == "-" ]]; then
+                    OPTIND=$((OPTIND - 1))
+                fi
+            elif [[ ${OPTARG} == "local" ]]; then
+                MEMCACHED_MODE="local"
+            elif [[ ${OPTARG} == "network" ]]; then
+                MEMCACHED_MODE="network"
+            else
+                echo_stderr "Invalid mode for Memcached: $OPTARG. Supported modes are 'local' and 'network'."
+                usage
+            fi
+            ;;
         m)
             MOODLE_ENSURE=true
             if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
@@ -701,6 +850,7 @@ while getopts ":ad:fhm::np::v" opt; do
                 PHP_VERSION=${OPTARG}
             fi
             ;;
+        s) USE_SUDO=true ;;
         v) VERBOSE=true ;;
         \?) echo_stderr "Invalid option: -$OPTARG" >&2
             usage ;;
@@ -710,37 +860,53 @@ while getopts ":ad:fhm::np::v" opt; do
     esac
 done
 
+# If not in CI mode, do the sudo checks
+if ! $CI_MODE; then
+    # Check if user is root
+    if [[ $EUID -eq 0 ]]; then
+        USE_SUDO=false
+    else
+        # Check if sudo is available and the user has sudo privileges
+        if $USE_SUDO && ! command -v sudo &>/dev/null; then
+            echo "sudo command not found. Please run as root or install sudo."
+            exit 1
+        elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
+            echo "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
+            exit 1
+        fi
+    fi
+fi
 
+    # Check mutual exclusivity of web servers
+    if [[ "${APACHE_ENSURE}" == "true" && "${NGINX_ENSURE}" == "true" ]]; then
+        echo_stderr "Options -a and -e are mutually exclusive. Please select only one web server."
+        usage
+    fi
 
+    # Checking if -f is selected on its own without -a or -e
+    if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
+        echo_stderr "Option -f requires either -a or -e to be selected."
+        usage
+    fi
 
     if [[ "${VERBOSE}" == "true" ]]; then
         chosen_options=""
-        if $APACHE_ENSURE; then chosen_options+="Install Apache, "; fi
-        if $FPM_ENSURE; then chosen_options+="Install Apache with FPM, "; fi
-        if $MOODLE_ENSURE; then chosen_options+="Install Moodle version $MOODLE_VERSION, "; fi
-        if $DRY_RUN; then chosen_options+="DRY RUN, "; fi
-        if $PHP_ENSURE; then chosen_options+="Install PHP version $PHP_VERSION, "; fi
-        chosen_options="${chosen_options%, }"
 
-        echo_stdout_verbose "Options chosen: $chosen_options"
-    fi
-
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        echo_stdout_verbose "No need to check if user is root."
-        echo_stdout_verbose "No need to check if user can sudo without password entry."
-    else
-        check_user_is_root
-        if [[ "${NON_ROOT_USER}" == "true" ]]; then
-          check_user_can_sudo_without_password_entry
-          if [[ "${USER_REQUIRES_PASSWORD_TO_SUDO}" == "true" ]]; then
-            echo_stderr "User requires a password to issue sudo commands. Exiting"
-            echo_stderr "Please re-run the script as root, or having sudo'd with a password"
-            usage
-          else
-            SUDO='sudo '
-            echo_stdout_verbose "User can issue sudo commands without entering a password. Continuing"
-          fi
+        if $APACHE_ENSURE; then chosen_options+="-a: Ensure Apache web server, "; fi
+        if [[ -n "${DB_TYPE}" ]]; then chosen_options+="-d: Database type set to ${DB_TYPE}, "; fi
+        if $NGINX_ENSURE; then chosen_options+="-e: Ensure Nginx web server, "; fi
+        if $FPM_ENSURE; then chosen_options+="-f: Ensure FPM for web servers, "; fi
+        if $MOODLE_ENSURE; then chosen_options+="-m: Ensure Moodle version $MOODLE_VERSION, "; fi
+        if $MEMCACHED_ENSURE; then
+            chosen_options+="-M: Ensure Memcached support, "
+            if [[ "$MEMCACHED_MODE" == "local" ]]; then
+                chosen_options+="Ensure local Memcached instance, "
+            fi
         fi
+        if $DRY_RUN; then chosen_options+="-n: DRY RUN, "; fi
+        if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
+
+        chosen_options="${chosen_options%, }"
     fi
 
 # Run the main function
