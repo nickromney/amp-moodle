@@ -19,10 +19,10 @@ export LC_CTYPE=en_US.UTF-8
 # I tend to leave these as false, and set with command line options
 VERBOSE=true
 DRY_RUN=false
-APACHE_INSTALL=false
-MOODLE_INSTALL=false
-PHP_INSTALL=false
-FPM_INSTALL=false
+APACHE_ENSURE=false
+FPM_ENSURE=false
+MOODLE_ENSURE=false
+PHP_ENSURE=false
 DEFAULT_MOODLE_VERSION="311"
 DEFAULT_PHP_VERSION="7.2"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
@@ -54,32 +54,6 @@ USER_REQUIRES_PASSWORD_TO_SUDO='true'
 NON_ROOT_USER='true'
 SUDO=''
 
-# Although they're non-alphabetical
-# we rely on these in other functions
-echo_stderr() {
-  local message="${*}"
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ERROR: ${message}" >&2
-}
-
-echo_stdout() {
-  local message="${*}"
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ${message}" >&1
-}
-
-echo_stdout_verbose() {
-  local message="${*}"
-  local prefix=""
-
-  # If DRY RUN mode is active, prefix the message
-  if check_is_true "${DRY_RUN}"; then
-    prefix="DRY RUN: "
-  fi
-
-  if check_is_true "${VERBOSE}"; then
-    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${prefix}${message}" >&1
-  fi
-}
-
 # helper functions
 check_is_command_available() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -93,15 +67,6 @@ check_is_command_available() {
   else
     # propagate error to caller
     return $?
-  fi
-}
-
-check_is_true() {
-  local valueToCheck="$1"
-  if [[ ${valueToCheck} = 'true' ]]; then
-    return 0
-  else
-    return 1
   fi
 }
 
@@ -129,18 +94,29 @@ check_user_can_sudo_without_password_entry() {
   fi
 }
 
-package_manager_ensure() {
-    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-    if command -v dpkg >/dev/null 2>&1; then
-        package_manager="dpkg -s"
-    elif command -v rpm >/dev/null 2>&1; then
-        package_manager="rpm -q"
-    elif command -v brew >/dev/null 2>&1; then
-        package_manager="brew list"
-    else
-        echo_stderr "Error: Package manager not found."
-        exit 1
-    fi
+echo_stderr() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ERROR: ${message}" >&2
+}
+
+echo_stdout() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ${message}" >&1
+}
+
+echo_stdout_verbose() {
+  local message="${*}"
+  local prefix=""
+
+  # If DRY RUN mode is active, prefix the message
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+      prefix="DRY RUN: "
+  fi
+
+  if [[ "${VERBOSE}" == "true" ]]; then
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${prefix}${message}" >&1
+  fi
 }
 
 package_ensure() {
@@ -186,6 +162,19 @@ package_ensure() {
     fi
 }
 
+package_manager_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+    if command -v dpkg >/dev/null 2>&1; then
+        package_manager="dpkg -s"
+    elif command -v rpm >/dev/null 2>&1; then
+        package_manager="rpm -q"
+    elif command -v brew >/dev/null 2>&1; then
+        package_manager="brew list"
+    else
+        echo_stderr "Error: Package manager not found."
+        exit 1
+    fi
+}
 
 repository_ensure() {
     if [ "$package_manager" == "brew list" ]; then
@@ -256,25 +245,74 @@ run_command() {
     use_sudo=""
   fi
 
-  if check_is_true "${DRY_RUN}"; then
-    echo_stdout_verbose "Not executing: ${use_sudo}${cmd_str}"
-  else
-    if check_is_true "${VERBOSE}"; then
-      echo_stdout_verbose "Preparing to execute: ${use_sudo}${cmd_str}"
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        echo_stdout_verbose "Not executing: ${use_sudo}${cmd_str}"
+        return
     fi
+
+    if [[ "${VERBOSE}" == "true" ]]; then
+        echo_stdout_verbose "Preparing to execute: ${use_sudo}${cmd_str}"
+    fi
+
     ${use_sudo} "$@"
-  fi
 }
 
 
+# Functions which achieve the goal of this script
+acme_cert_provider() {
+    local provider=""
+    case "$1" in
+        staging) provider="https://acme-staging-v02.api.letsencrypt.org/directory" ;;
+        production) provider="https://acme-v02.api.letsencrypt.org/directory" ;;
+        *) echo_stderr "Invalid provider option: $1"; exit 1 ;;
+    esac
+    echo "$provider"
+}
 
-# Function to install Apache web server
-apache_install() {
+acme_cert_request() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+    local domain=""
+    local email=""
+    local san_entries=""
+    local challenge_type="dns"
+    local provider="https://acme-staging-v02.api.letsencrypt.org/directory"  # Default to Let's Encrypt sandbox
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --domain) shift; domain="$1"; shift ;;
+            --email) shift; email="$1"; shift ;;
+            --san) shift; san_entries="$1"; shift ;;
+            --challenge) shift; challenge_type="$1"; shift ;;
+            --provider) shift; provider="$1"; shift ;;
+            *) echo_stderr "Invalid option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$domain" ] || [ -z "$email" ]; then
+        echo_stderr "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
+        exit 1
+    fi
+
+    # Check if Certbot and python3-certbot-apache are installed
+    package_ensure certbot python3-certbot-apache
+
+    # Prepare SAN entries
+    local san_flag=""
+    if [ -n "$san_entries" ]; then
+        san_flag="--expand --cert-name $domain"
+    fi
+
+    # Request SSL certificate
+    run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
+}
+
+# Function to ensure Apache web server is installed and configured
+apache_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
     # Install Apache if not already installed
     package_ensure apache2
 
-    if $FPM_INSTALL; then
+    if $FPM_ENSURE; then
         echo_stdout_verbose "Installing PHP FPM..."
         package_ensure "php${PHP_VERSION}-fpm"
         package_ensure "libapache2-mod-fcgid"
@@ -335,54 +373,9 @@ apache_create_vhost() {
 EOF
 }
 
-acme_cert_provider() {
-    local provider=""
-    case "$1" in
-        staging) provider="https://acme-staging-v02.api.letsencrypt.org/directory" ;;
-        production) provider="https://acme-v02.api.letsencrypt.org/directory" ;;
-        *) echo_stderr "Invalid provider option: $1"; exit 1 ;;
-    esac
-    echo "$provider"
-}
 
-acme_cert_request() {
-    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-    local domain=""
-    local email=""
-    local san_entries=""
-    local challenge_type="dns"
-    local provider="https://acme-staging-v02.api.letsencrypt.org/directory"  # Default to Let's Encrypt sandbox
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --domain) shift; domain="$1"; shift ;;
-            --email) shift; email="$1"; shift ;;
-            --san) shift; san_entries="$1"; shift ;;
-            --challenge) shift; challenge_type="$1"; shift ;;
-            --provider) shift; provider="$1"; shift ;;
-            *) echo_stderr "Invalid option: $1"; exit 1 ;;
-        esac
-    done
-
-    if [ -z "$domain" ] || [ -z "$email" ]; then
-        echo_stderr "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
-        exit 1
-    fi
-
-    # Check if Certbot and python3-certbot-apache are installed
-    package_ensure certbot python3-certbot-apache
-
-    # Prepare SAN entries
-    local san_flag=""
-    if [ -n "$san_entries" ]; then
-        san_flag="--expand --cert-name $domain"
-    fi
-
-    # Request SSL certificate
-    run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
-}
-
-php_install() {
+php_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
     echo_stdout_verbose "Ensuring PHP repository..."
@@ -466,7 +459,6 @@ php_install() {
     echo_stdout_verbose "Required PHP extensions are already installed."
 }
 
-
 moodle_dependencies() {
   # From https://github.com/moodlehq/moodle-php-apache/blob/master/root/tmp/setup/php-extensions.sh
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -497,7 +489,6 @@ moodle_dependencies() {
 
     package_ensure "${database[@]}"
 }
-
 
 moodle_config_files() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -533,7 +524,6 @@ moodle_config_files() {
         exit 1
     fi
 }
-
 
 moodle_configure_directories() {
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -647,15 +637,15 @@ main() {
 
     package_manager_ensure
 
-    if $PHP_INSTALL; then
-        php_install
+    if $PHP_ENSURE; then
+        php_ensure
     fi
 
-    if $APACHE_INSTALL; then
-        apache_install
+    if $APACHE_ENSURE; then
+        apache_ensure
     fi
 
-    if $MOODLE_INSTALL; then
+    if $MOODLE_ENSURE; then
         moodle_configure_directories "${moodleUser}" "${apacheUser}" "${moodleDataDir}" "${moodleDir}"
         moodle_download_extract "${moodleDir}" "${apacheUser}" "${MOODLE_VERSION}"
         moodle_dependencies
@@ -676,7 +666,7 @@ main() {
 
 while getopts ":ad:fhm::np::v" opt; do
     case "${opt}" in
-        a) APACHE_INSTALL=true ;;
+        a) APACHE_ENSURE=true ;;
         d)
             case "${OPTARG}" in
                 mysql|pgsql) DB_TYPE=${OPTARG} ;;
@@ -686,10 +676,10 @@ while getopts ":ad:fhm::np::v" opt; do
                     ;;
             esac
             ;;
-        f) FPM_INSTALL=true ;;
+        f) FPM_ENSURE=true ;;
         h) usage ;;
         m)
-            MOODLE_INSTALL=true
+            MOODLE_ENSURE=true
             if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
                 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
                 if [[ ${OPTARG:0:1} == "-" ]]; then
@@ -701,7 +691,7 @@ while getopts ":ad:fhm::np::v" opt; do
             ;;
         n) DRY_RUN=true ;;
         p)
-            PHP_INSTALL=true
+            PHP_ENSURE=true
             if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
                 PHP_VERSION="${DEFAULT_PHP_VERSION}"
                 if [[ ${OPTARG:0:1} == "-" ]]; then
@@ -723,26 +713,26 @@ done
 
 
 
-    if check_is_true "${VERBOSE}"; then
+    if [[ "${VERBOSE}" == "true" ]]; then
         chosen_options=""
-        if $APACHE_INSTALL; then chosen_options+="Install Apache, "; fi
-        if $FPM_INSTALL; then chosen_options+="Install Apache with FPM, "; fi
-        if $MOODLE_INSTALL; then chosen_options+="Install Moodle version $MOODLE_VERSION, "; fi
+        if $APACHE_ENSURE; then chosen_options+="Install Apache, "; fi
+        if $FPM_ENSURE; then chosen_options+="Install Apache with FPM, "; fi
+        if $MOODLE_ENSURE; then chosen_options+="Install Moodle version $MOODLE_VERSION, "; fi
         if $DRY_RUN; then chosen_options+="DRY RUN, "; fi
-        if $PHP_INSTALL; then chosen_options+="Install PHP version $PHP_VERSION, "; fi
+        if $PHP_ENSURE; then chosen_options+="Install PHP version $PHP_VERSION, "; fi
         chosen_options="${chosen_options%, }"
 
         echo_stdout_verbose "Options chosen: $chosen_options"
     fi
 
-    if check_is_true "${DRY_RUN}"; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
         echo_stdout_verbose "No need to check if user is root."
         echo_stdout_verbose "No need to check if user can sudo without password entry."
     else
         check_user_is_root
-        if check_is_true "${NON_ROOT_USER}"; then
+        if [[ "${NON_ROOT_USER}" == "true" ]]; then
           check_user_can_sudo_without_password_entry
-          if check_is_true "${USER_REQUIRES_PASSWORD_TO_SUDO}"; then
+          if [[ "${USER_REQUIRES_PASSWORD_TO_SUDO}" == "true" ]]; then
             echo_stderr "User requires a password to issue sudo commands. Exiting"
             echo_stderr "Please re-run the script as root, or having sudo'd with a password"
             usage
