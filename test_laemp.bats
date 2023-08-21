@@ -1,28 +1,28 @@
 #!/usr/bin/env bats
 
 @test "-h switch" {
-  run ./gptamp.sh -h
+  run ./laemp.sh -h
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Usage: ./gptamp.sh [" ]]
+  [[ "$output" =~ "Usage: ./laemp.sh [" ]]
 }
 
 @test "-a switch with verbose" {
-  run ./gptamp.sh -a -n -v
+  run ./laemp.sh -a -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   [[ "$output" =~ "Options chosen: Install Apache" ]]
 }
 
 @test "-f switch with verbose" {
-  run ./gptamp.sh -f -v
+  run ./laemp.sh -f -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   [[ "$output" =~ "Options chosen: Install Apache with FPM" ]]
 }
 
 @test "-m switch with default version and verbose" {
-  run ./gptamp.sh -m -v
+  run ./laemp.sh -m -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   # Assuming default MOODLE_VERSION is "3.10" for this example.
@@ -30,21 +30,21 @@
 }
 
 @test "-m switch with specific version and verbose" {
-  run ./gptamp.sh -m 3.11 -v
+  run ./laemp.sh -m 3.11 -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   [[ "$output" =~ "Options chosen: Install Moodle version 3.11" ]]
 }
 
 @test "-n switch with verbose" {
-  run ./gptamp.sh -n -v
+  run ./laemp.sh -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   [[ "$output" =~ "Options chosen: DRY RUN" ]]
 }
 
 @test "-p switch with default version and verbose" {
-  run ./gptamp.sh -p -v
+  run ./laemp.sh -p -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   # Assuming default PHP_VERSION is "7.4" for this example.
@@ -52,14 +52,14 @@
 }
 
 @test "-p switch with specific version and verbose" {
-  run ./gptamp.sh -p 8.0 -v
+  run ./laemp.sh -p 8.0 -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   [[ "$output" =~ "Options chosen: Install PHP version 8.0" ]]
 }
 
 @test "-v switch alone" {
-  run ./gptamp.sh -v
+  run ./laemp.sh -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
   # This might just echo an empty "Options chosen:" since no other option is selected. Adjust as needed.

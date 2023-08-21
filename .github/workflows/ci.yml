@@ -36,9 +36,9 @@ jobs:
       with:
         php-version: '7.4'
 
-    - name: Run amp.sh
+    - name: Run laemp.sh
       run: |
-        ./gptamp.sh -a -f -m 310
+        ./laemp.sh -a -f -m 310 -p 7.4
 
     # - name: Set test site
     #   run: |
