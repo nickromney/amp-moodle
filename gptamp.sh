@@ -110,11 +110,44 @@ echo_stdout_verbose() {
   fi
 }
 
+package_manager_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    os_type=$(uname -s)
+
+    if [ "$os_type" == "Darwin" ]; then  # macOS
+        if check_is_command_available brew; then
+            package_manager="brew"
+        elif check_is_command_available apt; then
+            package_manager="apt"
+        fi
+    else  # Assuming Linux or other UNIX-like OS
+        if check_is_command_available apt; then
+            package_manager="apt"
+        elif check_is_command_available brew; then
+            package_manager="brew"
+        elif check_is_command_available yum; then
+            package_manager="yum"
+        elif check_is_command_available dnf; then
+            package_manager="dnf"
+        else
+            echo_stderr "Error: Package manager not found."
+            exit 1
+        fi
+    fi
+}
+
+
+
 package_ensure() {
     local no_install_recommends_flag=""
     if [ "$1" == "--no-install-recommends" ]; then
-        no_install_recommends_flag="--no-install-recommends"
         shift
+        if [ "$package_manager" == "apt" ]; then
+            no_install_recommends_flag="--no-install-recommends"
+        else
+            echo_stderr "Warning: --no-install-recommends flag is not supported for this package manager."
+        fi
     fi
 
     local packages=("$@")
@@ -122,109 +155,62 @@ package_ensure() {
 
     for package in "${packages[@]}"
     do
-      if [ "$package_manager" == "dpkg -s" ]; then
-
-        # check if package is installed using dpkg
-        if ! dpkg -s "$package" > /dev/null 2>&1; then
-          missing_packages+=("$package")
-        fi
-
-      elif [ "$package_manager" == "rpm -q" ]; then
-
-        # check if package is installed using rpm
-        if ! rpm -q "$package" > /dev/null 2>&1; then
-          missing_packages+=("$package")
-        fi
-
-      elif [ "$package_manager" == "yum list installed" ]; then
-
-        # check if package is installed using yum
-        if ! yum list installed "$package" > /dev/null 2>&1; then
-          missing_packages+=("$package")
-        fi
-
-      elif [ "$package_manager" == "dnf list installed" ]; then
-
-        # check if package is installed using dnf
-        if ! dnf list installed "$package" > /dev/null 2>&1; then
-          missing_packages+=("$package")
-        fi
-
-      elif [ "$package_manager" == "brew list" ]; then
-
-        # check if package is installed using brew
-        if ! brew list "$package" > /dev/null 2>&1; then
-          missing_packages+=("$package")
-        fi
-
-      fi
+        case "$package_manager" in
+            apt)
+                if ! dpkg -s "$package" >/dev/null 2>&1; then
+                    missing_packages+=("$package")
+                fi
+                ;;
+            yum)
+                if ! yum list installed "$package" >/dev/null 2>&1; then
+                    missing_packages+=("$package")
+                fi
+                ;;
+            dnf)
+                if ! dnf list installed "$package" >/dev/null 2>&1; then
+                    missing_packages+=("$package")
+                fi
+                ;;
+            brew)
+                if ! brew list "$package" >/dev/null 2>&1; then
+                    missing_packages+=("$package")
+                fi
+                ;;
+            *)
+                echo_stderr "Error: Unsupported package manager."
+                exit 1
+                ;;
+        esac
     done
 
     if [ ${#missing_packages[@]} -gt 0 ]; then
+        echo_stdout_verbose "Installing missing packages: ${missing_packages[*]}"
 
-      echo_stdout_verbose "Installing missing packages: ${missing_packages[*]}"
-
-      if [ "$package_manager" == "dpkg -s" ]; then
-
-        run_command apt update
-        run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
-
-      elif [ "$package_manager" == "rpm -q" ]; then
-
-        run_command yum update -y
-        run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
-
-      elif [ "$package_manager" == "yum list installed" ]; then
-
-        run_command yum install -y $no_install_recommends_flag "${missing_packages[@]}"
-
-      elif [ "$package_manager" == "dnf list installed" ]; then
-
-        run_command dnf install -y $no_install_recommends_flag "${missing_packages[@]}"
-
-      elif [ "$package_manager" == "brew list" ]; then
-
-        for package in "${missing_packages[@]}"; do
-          run_command brew install "$package"
-        done
-
-      fi
-
-    fi
+        case "$package_manager" in
+            apt)
+                run_command apt update
+                run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
+                ;;
+            yum|dnf)
+                run_command "${package_manager}" install -y "${missing_packages[@]}"
+                ;;
+            brew)
+                for package in "${missing_packages[@]}"; do
+                    run_command brew install "$package"
+                done
+                ;;
+            *)
+                echo_stderr "Error: Unsupported package manager."
+                exit 1
+                ;;
+        esac
     else
         echo_stdout_verbose "All packages are already installed."
     fi
 }
 
-package_manager_ensure() {
-
-  echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
-
-  if command -v dpkg >/dev/null 2>&1; then
-    package_manager="dpkg -s"
-
-  elif command -v rpm >/dev/null 2>&1; then
-    package_manager="rpm -q"
-
-  elif command -v yum >/dev/null 2>&1; then
-    package_manager="yum list installed"
-
-  elif command -v dnf >/dev/null 2>&1; then
-    package_manager="dnf list installed"
-
-  elif command -v brew >/dev/null 2>&1; then
-   package_manager="brew list"
-
-  else
-    echo_stderr "Error: Package manager not found."
-    exit 1
-
-  fi
-
-}
-
 repository_ensure() {
-    if [ "$package_manager" == "brew list" ]; then
+    if [ "$package_manager" == "brew" ]; then
         echo_stdout_verbose "Homebrew does not require repository addition. Skipping."
         return
     fi
@@ -232,82 +218,61 @@ repository_ensure() {
     local repositories=("$@")
     local missing_repositories=()
 
-    if [ "$package_manager" == "dpkg -s" ]; then
-        for repository in "${repositories[@]}"
-        do
-            if ! grep -q "^deb .*$repository" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
-                missing_repositories+=("$repository")
-            fi
-        done
-    elif [ "$package_manager" == "rpm -q" ]; then
-
-    # Check rpm repositories
-    for repository in "${repositories[@]}"; do
-      if ! rpm -qa --queryformat '%{REPO}' | grep -q "$repository"; then
-        missing_repositories+=("$repository")
-      fi
-    done
-
-  elif [ "$package_manager" == "yum list installed" ]; then
-
-    # Check yum repositories
-    for repository in "${repositories[@]}"; do
-      if ! yum repolist all | grep -q "$repository"; then
-        missing_repositories+=("$repository")
-      fi
-    done
-
-  elif [ "$package_manager" == "dnf list installed" ]; then
-
-    # Check dnf repositories
-    for repository in "${repositories[@]}"; do
-      if ! dnf repolist all | grep -q "$repository"; then
-        missing_repositories+=("$repository")
-      fi
-    done
-
-  fi
+    case "$package_manager" in
+        apt)
+            for repository in "${repositories[@]}"
+            do
+                if ! run_command grep -q "^deb .*$repository" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
+                    missing_repositories+=("$repository")
+                fi
+            done
+            ;;
+        yum|dnf)
+            for repository in "${repositories[@]}"; do
+                if ! run_command "${package_manager}" repolist all | run_command grep -q "$repository"; then
+                    missing_repositories+=("$repository")
+                fi
+            done
+            ;;
+        *)
+            echo_stderr "Error: Repositories management for this package manager is not supported."
+            exit 1
+            ;;
+    esac
 
     if [ ${#missing_repositories[@]} -gt 0 ]; then
+        echo_stdout_verbose "Adding missing repositories: ${missing_repositories[*]}"
 
-      echo_stdout_verbose "Adding missing repositories: ${missing_repositories[*]}"
-
-      if [ "$package_manager" == "dpkg -s" ]; then
-
-        for repository in "${missing_repositories[@]}"; do
-          run_command add-apt-repository "$repository"
-        done
-        run_command apt update
-
-      elif [ "$package_manager" == "rpm -q" ]; then
-
-        for repository in "${missing_repositories[@]}"; do
-          run_command rpm -Uvh "$repository"
-        done
-        run_command rpm --rebuilddb
-
-      elif [ "$package_manager" == "yum list installed" ]; then
-
-        for repository in "${missing_repositories[@]}"; do
-          run_command yum-config-manager --add-repo "$repository"
-        done
-        run_command yum update -y
-
-      elif [ "$package_manager" == "dnf list installed" ]; then
-
-        for repository in "${missing_repositories[@]}"; do
-          run_command dnf config-manager --add-repo "$repository"
-        done
-        run_command dnf update -y
-
-      fi
-
+        case "$package_manager" in
+            apt)
+                for repository in "${missing_repositories[@]}"; do
+                    run_command add-apt-repository "$repository"
+                done
+                run_command apt update
+                ;;
+            yum)
+                for repository in "${missing_repositories[@]}"; do
+                    run_command yum-config-manager --add-repo "$repository"
+                done
+                run_command yum update -y
+                ;;
+            dnf)
+                for repository in "${missing_repositories[@]}"; do
+                    run_command dnf config-manager --add-repo "$repository"
+                done
+                run_command dnf update -y
+                ;;
+            *)
+                echo_stderr "Error: Unsupported package manager."
+                exit 1
+                ;;
+        esac
     else
-
-      echo_stdout_verbose "All repositories are already added."
-
+        echo_stdout_verbose "All repositories are already added."
     fi
 }
+
+
 
 replace_file_value() {
 
@@ -322,7 +287,7 @@ replace_file_value() {
   if [ -f "$file_path" ]; then
 
     # Check if current value already exists
-    if grep -q "$current_value" "$file_path"; then
+    if run_command grep -q "$current_value" "$file_path"; then
 
       echo_stdout_verbose "Value $current_value already set in $file_path"
 
@@ -340,6 +305,7 @@ replace_file_value() {
   flock -u 200
 
 }
+
 
 run_command() {
     if [[ ! -t 0 ]]; then
@@ -421,45 +387,68 @@ acme_cert_request() {
 apache_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    # Install Apache if not already installed
-    package_ensure apache2
+    # Check if PHP is installed
+    # and exit if not
+    php_verify true
 
-    # Ensure essential modules
-    package_ensure "libapache2-mod-ssl"  # For SSL/TLS support
-    package_ensure "libapache2-mod-headers"  # For HTTP header manipulation
-    package_ensure "libapache2-mod-rewrite"  # For URL rewriting, useful for many web apps
-    package_ensure "libapache2-mod-deflate"  # For response compression
-    package_ensure "libapache2-mod-expires"  # For setting expiration HTTP headers
+    os_type=$(uname)
+    if [[ "$os_type" == "Darwin" ]]; then
+        service_command="brew services"
 
-    # Enable essential Apache modules
-    run_command a2enmod ssl
-    run_command a2enmod headers
-    run_command a2enmod rewrite
-    run_command a2enmod deflate
-    run_command a2enmod expires
+        # Install Apache (httpd) and PHP-FPM for macOS
+        package_ensure httpd
 
-    if $FPM_ENSURE; then
-        echo_stdout_verbose "Installing PHP FPM..."
-        package_ensure "php${PHP_VERSION}-fpm"
-        package_ensure "libapache2-mod-fcgid"
+        if $FPM_ENSURE; then
+            echo_stdout_verbose "On macOS, PHP comes with FPM by default. No additional configuration required."
+        fi
 
-        echo_stdout_verbose "Configuring Apache for FPM..."
-        run_command a2enmod proxy_fcgi setenvif
-        run_command a2enconf "php${PHP_VERSION}-fpm"
+        # Enable and Restart Apache for macOS
+        run_command "${service_command}" restart httpd
 
-        run_command systemctl enable "php${PHP_VERSION}-fpm"
-        run_command systemctl start "php${PHP_VERSION}-fpm"
     else
-        echo_stdout_verbose "Configuring Apache without FPM..."
-        package_ensure "libapache2-mod-php${PHP_VERSION}"
-    fi
+        service_command="systemctl"
 
-    # Enable and Restart Apache
-    run_command systemctl enable apache2
-    run_command systemctl restart apache2
+        # Install Apache and necessary modules for non-macOS systems
+        package_ensure apache2
+        package_ensure "libapache2-mod-ssl"
+        package_ensure "libapache2-mod-headers"
+        package_ensure "libapache2-mod-rewrite"
+        package_ensure "libapache2-mod-deflate"
+        package_ensure "libapache2-mod-expires"
+
+        # Enable essential Apache modules
+        run_command a2enmod ssl
+        run_command a2enmod headers
+        run_command a2enmod rewrite
+        run_command a2enmod deflate
+        run_command a2enmod expires
+
+        if $FPM_ENSURE; then
+            echo_stdout_verbose "Installing PHP FPM for non-macOS systems..."
+            package_ensure "php${PHP_VERSION}-fpm"
+            package_ensure "libapache2-mod-fcgid"
+
+            echo_stdout_verbose "Configuring Apache for FPM..."
+            run_command a2enmod proxy_fcgi setenvif
+            run_command a2enconf "php${PHP_VERSION}-fpm"
+
+            # Enable and start PHP FPM service
+            run_command $service_command enable "php${PHP_VERSION}-fpm"
+            run_command $service_command start "php${PHP_VERSION}-fpm"
+        else
+            echo_stdout_verbose "Configuring Apache without FPM..."
+            package_ensure "libapache2-mod-php${PHP_VERSION}"
+        fi
+
+        # Enable and Restart Apache for non-macOS systems
+        run_command $service_command enable apache2
+        run_command $service_command restart apache2
+    fi
 
     echo_stdout_verbose "Apache installation and configuration completed."
 }
+
+
 
 
 apache_create_vhost() {
@@ -578,7 +567,9 @@ moodle_config_files() {
         fi
     else
         echo_stderr "Error: ${configDist} does not exist."
-        exit 1
+        if [ "${DRY_RUN}" != "true" ]; then
+            exit 1
+        fi
     fi
 }
 
@@ -635,6 +626,72 @@ moodle_download_extract() {
     run_command chown -R root:"${webserverUser}" "${moodleDir}"
     run_command chmod -R 0755 "${moodleDir}"
   fi
+}
+
+moodle_ensure() {
+    # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
+    ## The ctype extension is required (provided by common)
+    # The curl extension is required (required for networking and web services).
+    ## The dom extension is required (provided by xml)
+    # The gd extension is recommended (required for manipulating images).
+    ## The iconv extension is required (provided by common)
+    # The intl extension is recommended.
+    # The json extension is required.
+    # The mbstring extension is required.
+    # The openssl extension is recommended (required for networking and web services).
+    ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
+    # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
+    ## The SimpleXML extension is required (provided by xml)
+    # The soap extension is recommended (required for web services).
+    ## The SPL extension is required (provided by core)
+    ## The tokenizer extension is recommended (provided by core)
+    # The xml extension is required.
+    # The xmlrpc extension is recommended (required for networking and web services).
+    # The zip extension is required.
+
+    declare -a moodle_php_extensions=("php${PHP_VERSION}-common" \
+          "php${PHP_VERSION}-curl" \
+          "php${PHP_VERSION}-gd" \
+          "php${PHP_VERSION}-intl" \
+          "php${PHP_VERSION}-json" \
+          "php${PHP_VERSION}-mbstring" \
+          "php${PHP_VERSION}-soap" \
+          "php${PHP_VERSION}-xml" \
+          "php${PHP_VERSION}-xmlrpc" \
+          "php${PHP_VERSION}-zip")
+
+      if [ "${DB_TYPE}" == "pgsql" ]; then
+          # Add php-pgsql extension for PostgreSQL
+          moodle_php_extensions+=("php${PHP_VERSION}-pgsql")
+      else
+          # Add php-mysqli extension for MySQL and MariaDB
+          moodle_php_extensions+=("php${PHP_VERSION}-mysqli")
+      fi
+
+      php_extensions_ensure "${moodle_php_extensions[@]}"
+
+      moodle_configure_directories "${moodleUser}" "${webserverUser}" "${moodleDataDir}" "${moodleDir}"
+      moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
+      moodle_dependencies
+      moodle_config_files "${moodleDir}"
+      provider=$(acme_cert_provider "staging")
+      acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+
+      declare -A vhost_config=(
+          ["site-name"]="${moodleSiteName}"
+          ["document-root"]="/var/www/html/${moodleSiteName}"
+          ["admin-email"]="admin@${moodleSiteName}"
+          ["ssl-cert-file"]="/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem"
+          ["ssl-key-file"]="/etc/letsencrypt/live/${moodleSiteName}/privkey.pem"
+      )
+
+      if $APACHE_ENSURE; then
+          apache_create_vhost vhost_config
+      fi
+
+      if $NGINX_ENSURE; then
+          nginx_create_vhost vhost_config
+      fi
 }
 
 # Interesting function. May not use much.
@@ -765,94 +822,74 @@ server {
     run_command systemctl reload nginx
 }
 
+php_verify() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    local should_exit_on_failure=${1:-false}  # Default to false
+
+    # Check if PHP is installed
+    if check_is_command_available "php"; then
+        echo_stdout_verbose "PHP is installed."
+        run_command php -v
+    else
+        echo_stdout_verbose "PHP is not installed."
+        if [[ "$should_exit_on_failure" == "true" ]]; then
+            exit 1
+        fi
+    fi
+}
+
+
 php_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
+    # Verify if PHP is already installed
+    php_verify
+
+    # If PHP is already installed, simply return
+    if check_is_command_available "php"; then
+        return 0
+    fi
+
     echo_stdout_verbose "Ensuring PHP repository..."
-    repository_ensure ppa:ondrej/php
 
-    echo_stdout_verbose "Installing PHP and required extensions..."
+    # If the package manager is not brew, then add the PHP repository.
+    if [ "$package_manager" != "brew" ]; then
+        repository_ensure ppa:ondrej/php
+    fi
 
-    package_ensure --no-install-recommends "php${PHP_VERSION}"
+    echo_stdout_verbose "Installing PHP core..."
 
-        # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
-        ## The ctype extension is required (provided by common)
-        # The curl extension is required (required for networking and web services).
-        ## The dom extension is required (provided by xml)
-        # The gd extension is recommended (required for manipulating images).
-        ## The iconv extension is required (provided by common)
-        # The intl extension is recommended.
-        # The json extension is required.
-        # The mbstring extension is required.
-        # The openssl extension is recommended (required for networking and web services).
-        ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
-        # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
-        ## The SimpleXML extension is required (provided by xml)
-        # The soap extension is recommended (required for web services).
-        ## The SPL extension is required (provided by core)
-        ## The tokenizer extension is recommended (provided by core)
-        # The xml extension is required.
-        # The xmlrpc extension is recommended (required for networking and web services).
-        # The zip extension is required.
-
-    declare -a extensions=("libapache2-mod-php${PHP_VERSION}" \
-        "php${PHP_VERSION}-common" \
-        "php${PHP_VERSION}-curl" \
-        "php${PHP_VERSION}-gd" \
-        "php${PHP_VERSION}-intl" \
-        "php${PHP_VERSION}-json" \
-        "php${PHP_VERSION}-mbstring" \
-        "php${PHP_VERSION}-soap" \
-        "php${PHP_VERSION}-xml" \
-        "php${PHP_VERSION}-xmlrpc" \
-        "php${PHP_VERSION}-zip")
-
-    if [ "${DB_TYPE}" == "pgsql" ]; then
-        # Add php-pgsql extension for PostgreSQL
-        extensions+=("php${PHP_VERSION}-pgsql")
+    if [ "$package_manager" == "brew" ]; then
+        package_ensure "php@${PHP_VERSION}"
     else
-        # Add php-mysqli extension for MySQL and MariaDB
-        extensions+=("php${PHP_VERSION}-mysqli")
+        package_ensure --no-install-recommends "php${PHP_VERSION}"
+    fi
+
+    # Verify PHP installation at end of function
+    php_verify true
+}
+
+
+
+php_extensions_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+    local extensions=("$@")
+
+    if [ ${#extensions[@]} -eq 0 ]; then
+        echo_stderr "No PHP extensions provided. Aborting."
+        exit 1
     fi
 
     package_ensure "${extensions[@]}"
-
-    echo_stdout_verbose "Checking PHP configuration..."
-
-    # Check PHP configuration
-    run_command php -v
-
-    # Get installed extensions and store in a file
-    run_command php -m > installed_extensions.txt
-
-    # List of required extensions
-    declare -a required_extensions=("ctype" "curl" "dom" "gd" "iconv" "intl" "json" "mbstring" "openssl" "pcre" "SimpleXML" "soap" "SPL" "tokenizer" "xml" "xmlrpc" "zip")
-
-    if [ "${DB_TYPE}" == "pgsql" ]; then
-        # Add "pgsql" extension for PostgreSQL
-        required_extensions+=("pgsql")
-    else
-        # Add "mysqli" extension for MySQL and MariaDB
-        required_extensions+=("mysqli")
-    fi
-
-    # Check if required extensions are installed
-    for extension in "${required_extensions[@]}"
-    do
-        if ! grep -q -w "$extension" installed_extensions.txt; then
-            echo_stderr "PHP extension $extension is not installed."
-            echo_stderr "Please install the required PHP extensions and try again."
-            exit 1
-        fi
-    done
-
-    echo_stdout_verbose "Required PHP extensions are already installed."
 }
 
 
 
 # Main function
 main() {
+
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
     package_manager_ensure
 
@@ -869,46 +906,24 @@ main() {
     fi
 
     if $MOODLE_ENSURE; then
-        moodle_configure_directories "${moodleUser}" "${webserverUser}" "${moodleDataDir}" "${moodleDir}"
-        moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
-        moodle_dependencies
-        moodle_config_files "${moodleDir}"
-        provider=$(acme_cert_provider "staging")
-        acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+        moodle_ensure
+    fi
 
-        declare -A vhost_config=(
-            ["site-name"]="${moodleSiteName}"
-            ["document-root"]="/var/www/html/${moodleSiteName}"
-            ["admin-email"]="admin@${moodleSiteName}"
-            ["ssl-cert-file"]="/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem"
-            ["ssl-key-file"]="/etc/letsencrypt/live/${moodleSiteName}/privkey.pem"
-        )
-
-        if $APACHE_ENSURE; then
-            apache_create_vhost vhost_config
-        fi
-
-        if $NGINX_ENSURE; then
-            nginx_create_vhost vhost_config
-        fi
-
-
-      fi
 }
 
 usage() {
     echo_stdout "Usage: $0 [options]"
     echo_stdout "Options:"
-    echo_stdout "  -a    Ensure Apache web server is installed"
+    echo_stdout "  -c    Run in CI mode (no prompts)"
     echo_stdout "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
-    echo_stdout "  -e    Ensure Nginx web server is installed"
-    echo_stdout "  -f    Enable FPM for the web server (requires -a or -e)"
+    echo_stdout "  -f    Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
     echo_stdout "  -h    Display this help message"
     echo_stdout "  -m    Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
     echo_stdout "  -M    Ensure Memcached is installed"
     echo_stdout "  -n    Dry run (show commands without executing)"
     echo_stdout "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
     echo_stdout "  -v    Enable verbose output"
+    echo_stdout "  -w    Web server type (default: apache, supported: [apache, nginx])"
     echo_stdout "  Note: Options -d, -m, and -p require an argument but have defaults."
     exit 0
 }
@@ -921,9 +936,8 @@ usage() {
       shift 1  # remove the CI flag from arguments
   fi
 
-  while getopts ":ad:cefhm:M::np:sv" opt; do
+  while getopts ":cd:fhm:M::np:svw:" opt; do
       case "${opt}" in
-          a) APACHE_ENSURE=true ;;
           c) CI_MODE=true ;;
           d)
               case "${OPTARG}" in
@@ -934,7 +948,6 @@ usage() {
                       ;;
               esac
               ;;
-          e) NGINX_ENSURE=true; FPM_ENSURE=true ;;
           f) FPM_ENSURE=true ;;
           h) usage ;;
           M)
@@ -967,17 +980,33 @@ usage() {
           n) DRY_RUN=true ;;
           p)
               PHP_ENSURE=true
-              if [[ ${OPTARG:0:1} == "-" || -z ${OPTARG} ]]; then
+              if [[ ${OPTARG:0:1} == "-" ]]; then
                   PHP_VERSION="${DEFAULT_PHP_VERSION}"
-                  if [[ ${OPTARG:0:1} == "-" ]]; then
-                      OPTIND=$((OPTIND - 1))
-                  fi
+                  OPTIND=$((OPTIND - 1))
+              elif [[ -z ${OPTARG} ]]; then
+                  PHP_VERSION="${DEFAULT_PHP_VERSION}"
               else
                   PHP_VERSION=${OPTARG}
               fi
               ;;
           s) USE_SUDO=true ;;
           v) VERBOSE=true ;;
+          w)
+            case "${OPTARG}" in
+                apache)
+                    APACHE_ENSURE=true
+                    ;;
+                nginx)
+                    APACHE_ENSURE=false
+                    NGINX_ENSURE=true
+                    FPM_ENSURE=true
+                    ;;
+                  *)
+                      echo_stderr "Unsupported web server type: $OPTARG. Supported types are 'apache' and 'nginx'."
+                      usage
+                      ;;
+              esac
+              ;;
           \?) echo_stderr "Invalid option: -$OPTARG" >&2
               usage ;;
           :)
@@ -1003,19 +1032,13 @@ usage() {
       fi
   fi
 
-  # Check mutual exclusivity of web servers
-  if [[ "${APACHE_ENSURE}" == "true" && "${NGINX_ENSURE}" == "true" ]]; then
-      echo_stderr "Options -a and -e are mutually exclusive. Please select only one web server."
-      usage
-  fi
-
-  # Checking if -f is selected on its own without -a or -e
+  # Checking if -f is selected on its own without -w apache
   if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
-      echo_stderr "Option -f requires either -a or -e to be selected."
+      echo_stderr "Option -f requires either -w apache or -w nginx to be selected."
       usage
   fi
 
-  if [[ "${VERBOSE}" == "true" ]]; then
+  if $VERBOSE; then
       chosen_options=""
 
       if $APACHE_ENSURE; then chosen_options+="-a: Ensure Apache web server, "; fi
@@ -1033,7 +1056,11 @@ usage() {
       if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
 
       chosen_options="${chosen_options%, }"
+
+      echo_stdout_verbose "Chosen options: ${chosen_options}"
   fi
+
+
 
 # Run the main function
 main
