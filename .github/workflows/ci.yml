@@ -7,7 +7,7 @@ on:
 
 jobs:
   ci:
-    name: Run amp.sh
+    name: Run laemp.sh
     runs-on: ubuntu-22.04
 
     env:
@@ -22,7 +22,7 @@ jobs:
         mysql -e 'CREATE DATABASE ${{ env.DB_DATABASE }};' -u${{ env.DB_USER }} -p${{ env.DB_PASSWORD }}
 
     - name: Checkout Code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     # https://github.com/shivammathur/setup-php/wiki/Php-extensions-loaded-on-ubuntu-20.04#php-74
     # List of default PHP Modules
@@ -38,7 +38,7 @@ jobs:
 
     - name: Run laemp.sh
       run: |
-        ./laemp.sh -a -f -m 310 -p 7.4
+        ./laemp.sh -c -p 7.4 -f -m 310 -w apache
 
     # - name: Set test site
     #   run: |
