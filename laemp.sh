@@ -1009,22 +1009,30 @@ done
 
 
 
-  # If not in CI mode, do the sudo checks
-  if ! $CI_MODE; then
-      # Check if user is root
-      if [[ $EUID -eq 0 ]]; then
-          USE_SUDO=false
-      else
-          # Check if sudo is available and the user has sudo privileges
-          if $USE_SUDO && ! command -v sudo &>/dev/null; then
-              echo_stderr "sudo command not found. Please run as root or install sudo."
-              exit 1
-          elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
-              echo_stderr "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
-              exit 1
-          fi
-      fi
-  fi
+# If not in CI mode, do the sudo checks
+if ! $CI_MODE; then
+    # Check if user is root
+    if [[ $EUID -eq 0 ]]; then
+        USE_SUDO=false
+    else
+        # Check if sudo is available and the user has sudo privileges
+        if $USE_SUDO && ! command -v sudo &>/dev/null; then
+            echo_stderr "sudo command not found. Please run as root or install sudo."
+            exit 1
+        elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
+            echo_stderr "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
+            exit 1
+        fi
+    fi
+else
+    # In CI mode, use sudo if not root
+    if [[ $EUID -ne 0 ]]; then
+        USE_SUDO=true
+    else
+        USE_SUDO=false
+    fi
+fi
+
 
   # Checking if -f is selected on its own without -w apache
   if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
