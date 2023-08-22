@@ -346,7 +346,7 @@ apache_verify() {
 
         envvars_file="/etc/${APACHE_NAME}/envvars"
         if [[ -f "$envvars_file" ]]; then
-            # shellcheck disable=SC1091
+            # shellcheck disable=SC1090
             source "$envvars_file"
         else
             echo_stderr "Warning: ${envvars_file} not found. Skipping sourcing."
