@@ -343,39 +343,23 @@ apache_verify() {
     # Check if Apache is installed
     if check_command "$APACHE_NAME"; then
         echo_stdout_verbose "Apache is installed."
-
-        envvars_file="/etc/${APACHE_NAME}/envvars"
-        if [[ -f "$envvars_file" ]]; then
-            # shellcheck disable=SC1090
-            source "$envvars_file"
-        else
-            echo_stderr "Warning: ${envvars_file} not found. Skipping sourcing."
-        fi
-
-        run_command $APACHE_NAME -v
-
-        # Display installed Apache modules
-        echo_stdout_verbose "Installed Apache modules:"
-        run_command $APACHE_NAME -M
-
-        # Check if the Apache configuration has errors
-        echo_stdout_verbose "Checking Apache configuration for errors:"
-        if ! run_command $APACHE_NAME -t; then
-            echo_stderr "Apache configuration has errors!"
-            if [[ "$exit_on_failure" == true ]]; then
-                exit 1
-            fi
-        else
-            echo_stdout_verbose "Apache configuration is okay."
-        fi
-
+        run_command apache2ctl -v  # Use apache2ctl to get the version
     else
         echo_stdout_verbose "Apache is not installed."
         if [[ "$exit_on_failure" == true ]]; then
             exit 1
         fi
     fi
+
+    # Check for loaded modules using apache2ctl
+    echo_stdout_verbose "Checking for loaded Apache modules:"
+    run_command apache2ctl -M
+
+    # Check Apache configuration for syntax errors
+    echo_stdout_verbose "Checking Apache configuration for syntax errors:"
+    run_command apache2ctl configtest
 }
+
 
 # Function to ensure Apache web server is installed and configured
 apache_ensure() {
