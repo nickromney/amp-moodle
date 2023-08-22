@@ -335,7 +335,8 @@ apache_verify() {
     local exit_on_failure=false  # Default to false
 
     # Check if the first argument is the flag for exit on failure
-    if [[ "$1" == "--exit-on-failure" ]]; then
+    # Because we have `set -o nounset` set, we need to check if the first argument is set
+    if [[ "${1:-}" == "--exit-on-failure" ]]; then
         exit_on_failure=true
     fi
 
@@ -667,7 +668,8 @@ nginx_verify() {
     local exit_on_failure=false  # Default to false
 
     # Check if the first argument is the flag for exit on failure
-    if [[ "$1" == "--exit-on-failure" ]]; then
+    # Because we have `set -o nounset` set, we need to check if the first argument is set
+    if [[ "${1:-}" == "--exit-on-failure" ]]; then
         exit_on_failure=true
     fi
 
@@ -799,7 +801,8 @@ php_verify() {
     local exit_on_failure=false  # Default to false
 
     # Check if the first argument is the flag for exit on failure
-    if [[ "$1" == "--exit-on-failure" ]]; then
+    # Because we have `set -o nounset` set, we need to check if the first argument is set
+    if [[ "${1:-}" == "--exit-on-failure" ]]; then
         exit_on_failure=true
     fi
 
