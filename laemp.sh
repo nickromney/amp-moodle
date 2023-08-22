@@ -57,15 +57,6 @@ CI_MODE=false
 
 # helper functions
 
-die() {
-    echo "$1" >&2
-    exit 1
-}
-
-
-
-
-
 apply_template() {
     local template="$1"
     shift
@@ -103,7 +94,10 @@ check_command() {
     done
 }
 
-
+die() {
+    echo "$1" >&2
+    exit 1
+}
 
 echo_stderr() {
   local message="${*}"
@@ -141,8 +135,6 @@ package_manager_ensure() {
         fi
 }
 
-
-
 package_ensure() {
     local no_install_recommends_flag=""
     if [ "$1" == "--no-install-recommends" ]; then
@@ -177,8 +169,8 @@ package_ensure() {
 
         case "$package_manager" in
             apt)
-                run_command apt update
-                run_command apt install --yes $no_install_recommends_flag "${missing_packages[@]}"
+                run_command apt-get update
+                run_command apt-get install --yes $no_install_recommends_flag "${missing_packages[@]}"
                 ;;
             *)
                 echo_stderr "Error: Unsupported package manager."
@@ -217,7 +209,7 @@ repository_ensure() {
                 for repository in "${missing_repositories[@]}"; do
                     run_command add-apt-repository "$repository"
                 done
-                run_command apt update
+                run_command apt-get update
                 ;;
             *)
                 echo_stderr "Error: Unsupported package manager."
@@ -289,9 +281,6 @@ run_command() {
 
     "${cmd[@]}"
 }
-
-
-
 
 acme_cert_provider() {
     local provider=""
@@ -479,11 +468,6 @@ apache_create_vhost() {
     run_command a2ensite "${config["site-name"]}"
 }
 
-
-
-
-
-
 moodle_dependencies() {
   # From https://github.com/moodlehq/moodle-php-apache/blob/master/root/tmp/setup/php-extensions.sh
   echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
@@ -608,6 +592,8 @@ moodle_download_extract() {
 }
 
 moodle_ensure() {
+
+    php_verify --exit-on-failure
     # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
     ## The ctype extension is required (provided by common)
     # The curl extension is required (required for networking and web services).
@@ -665,10 +651,12 @@ moodle_ensure() {
       )
 
       if $APACHE_ENSURE; then
+          apache_verify --exit-on-failure
           apache_create_vhost vhost_config
       fi
 
       if $NGINX_ENSURE; then
+          nginx_verify --exit-on-failure
           nginx_create_vhost vhost_config
       fi
 }
@@ -827,8 +815,6 @@ php_verify() {
     fi
 }
 
-
-
 php_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
@@ -872,8 +858,6 @@ php_ensure() {
     php_verify --exit-on-failure
 }
 
-
-
 php_extensions_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
@@ -887,8 +871,6 @@ php_extensions_ensure() {
 
     package_ensure "${extensions[@]}"
 }
-
-
 
 # Main function
 main() {
@@ -979,8 +961,6 @@ if ! is_distro_supported "$DISTRO"; then
     echo_stderr "Unsupported distro: $DISTRO"
     exit 1
 fi
-
-
 
 # Check if the necessary dependencies are available before proceeding
 check_command --exit-on-failure tar unzip wget
