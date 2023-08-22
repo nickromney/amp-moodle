@@ -1090,9 +1090,11 @@ done
 
 # If not in CI mode, do the sudo checks
 if ! $CI_MODE; then
+    echo_stdout_verbose "CI_MODE is false"
     # Check if user is root
     if [[ $EUID -eq 0 ]]; then
         USE_SUDO=false
+        echo_stdout_verbose "Running as root."
     else
         # Check if sudo is available and the user has sudo privileges
         if $USE_SUDO && ! command -v sudo &>/dev/null; then
@@ -1104,11 +1106,14 @@ if ! $CI_MODE; then
         fi
     fi
 else
+    echo_stdout_verbose "CI_MODE is true"
     # In CI mode, use sudo if not root
     if [[ $EUID -ne 0 ]]; then
         USE_SUDO=true
+        echo_stdout_verbose "Running as non-root user."
     else
         USE_SUDO=false
+        echo_stdout_verbose "Running as root."
     fi
 fi
 
@@ -1122,6 +1127,7 @@ fi
   if $VERBOSE; then
       chosen_options=""
 
+      if $CI_MODE; then chosen_options+="-c: CI mode, "; fi
       if [[ -n "${DB_TYPE}" ]]; then chosen_options+="-d: Database type set to ${DB_TYPE}, "; fi
       if $FPM_ENSURE; then chosen_options+="-f: Ensure FPM for web servers, "; fi
       if $MOODLE_ENSURE; then chosen_options+="-m: Ensure Moodle version $MOODLE_VERSION, "; fi
