@@ -343,6 +343,15 @@ apache_verify() {
     # Check if Apache is installed
     if check_command "$APACHE_NAME"; then
         echo_stdout_verbose "Apache is installed."
+
+        envvars_file="/etc/${APACHE_NAME}/envvars"
+        if [[ -f "$envvars_file" ]]; then
+            # shellcheck disable=SC1090
+            source "$envvars_file"
+        else
+            echo_stderr "Warning: ${envvars_file} not found. Skipping sourcing."
+        fi
+
         run_command $APACHE_NAME -v
 
         # Display installed Apache modules
