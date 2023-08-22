@@ -29,7 +29,7 @@ DEFAULT_MOODLE_VERSION="311"
 DEFAULT_PHP_VERSION="7.2"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION="${DEFAULT_PHP_VERSION}"
-
+APACHE_NAME="apache2" # Change to "httpd" for CentOS
 
 # Moodle database
 DB_TYPE="mysqli"
@@ -82,11 +82,11 @@ apply_template() {
 check_command() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    local should_exit_on_failure=false  # Default to false
+    local exit_on_failure=false  # Default to false
 
     # Check if the first argument is the flag for exit on failure
     if [[ "$1" == "--exit-on-failure" ]]; then
-        should_exit_on_failure=true
+        exit_on_failure=true
         shift  # Remove the flag from the arguments list
     fi
 
@@ -96,7 +96,7 @@ check_command() {
             echo_stdout_verbose "Dependency is present: ${command}"
         else
             echo_stderr "Dependency not found: ${command}, please install it and run this script again."
-            if [[ "$should_exit_on_failure" == true ]]; then
+            if [[ "$exit_on_failure" == true ]]; then
                 exit 1
             fi
         fi
@@ -340,7 +340,43 @@ acme_cert_request() {
     run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
+apache_verify() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
+    local exit_on_failure=false  # Default to false
+
+    # Check if the first argument is the flag for exit on failure
+    if [[ "$1" == "--exit-on-failure" ]]; then
+        exit_on_failure=true
+    fi
+
+    # Check if Apache is installed
+    if check_command "$APACHE_NAME"; then
+        echo_stdout_verbose "Apache is installed."
+        run_command $APACHE_NAME -v
+
+        # Display installed Apache modules
+        echo_stdout_verbose "Installed Apache modules:"
+        run_command $APACHE_NAME -M
+
+        # Check if the Apache configuration has errors
+        echo_stdout_verbose "Checking Apache configuration for errors:"
+        if ! run_command $APACHE_NAME -t; then
+            echo_stderr "Apache configuration has errors!"
+            if [[ "$exit_on_failure" == true ]]; then
+                exit 1
+            fi
+        else
+            echo_stdout_verbose "Apache configuration is okay."
+        fi
+
+    else
+        echo_stdout_verbose "Apache is not installed."
+        if [[ "$exit_on_failure" == true ]]; then
+            exit 1
+        fi
+    fi
+}
 
 # Function to ensure Apache web server is installed and configured
 apache_ensure() {
@@ -348,17 +384,19 @@ apache_ensure() {
 
     # Check if PHP is installed
     # and exit if not
-    php_verify true
+    php_verify --exit-on-failure
+
+    # Verify if Apache is already installed
+    # Do not exit if not installed
+    apache_verify
 
         service_command="systemctl"
 
         # Install Apache and necessary modules for non-macOS systems
-        package_ensure apache2
-        package_ensure "libapache2-mod-ssl"
-        package_ensure "libapache2-mod-headers"
-        package_ensure "libapache2-mod-rewrite"
-        package_ensure "libapache2-mod-deflate"
-        package_ensure "libapache2-mod-expires"
+        package_ensure "${APACHE_NAME}"
+        package_ensure libapache2-mod-headers
+        package_ensure libapache2-mod-deflate
+        package_ensure libapache2-mod-expires
 
         # Enable essential Apache modules
         run_command a2enmod ssl
@@ -384,17 +422,16 @@ apache_ensure() {
             package_ensure "libapache2-mod-php${PHP_VERSION}"
         fi
 
-        run_command $service_command enable apache2
-        run_command $service_command restart apache2
+        run_command $service_command enable "${APACHE_NAME}"
+        run_command $service_command restart "${APACHE_NAME}"
 
     echo_stdout_verbose "Apache installation and configuration completed."
 }
 
-
-
-
 apache_create_vhost() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    apache_verify --exit-on-failure
 
     declare -n config=$1
     local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
@@ -636,9 +673,49 @@ moodle_ensure() {
       fi
 }
 
+nginx_verify() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    local exit_on_failure=false  # Default to false
+
+    # Check if the first argument is the flag for exit on failure
+    if [[ "$1" == "--exit-on-failure" ]]; then
+        exit_on_failure=true
+    fi
+
+    # Check if Nginx is installed
+    if check_command "nginx"; then
+        echo_stdout_verbose "Nginx is installed."
+        run_command nginx -v
+
+        # Display installed Nginx modules
+        echo_stdout_verbose "Installed Nginx modules:"
+        run_command nginx -V 2>&1 | grep --color=never -o -- '-\S\+'  # Filter out the modules
+
+        # Check if the Nginx configuration has errors
+        echo_stdout_verbose "Checking Nginx configuration for errors:"
+        if ! run_command nginx -t; then
+            echo_stderr "Nginx configuration has errors!"
+            if [[ "$exit_on_failure" == true ]]; then
+                exit 1
+            fi
+        else
+            echo_stdout_verbose "Nginx configuration is okay."
+        fi
+
+    else
+        echo_stdout_verbose "Nginx is not installed."
+        if [[ "$exit_on_failure" == true ]]; then
+            exit 1
+        fi
+    fi
+}
+
 
 nginx_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    nginx_verify
 
     # Install Nginx if not already installed
     package_ensure nginx
@@ -662,6 +739,8 @@ nginx_ensure() {
 
 nginx_create_vhost() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    nginx_verify --exit-on-failure
 
     declare -n config=$1
     local logDir="${NGINX_LOG_DIR:-/var/log/nginx}"
@@ -729,7 +808,12 @@ server {
 php_verify() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    local should_exit_on_failure=${1:-false}  # Default to false
+    local exit_on_failure=false  # Default to false
+
+    # Check if the first argument is the flag for exit on failure
+    if [[ "$1" == "--exit-on-failure" ]]; then
+        exit_on_failure=true
+    fi
 
     # Check if PHP is installed
     if check_command "php"; then
@@ -737,11 +821,12 @@ php_verify() {
         run_command php -v
     else
         echo_stdout_verbose "PHP is not installed."
-        if [[ "$should_exit_on_failure" == "true" ]]; then
+        if [[ "$exit_on_failure" == true ]]; then
             exit 1
         fi
     fi
 }
+
 
 
 php_ensure() {
@@ -784,13 +869,15 @@ php_ensure() {
     package_install "$php_package"
 
     # Verify PHP installation at end of function
-    php_verify true
+    php_verify --exit-on-failure
 }
 
 
 
 php_extensions_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    php_verify --exit-on-failure
     local extensions=("$@")
 
     if [ ${#extensions[@]} -eq 0 ]; then
