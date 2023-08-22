@@ -255,20 +255,19 @@ replace_file_value() {
 
 }
 
-
 run_command() {
     if [[ ! -t 0 ]]; then
         cat
     fi
 
-    printf -v cmd_str '%q ' "$@"
-
-    # Decide whether to use sudo based on the command and global USE_SUDO setting
+    # Decide whether to use sudo based on the global USE_SUDO setting
     local cmd=("$@")
-
-    if $USE_SUDO && [[ "${cmd[0]}" != "brew" ]]; then
+    if $USE_SUDO; then
         cmd=("sudo" "${cmd[@]}")
     fi
+
+    # Convert cmd array to string for logging
+    printf -v cmd_str '%q ' "${cmd[@]}"
 
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo_stdout_verbose "Not executing: ${cmd_str}"
@@ -281,6 +280,7 @@ run_command() {
 
     "${cmd[@]}"
 }
+
 
 acme_cert_provider() {
     local provider=""
@@ -1139,6 +1139,8 @@ fi
       fi
       if $DRY_RUN; then chosen_options+="-n: DRY RUN, "; fi
       if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
+      if $USE_SUDO; then chosen_options+="-s: Use sudo, "; fi
+      if $VERBOSE; then chosen_options+="-v: Verbose output, "; fi
       if $APACHE_ENSURE; then chosen_options+="-w: Webserver type set to Apache, "; fi
       if $NGINX_ENSURE; then chosen_options+="-w: Webserver type set to Nginx, "; fi
       chosen_options="${chosen_options%, }"
