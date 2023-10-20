@@ -26,7 +26,7 @@ MOODLE_ENSURE=false
 NGINX_ENSURE=false
 PHP_ENSURE=false
 DEFAULT_MOODLE_VERSION="311"
-DEFAULT_PHP_VERSION="7.2"
+DEFAULT_PHP_VERSION="7.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION="${DEFAULT_PHP_VERSION}"
 APACHE_NAME="apache2" # Change to "httpd" for CentOS
@@ -73,31 +73,17 @@ apply_template() {
 check_command() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    local exit_on_failure=false  # Default to false
-
-    # Check if the first argument is the flag for exit on failure
-    if [[ "$1" == "--exit-on-failure" ]]; then
-        exit_on_failure=true
-        shift  # Remove the flag from the arguments list
-    fi
-
-    for command in "$@"
-    do
-        if type -P "${command}" &>/dev/null ; then
+    for command in "$@"; do
+        if type -P "${command}" &>/dev/null; then
             echo_stdout_verbose "Dependency is present: ${command}"
         else
             echo_stderr "Dependency not found: ${command}, please install it and run this script again."
-            if [[ "$exit_on_failure" == true ]]; then
-                exit 1
-            fi
+            return 1
         fi
     done
+    return 0
 }
 
-die() {
-    echo "$1" >&2
-    exit 1
-}
 
 echo_stderr() {
   local message="${*}"
@@ -170,7 +156,11 @@ package_ensure() {
         case "$package_manager" in
             apt)
                 run_command apt-get update
-                run_command apt-get install --yes $no_install_recommends_flag "${missing_packages[@]}"
+                if $CI_MODE; then
+                    run_command apt-get install --yes $no_install_recommends_flag "${missing_packages[@]}"
+                else
+                    run_command apt-get install $no_install_recommends_flag "${missing_packages[@]}"
+                fi
                 ;;
             *)
                 echo_stderr "Error: Unsupported package manager."
@@ -190,7 +180,13 @@ repository_ensure() {
         apt)
             for repository in "${repositories[@]}"
             do
-                if ! run_command grep -q "^deb .*$repository" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
+                if [ "$DISTRO" == "Ubuntu" ] && [[ "$repository" == ppa:* ]]; then
+                    # Extract the PPA name and search for it
+                    local ppa_name="${repository#ppa:}"
+                    if ! run_command grep -q "https://ppa.launchpadcontent.net/$ppa_name" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
+                        missing_repositories+=("$repository")
+                    fi
+                elif ! run_command grep -q "^deb .*$repository" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
                     missing_repositories+=("$repository")
                 fi
             done
@@ -207,7 +203,11 @@ repository_ensure() {
         case "$package_manager" in
             apt)
                 for repository in "${missing_repositories[@]}"; do
-                    run_command add-apt-repository "$repository"
+                    if $CI_MODE; then
+                        run_command add-apt-repository -y "$repository"
+                    else
+                        run_command add-apt-repository "$repository"
+                    fi
                 done
                 run_command apt-get update
                 ;;
@@ -346,7 +346,7 @@ apache_verify() {
         run_command apache2ctl -v  # Use apache2ctl to get the version
     else
         echo_stdout_verbose "Apache is not installed."
-        if [[ "$exit_on_failure" == true ]]; then
+        if $exit_on_failure; then
             exit 1
         fi
     fi
@@ -373,40 +373,53 @@ apache_ensure() {
     # Do not exit if not installed
     apache_verify
 
+    # Check if systemctl is available, otherwise fall back to service command
+    if check_command "systemctl" && [[ $(ps -p 1 -o comm=) == "systemd" ]]; then
         service_command="systemctl"
+    else
+        service_command="service"
+    fi
 
-        # Install Apache and necessary modules for non-macOS systems
-        package_ensure "${APACHE_NAME}"
-        package_ensure libapache2-mod-headers
-        package_ensure libapache2-mod-deflate
-        package_ensure libapache2-mod-expires
 
-        # Enable essential Apache modules
-        run_command a2enmod ssl
-        run_command a2enmod headers
-        run_command a2enmod rewrite
-        run_command a2enmod deflate
-        run_command a2enmod expires
+    # Install Apache and necessary modules for non-macOS systems
+    package_ensure "${APACHE_NAME}"
 
-        if $FPM_ENSURE; then
-            echo_stdout_verbose "Installing PHP FPM for non-macOS systems..."
-            package_ensure "php${PHP_VERSION}-fpm"
-            package_ensure "libapache2-mod-fcgid"
+    # Enable essential Apache modules
+    run_command a2enmod ssl
+    run_command a2enmod headers
+    run_command a2enmod rewrite
+    run_command a2enmod deflate
+    run_command a2enmod expires
 
-            echo_stdout_verbose "Configuring Apache for FPM..."
-            run_command a2enmod proxy_fcgi setenvif
-            run_command a2enconf "php${PHP_VERSION}-fpm"
+    if $FPM_ENSURE; then
+        echo_stdout_verbose "Installing PHP FPM for non-macOS systems..."
+        package_ensure "php${PHP_VERSION}-fpm"
+        package_ensure "libapache2-mod-fcgid"
 
-            # Enable and start PHP FPM service
+        echo_stdout_verbose "Configuring Apache for FPM..."
+        run_command a2enmod proxy_fcgi setenvif
+        run_command a2enconf "php${PHP_VERSION}-fpm"
+
+        # Enable and start PHP FPM service
+        if [ "$service_command" == "systemctl" ]; then
             run_command $service_command enable "php${PHP_VERSION}-fpm"
             run_command $service_command start "php${PHP_VERSION}-fpm"
         else
-            echo_stdout_verbose "Configuring Apache without FPM..."
-            package_ensure "libapache2-mod-php${PHP_VERSION}"
+            run_command $service_command "php${PHP_VERSION}-fpm" start
         fi
 
+    else
+        echo_stdout_verbose "Configuring Apache without FPM..."
+        package_ensure "libapache2-mod-php${PHP_VERSION}"
+    fi
+
+    # Enable and restart Apache
+    if [ "$service_command" == "systemctl" ]; then
         run_command $service_command enable "${APACHE_NAME}"
         run_command $service_command restart "${APACHE_NAME}"
+    else
+        run_command $service_command "${APACHE_NAME}" start
+    fi
 
     echo_stdout_verbose "Apache installation and configuration completed."
 }
@@ -679,7 +692,7 @@ nginx_verify() {
         echo_stdout_verbose "Checking Nginx configuration for errors:"
         if ! run_command nginx -t; then
             echo_stderr "Nginx configuration has errors!"
-            if [[ "$exit_on_failure" == true ]]; then
+            if $exit_on_failure; then
                 exit 1
             fi
         else
@@ -688,7 +701,7 @@ nginx_verify() {
 
     else
         echo_stdout_verbose "Nginx is not installed."
-        if [[ "$exit_on_failure" == true ]]; then
+        if $exit_on_failure; then
             exit 1
         fi
     fi
@@ -788,38 +801,55 @@ server {
     run_command systemctl reload nginx
 }
 
+
 php_verify() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    local exit_on_failure=false  # Default to false
-
-    # Check if the first argument is the flag for exit on failure
-    # Because we have `set -o nounset` set, we need to check if the first argument is set
-    if [[ "${1:-}" == "--exit-on-failure" ]]; then
-        exit_on_failure=true
-    fi
-
-    # Check if PHP is installed
     if check_command "php"; then
-        echo_stdout_verbose "PHP is installed."
-        run_command php -v
+        local installed_php_version
+        installed_php_version=$(php -v | head -n 1 | cut -d' ' -f2 | cut -d'-' -f1)
+        if [[ "$installed_php_version" == "${PHP_VERSION}"* ]]; then
+            echo_stdout_verbose "PHP version ${PHP_VERSION} is installed."
+            run_command php -v
+            return 0
+        else
+            echo_stdout_verbose "Installed PHP version is ${installed_php_version}. Expected version is ${PHP_VERSION}."
+            return 1
+        fi
     else
         echo_stdout_verbose "PHP is not installed."
-        if [[ "$exit_on_failure" == true ]]; then
-            exit 1
-        fi
+        return 1
     fi
 }
+
+
 
 php_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    # Verify if PHP is already installed
-    php_verify
+    # Define the most recent 4 major PHP versions
+    declare -a SUPPORTED_PHP_VERSIONS=("8.0" "7.4" "7.3" "7.2")
 
-    # If PHP is already installed, simply return
-    if check_command "php"; then
+    php_version_found=false
+
+    for version in "${SUPPORTED_PHP_VERSIONS[@]}"; do
+        if [[ "$version" == "$PHP_VERSION" ]]; then
+            php_version_found=true
+            break
+        fi
+    done
+
+    if ! $php_version_found; then
+        echo_stderr "The provided PHP version ($PHP_VERSION) is not supported. Supported versions are: ${SUPPORTED_PHP_VERSIONS[*]}"
+        exit 1
+    fi
+
+
+    if php_verify; then
+        echo_stdout_verbose "Desired PHP version is already installed. Skipping installation."
         return 0
+    else
+        echo_stdout_verbose "Desired PHP version is not installed. Proceeding with installation."
     fi
 
     echo_stdout_verbose "Ensuring PHP repository..."
@@ -839,33 +869,37 @@ php_ensure() {
 
     echo_stdout_verbose "Installing PHP core..."
 
-    if [ "$DISTRO" == "Ubuntu" ]; then
-      php_package="php${PHP_VERSION}-${CODENAME}"
-    elif [ "$DISTRO" == "Debian" ]; then
-      php_package="php${PHP_VERSION}-${CODENAME}"
+    if [ "$DISTRO" == "Ubuntu" ] || [ "$DISTRO" == "Debian" ]; then
+        php_package="php${PHP_VERSION}"
     else
-      echo_stderr "Unsupported distro: $DISTRO"
-      exit 1
+        echo_stderr "Unsupported distro: $DISTRO"
+        exit 1
     fi
 
-    package_install "$php_package"
+
+    package_ensure "$php_package"
 
     # Verify PHP installation at end of function
-    php_verify --exit-on-failure
+    php_verify
 }
 
 php_extensions_ensure() {
     echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
-    php_verify --exit-on-failure
-    local extensions=("$@")
-
-    if [ ${#extensions[@]} -eq 0 ]; then
-        echo_stderr "No PHP extensions provided. Aborting."
+    if ! php_verify; then
+        echo_stderr "PHP is not installed. Aborting."
         exit 1
-    fi
+    else
 
-    package_ensure "${extensions[@]}"
+        local extensions=("$@")
+
+        if [ ${#extensions[@]} -eq 0 ]; then
+            echo_stderr "No PHP extensions provided. Aborting."
+            exit 1
+        fi
+
+        package_ensure "${extensions[@]}"
+    fi
 }
 
 # Main function
@@ -904,9 +938,10 @@ usage() {
     echo_stdout "  -M    Ensure Memcached is installed"
     echo_stdout "  -n    Dry run (show commands without executing)"
     echo_stdout "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
+    echo_stdout "  -s    Use sudo for commands that require root privileges"
     echo_stdout "  -v    Enable verbose output"
     echo_stdout "  -w    Web server type (default: apache, supported: [apache, nginx])"
-    echo_stdout "  Note: Options -d, -m, and -p require an argument but have defaults."
+    echo_stdout "  Note: Options -d, -m, -p, and -w require an argument but have defaults."
     exit 0
 }
 
@@ -959,7 +994,10 @@ if ! is_distro_supported "$DISTRO"; then
 fi
 
 # Check if the necessary dependencies are available before proceeding
-check_command --exit-on-failure tar unzip wget
+if ! check_command "tar" "unzip" "wget"; then
+    exit 1
+fi
+
 
 # Parse command line options
 while [[ $# -gt 0 ]]; do
@@ -973,14 +1011,16 @@ while [[ $# -gt 0 ]]; do
 
         -d|--database)
             if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
-                die "-d|--database option requires an argument"
+                echo_stderr "-d|--database option requires an argument"
+                exit 1
             fi
             case "$2" in
                 mysql|pgsql)
                     DB_TYPE="$2"
                     ;;
                 *)
-                    die "Unsupported database type: $2. Supported types are 'mysql' and 'pgsql'."
+                    echo_stderr "Unsupported database type: $2. Supported types are 'mysql' and 'pgsql'."
+                    exit 1
                     ;;
             esac
             shift 2
@@ -1008,7 +1048,8 @@ while [[ $# -gt 0 ]]; do
                         MEMCACHED_MODE="network"
                         ;;
                     *)
-                        die "Invalid mode for Memcached: $2. Supported modes are 'local' and 'network'."
+                        echo_stderr "Invalid mode for Memcached: $2. Supported modes are 'local' and 'network'."
+                        exit 1
                         ;;
                 esac
                 shift
@@ -1045,8 +1086,10 @@ while [[ $# -gt 0 ]]; do
 
         -w|--web)
             if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
-                die "-w|--web option requires an argument"
+                echo_stderr "-w|--web option requires an argument"
+                exit 1
             fi
+
             case "$2" in
                 apache)
                     APACHE_ENSURE=true
@@ -1057,15 +1100,18 @@ while [[ $# -gt 0 ]]; do
                     FPM_ENSURE=true
                     ;;
                 *)
-                    die "Unsupported web server type: $2. Supported types are 'apache' and 'nginx'."
+                    echo_stderr "Unsupported web server type: $2. Supported types are 'apache' and 'nginx'."
+                    exit 1
                     ;;
             esac
             shift 2
             ;;
 
+
         *)
             # unknown option
-            die "Unknown option: $1"
+            echo_stderr "Unknown option: $1"
+            exit 1
             ;;
     esac
 done
@@ -1080,12 +1126,14 @@ if ! $CI_MODE; then
         USE_SUDO=false
         echo_stdout_verbose "Running as root."
     else
-        # Check if sudo is available and the user has sudo privileges
+        echo_stdout_verbose "Running as non-root user."
+        USE_SUDO=true
+        echo_stdout_verbose "USE_SUDO is ${USE_SUDO}"
         if $USE_SUDO && ! command -v sudo &>/dev/null; then
             echo_stderr "sudo command not found. Please run as root or install sudo."
             exit 1
         elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
-            echo_stderr "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
+            echo_stderr "This script requires sudo privileges. Please authenticate with sudo by running 'sudo -v' before executing this script again, or run the script as root."
             exit 1
         fi
     fi
@@ -1150,4 +1198,3 @@ main
 # it will attempt to use a webserver both for obtaining and installing the
 # certificate.
 # certbot: error: unrecognized arguments: --http-challenge
-
