@@ -57,6 +57,103 @@ CI_MODE=false
 
 # helper functions
 
+# Set up logging
+log_init() {
+  # Check if the log file is writable
+  if [[ $LOG_TO_FILE = true ]]; then
+    LOG_DIR="${SCRIPT_DIR}/logs"
+    # Create log directory if needed
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="${LOG_DIR}/${SCRIPT_NAME}_$(date +'%Y-%m-%dT%H:%M:%S%z').log"
+    if ! touch "$LOG_FILE" 2>/dev/null; then
+      echo "Log file is not writable. Disabling file logging."
+      LOG_TO_FILE=false
+    fi
+  fi
+}
+
+log() {
+
+  local log_level="$1"
+  local message="$2"
+
+  # if $LOG_LEVEL is not set default it to info
+  if [[ -z ${LOG_LEVEL+x} ]]; then
+    LOG_LEVEL="info"
+  fi
+
+  # Filter log level
+  case ${LOG_LEVEL} in
+    error)
+      if [[ ${log_level} != "error" ]]; then
+        return
+      fi
+      ;;
+
+    info)
+      if [[ ${log_level} == "verbose" || ${log_level} == "debug" ]]; then
+        return
+      fi
+      ;;
+
+    verbose)
+      if [[ ${log_level} == "debug" ]]; then
+        return
+      fi
+      ;;
+  esac
+
+  # Build log message
+  local log_msg
+
+  if [[ ${LOG_LEVEL} == "debug" ]]; then
+    log_msg="[$(date +'%Y-%m-%dT%H:%M:%S%z')] "
+    local source="${BASH_SOURCE[1]}:${BASH_LINENO[1]}"
+    log_msg+="${source} "
+  fi
+
+  if [[ ${log_level} == "error" ]]; then
+    log_msg+="[ERROR] "
+  fi
+
+  log_msg+="${message}"
+
+  # Output log message
+  if [[ ${log_level} == "error" ]]; then
+    echo "${log_msg}" >&2
+  else
+    echo "${log_msg}"
+  fi
+
+  # Log to file
+  if [[ ${LOG_TO_FILE} == "true" ]]; then
+    printf '%s\n' "${log_msg}" >> "${LOG_FILE}"
+  fi
+
+}
+
+# Validate LOG_LEVEL
+check_log_level () {
+  log debug "Entered function: ${FUNCNAME[0]}"
+  # check that $LOG_LEVEL is set and not empty
+  if [ -z "$LOG_LEVEL" ]; then
+    log error "Log level not set"
+    # shellcheck disable=SC2153
+    log info "Valid log levels are: ${LOG_LEVELS[*]}"
+    echo_usage
+    exit 1
+  fi
+
+  if ! printf '%s\0' "${LOG_LEVELS[@]}" | grep -Fxqz -- "$LOG_LEVEL"; then
+    log error "Invalid log level: $LOG_LEVEL"
+    log info "Valid log levels are: ${LOG_LEVELS[*]}"
+    echo_usage
+    exit 1
+  fi
+  log verbose "LOG_LEVEL: $LOG_LEVEL"
+  log debug "Exited function: ${FUNCNAME[0]}"
+}
+
 apply_template() {
     local template="$1"
     shift
@@ -86,7 +183,7 @@ check_command() {
         if type -P "${command}" &>/dev/null ; then
             echo_stdout_verbose "Dependency is present: ${command}"
         else
-            echo_stderr "Dependency not found: ${command}, please install it and run this script again."
+            log error "Dependency not found: ${command}, please install it and run this script again."
             if [[ "$exit_on_failure" == true ]]; then
                 exit 1
             fi
@@ -130,7 +227,7 @@ package_manager_ensure() {
         if check_command apt; then
             package_manager="apt"
         else
-            echo_stderr "Error: Package manager not found."
+            log error "Error: Package manager not found."
             exit 1
         fi
 }
@@ -142,7 +239,7 @@ package_ensure() {
         if [ "$package_manager" == "apt" ]; then
             no_install_recommends_flag="--no-install-recommends"
         else
-            echo_stderr "Warning: --no-install-recommends flag is not supported for this package manager."
+            log error "Warning: --no-install-recommends flag is not supported for this package manager."
         fi
     fi
 
@@ -158,7 +255,7 @@ package_ensure() {
                 fi
                 ;;
             *)
-                echo_stderr "Error: Unsupported package manager."
+                log error "Error: Unsupported package manager."
                 exit 1
                 ;;
         esac
@@ -173,7 +270,7 @@ package_ensure() {
                 run_command apt-get install --yes $no_install_recommends_flag "${missing_packages[@]}"
                 ;;
             *)
-                echo_stderr "Error: Unsupported package manager."
+                log error "Error: Unsupported package manager."
                 exit 1
                 ;;
         esac
@@ -196,7 +293,7 @@ repository_ensure() {
             done
             ;;
         *)
-            echo_stderr "Error: Repositories management for this package manager is not supported."
+            log error "Error: Repositories management for this package manager is not supported."
             exit 1
             ;;
     esac
@@ -212,7 +309,7 @@ repository_ensure() {
                 run_command apt-get update
                 ;;
             *)
-                echo_stderr "Error: Unsupported package manager."
+                log error "Error: Unsupported package manager."
                 exit 1
                 ;;
         esac
@@ -287,7 +384,7 @@ acme_cert_provider() {
     case "$1" in
         staging) provider="https://acme-staging-v02.api.letsencrypt.org/directory" ;;
         production) provider="https://acme-v02.api.letsencrypt.org/directory" ;;
-        *) echo_stderr "Invalid provider option: $1"; exit 1 ;;
+        *) log error "Invalid provider option: $1"; exit 1 ;;
     esac
     echo "$provider"
 }
@@ -307,12 +404,12 @@ acme_cert_request() {
             --san) shift; san_entries="$1"; shift ;;
             --challenge) shift; challenge_type="$1"; shift ;;
             --provider) shift; provider="$1"; shift ;;
-            *) echo_stderr "Invalid option: $1"; exit 1 ;;
+            *) log error "Invalid option: $1"; exit 1 ;;
         esac
     done
 
     if [ -z "$domain" ] || [ -z "$email" ]; then
-        echo_stderr "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
+        log error "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com --email admin@example.com [--san \"www.example.com,sub.example.com\"] [--challenge http] [--provider \"https://acme-v02.api.letsencrypt.org/directory\"]"
         exit 1
     fi
 
@@ -423,7 +520,7 @@ apache_create_vhost() {
     local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
     for option in "${required_options[@]}"; do
         if [[ -z "${config[$option]}" ]]; then
-            echo_stderr "Missing required configuration option: $option"
+            log error "Missing required configuration option: $option"
             exit 1
         fi
     done
@@ -523,7 +620,7 @@ moodle_config_files() {
             echo_stdout_verbose "Configuration file changes completed."
         fi
     else
-        echo_stderr "Error: ${configDist} does not exist."
+        log error "Error: ${configDist} does not exist."
         if [ "${DRY_RUN}" != "true" ]; then
             exit 1
         fi
@@ -678,7 +775,7 @@ nginx_verify() {
         # Check if the Nginx configuration has errors
         echo_stdout_verbose "Checking Nginx configuration for errors:"
         if ! run_command nginx -t; then
-            echo_stderr "Nginx configuration has errors!"
+            log error "Nginx configuration has errors!"
             if [[ "$exit_on_failure" == true ]]; then
                 exit 1
             fi
@@ -732,7 +829,7 @@ nginx_create_vhost() {
     local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
     for option in "${required_options[@]}"; do
         if [[ -z "${config[$option]}" ]]; then
-            echo_stderr "Missing required configuration option: $option"
+            log error "Missing required configuration option: $option"
             exit 1
         fi
     done
@@ -829,7 +926,7 @@ php_ensure() {
     elif [ "$DISTRO" == "Debian" ]; then
       php_repository="deb https://packages.sury.org/php/ $CODENAME main"
     else
-      echo_stderr "Unsupported distro: $DISTRO"
+      log error "Unsupported distro: $DISTRO"
       exit 1
     fi
 
@@ -844,7 +941,7 @@ php_ensure() {
     elif [ "$DISTRO" == "Debian" ]; then
       php_package="php${PHP_VERSION}-${CODENAME}"
     else
-      echo_stderr "Unsupported distro: $DISTRO"
+      log error "Unsupported distro: $DISTRO"
       exit 1
     fi
 
@@ -861,7 +958,7 @@ php_extensions_ensure() {
     local extensions=("$@")
 
     if [ ${#extensions[@]} -eq 0 ]; then
-        echo_stderr "No PHP extensions provided. Aborting."
+        log error "No PHP extensions provided. Aborting."
         exit 1
     fi
 
@@ -894,19 +991,19 @@ main() {
 }
 
 usage() {
-    echo_stdout "Usage: $0 [options]"
-    echo_stdout "Options:"
-    echo_stdout "  -c    Run in CI mode (no prompts)"
-    echo_stdout "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
-    echo_stdout "  -f    Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
-    echo_stdout "  -h    Display this help message"
-    echo_stdout "  -m    Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
-    echo_stdout "  -M    Ensure Memcached is installed"
-    echo_stdout "  -n    Dry run (show commands without executing)"
-    echo_stdout "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
-    echo_stdout "  -v    Enable verbose output"
-    echo_stdout "  -w    Web server type (default: apache, supported: [apache, nginx])"
-    echo_stdout "  Note: Options -d, -m, and -p require an argument but have defaults."
+    log info "Usage: $0 [options]"
+    log info "Options:"
+    log info "  -c    Run in CI mode (no prompts)"
+    log info "  -d    Database type (default: MySQL, supported: [mysql, pgsql])"
+    log info "  -f    Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
+    log info "  -h    Display this help message"
+    log info "  -m    Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
+    log info "  -M    Ensure Memcached is installed"
+    log info "  -n    Dry run (show commands without executing)"
+    log info "  -p    Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
+    log info "  -v    Enable verbose output"
+    log info "  -w    Web server type (default: apache, supported: [apache, nginx])"
+    log info "  Note: Options -d, -m, and -p require an argument but have defaults."
     exit 0
 }
 
@@ -922,9 +1019,9 @@ detect_distro_and_codename() {
         DISTRO="$ID"
         CODENAME="$VERSION_CODENAME"
     else
-        echo_stderr "Unable to determine distribution."
-        echo_stderr "Please run this script on a supported distribution."
-        echo_stderr "Supported distributions are: Ubuntu, Debian."
+        log error "Unable to determine distribution."
+        log error "Please run this script on a supported distribution."
+        log error "Supported distributions are: Ubuntu, Debian."
         exit 1
     fi
 }
@@ -954,7 +1051,7 @@ is_distro_supported() {
 # ...
 
 if ! is_distro_supported "$DISTRO"; then
-    echo_stderr "Unsupported distro: $DISTRO"
+    log error "Unsupported distro: $DISTRO"
     exit 1
 fi
 
@@ -1082,10 +1179,10 @@ if ! $CI_MODE; then
     else
         # Check if sudo is available and the user has sudo privileges
         if $USE_SUDO && ! command -v sudo &>/dev/null; then
-            echo_stderr "sudo command not found. Please run as root or install sudo."
+            log error "sudo command not found. Please run as root or install sudo."
             exit 1
         elif $USE_SUDO && ! sudo -n true 2>/dev/null; then
-            echo_stderr "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
+            log error "This script requires sudo privileges. Please run as root or with a user that has sudo privileges."
             exit 1
         fi
     fi
@@ -1104,7 +1201,7 @@ fi
 
   # Checking if -f is selected on its own without -w apache
   if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
-      echo_stderr "Option -f requires either -w apache or -w nginx to be selected."
+      log error "Option -f requires either -w apache or -w nginx to be selected."
       usage
   fi
 
