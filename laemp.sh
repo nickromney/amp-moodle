@@ -28,6 +28,7 @@ DEFAULT_MOODLE_VERSION="311"
 DEFAULT_PHP_VERSION_MAJOR_MINOR="7.2"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
+PHP_ALONGSIDE=false
 APACHE_NAME="apache2" # Change to "httpd" for CentOS
 
 # Moodle database
@@ -929,6 +930,8 @@ server {
 function php_verify() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
+  log verbose "PHP_ALONGSIDE: ${PHP_ALONGSIDE}"
+
   local exit_on_failure=false # Default to false
 
   # Check if the first argument is the flag for exit on failure
@@ -948,26 +951,28 @@ function php_verify() {
     local installed_version
     installed_version=$(echo "$php_version" | cut -d. -f1-2)
 
-    # Compare the MAJOR.MINOR versions
-    if [[ "$installed_version" == "$PHP_VERSION_MAJOR_MINOR" ]]; then
-      log verbose "Installed PHP version $installed_version matches the specified version $PHP_VERSION_MAJOR_MINOR."
+    if [[ "${PHP_ALONGSIDE:-false}" == "false" ]]; then
+      log verbose "Using the -p flag, we are only concerned that PHP is installed, and not the specific version."
+      return 0
     else
-      log verbose "Installed PHP version $installed_version does not match the specified version $PHP_VERSION_MAJOR_MINOR."
-      if [[ "$exit_on_failure" == true ]]; then
-        log error "PHP version mismatch. Expected: $PHP_VERSION_MAJOR_MINOR, Installed: $installed_version"
-        exit 1
+      # Compare the MAJOR.MINOR versions
+      if [[ "$installed_version" == "$PHP_VERSION_MAJOR_MINOR" ]]; then
+        log verbose "Installed PHP version $installed_version matches the specified version $PHP_VERSION_MAJOR_MINOR."
+        return 0
       else
-        log warning "PHP version mismatch. Expected: $PHP_VERSION_MAJOR_MINOR, Installed: $installed_version"
+        log verbose "Installed PHP version $installed_version does not match the specified version $PHP_VERSION_MAJOR_MINOR."
+        if [[ "$exit_on_failure" == true ]]; then
+          log error "PHP version mismatch. Expected: $PHP_VERSION_MAJOR_MINOR, Installed: $installed_version"
+          exit 1
+        else
+          log info "PHP version mismatch. Expected: $PHP_VERSION_MAJOR_MINOR, Installed: $installed_version"
+          return 0
+        fi
       fi
     fi
   else
     log verbose "PHP is not installed."
-    if [[ "$exit_on_failure" == true ]]; then
-      log error "PHP is not installed."
-      exit 1
-    else
-      log warning "PHP is not installed."
-    fi
+    return 1
   fi
 }
 
@@ -977,9 +982,8 @@ function php_ensure() {
   # Verify if PHP is already installed
   php_verify
 
-  # If PHP is already installed, the specified version matches the installed version,
-  # and PHP_ALONGSIDE is not set, simply return
-  if tool_exists "php" && [[ "$(php -v | head -n 1 | awk '{print $2}' | cut -d. -f1-2)" == "$PHP_VERSION_MAJOR_MINOR" ]] && [[ "${PHP_ALONGSIDE:-false}" == "false" ]]; then
+  # If PHP is already installed and PHP_ALONGSIDE is not set, simply return
+  if tool_exists "php" && [[ "${PHP_ALONGSIDE:-false}" == "false" ]]; then
     return 0
   fi
 
@@ -1204,11 +1208,11 @@ while [[ $# -gt 0 ]]; do
     PHP_ENSURE=true
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
       PHP_VERSION_MAJOR_MINOR="$2"
-      PHP_VERSION_ALONGSIDE="$2"
+      PHP_ALONGSIDE=true
       shift # past value
     else
       PHP_VERSION_MAJOR_MINOR="$DEFAULT_PHP_VERSION_MAJOR_MINOR"
-      PHP_VERSION_ALONGSIDE="$DEFAULT_PHP_VERSION_MAJOR_MINOR"
+      PHP_ALONGSIDE=true
     fi
     shift # past argument
     ;;
