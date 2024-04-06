@@ -25,9 +25,9 @@ MOODLE_ENSURE=false
 NGINX_ENSURE=false
 PHP_ENSURE=false
 DEFAULT_MOODLE_VERSION="311"
-DEFAULT_PHP_VERSION="7.2"
+DEFAULT_PHP_VERSION_MAJOR_MINOR="7.2"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
-PHP_VERSION="${DEFAULT_PHP_VERSION}"
+PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
 APACHE_NAME="apache2" # Change to "httpd" for CentOS
 
 # Moodle database
@@ -80,7 +80,7 @@ function echo_usage() {
   log info "  -m, --moodle     Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
   log info "  -M, --memcached  Ensure Memcached is installed"
   log info "  -n, --nop        Dry run (show commands without executing)"
-  log info "  -p, --php        Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION})"
+  log info "  -p, --php        Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
   log info "  -s, --sudo       Use sudo for running commands (default: false)"
   log info "  -v, --verbose    Enable verbose output"
   log info "  -w, --web        Web server type (default: apache, supported: [apache, nginx])"
@@ -197,33 +197,25 @@ function apply_template() {
   echo "$template"
 }
 
-function check_command() {
-  log verbose "Entered function ${FUNCNAME[0]}"
+# Check if a single tool exists
+tool_exists() {
+  log debug "Entered function: ${FUNCNAME[0]}"
+  local name=$1
 
-  local exit_on_failure=false # Default to false
-
-  # Check if the first argument is the flag for exit on failure
-  if [[ "$1" == "--exit-on-failure" ]]; then
-    exit_on_failure=true
-    shift # Remove the flag from the arguments list
+  log debug "Checking if tool ${name} exists"
+  if ! type -P "${name}" &>/dev/null; then
+    log debug "Exited function: ${FUNCNAME[0]}"
+    return 1
   fi
 
-  for command in "$@"; do
-    if type -P "${command}" &>/dev/null; then
-      log verbose "Dependency is present: ${command}"
-    else
-      log error "Dependency not found: ${command}, please install it and run this script again."
-      if [[ "$exit_on_failure" == true ]]; then
-        exit 1
-      fi
-    fi
-  done
+  log debug "Exited function: ${FUNCNAME[0]}"
+  return 0
 }
 
 function package_manager_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
-  if check_command apt; then
+  if tool_exists apt; then
     package_manager="apt"
   else
     log error "Error: Package manager not found."
@@ -487,9 +479,16 @@ function apache_verify() {
   fi
 
   # Check if Apache is installed
-  if check_command "$APACHE_NAME"; then
+  if tool_exists apache2ctl; then
     log verbose "Apache is installed."
     run_command apache2ctl -v # Use apache2ctl to get the version
+    # Check for loaded modules using apache2ctl
+    log verbose "Checking for loaded Apache modules:"
+    run_command apache2ctl -M
+
+    # Check Apache configuration for syntax errors
+    log verbose "Checking Apache configuration for syntax errors:"
+    run_command apache2ctl configtest
   else
     log verbose "Apache is not installed."
     if [[ "$exit_on_failure" == true ]]; then
@@ -497,13 +496,6 @@ function apache_verify() {
     fi
   fi
 
-  # Check for loaded modules using apache2ctl
-  log verbose "Checking for loaded Apache modules:"
-  run_command apache2ctl -M
-
-  # Check Apache configuration for syntax errors
-  log verbose "Checking Apache configuration for syntax errors:"
-  run_command apache2ctl configtest
 }
 
 # Function to ensure Apache web server is installed and configured
@@ -535,19 +527,19 @@ function apache_ensure() {
 
   if $FPM_ENSURE; then
     log verbose "Installing PHP FPM for non-macOS systems..."
-    package_ensure "php${PHP_VERSION}-fpm"
+    package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
     package_ensure "libapache2-mod-fcgid"
 
     log verbose "Configuring Apache for FPM..."
     run_command --makes-changes a2enmod proxy_fcgi setenvif
-    run_command --makes-changes a2enconf "php${PHP_VERSION}-fpm"
+    run_command --makes-changes a2enconf "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
     # Enable and start PHP FPM service
-    run_command --makes-changes $service_command enable "php${PHP_VERSION}-fpm"
-    run_command --makes-changes $service_command start "php${PHP_VERSION}-fpm"
+    run_command --makes-changes $service_command enable "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+    run_command --makes-changes $service_command start "php${PHP_VERSION_MAJOR_MINOR}-fpm"
   else
     log verbose "Configuring Apache without FPM..."
-    package_ensure "libapache2-mod-php${PHP_VERSION}"
+    package_ensure "libapache2-mod-php${PHP_VERSION_MAJOR_MINOR}"
   fi
 
   run_command --makes-changes $service_command enable "${APACHE_NAME}"
@@ -754,23 +746,23 @@ function moodle_ensure() {
   # The xmlrpc extension is recommended (required for networking and web services).
   # The zip extension is required.
 
-  declare -a moodle_php_extensions=("php${PHP_VERSION}-common"
-    "php${PHP_VERSION}-curl"
-    "php${PHP_VERSION}-gd"
-    "php${PHP_VERSION}-intl"
-    "php${PHP_VERSION}-json"
-    "php${PHP_VERSION}-mbstring"
-    "php${PHP_VERSION}-soap"
-    "php${PHP_VERSION}-xml"
-    "php${PHP_VERSION}-xmlrpc"
-    "php${PHP_VERSION}-zip")
+  declare -a moodle_php_extensions=("php${PHP_VERSION_MAJOR_MINOR}-common"
+    "php${PHP_VERSION_MAJOR_MINOR}-curl"
+    "php${PHP_VERSION_MAJOR_MINOR}-gd"
+    "php${PHP_VERSION_MAJOR_MINOR}-intl"
+    "php${PHP_VERSION_MAJOR_MINOR}-json"
+    "php${PHP_VERSION_MAJOR_MINOR}-mbstring"
+    "php${PHP_VERSION_MAJOR_MINOR}-soap"
+    "php${PHP_VERSION_MAJOR_MINOR}-xml"
+    "php${PHP_VERSION_MAJOR_MINOR}-xmlrpc"
+    "php${PHP_VERSION_MAJOR_MINOR}-zip")
 
   if [ "${DB_TYPE}" == "pgsql" ]; then
     # Add php-pgsql extension for PostgreSQL
-    moodle_php_extensions+=("php${PHP_VERSION}-pgsql")
+    moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-pgsql")
   else
     # Add php-mysqli extension for MySQL and MariaDB
-    moodle_php_extensions+=("php${PHP_VERSION}-mysqli")
+    moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-mysqli")
   fi
 
   php_extensions_ensure "${moodle_php_extensions[@]}"
@@ -813,7 +805,7 @@ function nginx_verify() {
   fi
 
   # Check if Nginx is installed
-  if check_command "nginx"; then
+  if tool_exists "nginx"; then
     log verbose "Nginx is installed."
     run_command nginx -v
 
@@ -851,12 +843,12 @@ function nginx_ensure() {
   # Should always be true, but just in case
   if $FPM_ENSURE; then
     log verbose "Installing PHP FPM for Nginx..."
-    package_ensure "php${PHP_VERSION}-fpm"
+    package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
   fi
 
   # Enable and start PHP FPM
-  run_command --makes-changes systemctl enable "php${PHP_VERSION}-fpm"
-  run_command --makes-changes systemctl start "php${PHP_VERSION}-fpm"
+  run_command --makes-changes systemctl enable "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+  run_command --makes-changes systemctl start "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
   # Enable and restart Nginx
   run_command --makes-changes systemctl enable nginx
@@ -911,7 +903,7 @@ server {
 
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+        fastcgi_pass unix:/var/run/php/php${PHP_VERSION_MAJOR_MINOR}-fpm.sock;
     }
 
     {{include_file}}
@@ -946,13 +938,35 @@ function php_verify() {
   fi
 
   # Check if PHP is installed
-  if check_command "php"; then
+  if tool_exists "php"; then
     log verbose "PHP is installed."
-    run_command php -v
+    local php_version
+    php_version=$(php -v | head -n 1 | awk '{print $2}')
+    log verbose "PHP version: $php_version"
+
+    # Extract the MAJOR.MINOR version from the installed PHP version
+    local installed_version
+    installed_version=$(echo "$php_version" | cut -d. -f1-2)
+
+    # Compare the MAJOR.MINOR versions
+    if [[ "$installed_version" == "$PHP_VERSION_MAJOR_MINOR" ]]; then
+      log verbose "Installed PHP version $installed_version matches the specified version $PHP_VERSION_MAJOR_MINOR."
+    else
+      log verbose "Installed PHP version $installed_version does not match the specified version $PHP_VERSION_MAJOR_MINOR."
+      if [[ "$exit_on_failure" == true ]]; then
+        log error "PHP version mismatch. Expected: $PHP_VERSION_MAJOR_MINOR, Installed: $installed_version"
+        exit 1
+      else
+        log warning "PHP version mismatch. Expected: $PHP_VERSION_MAJOR_MINOR, Installed: $installed_version"
+      fi
+    fi
   else
     log verbose "PHP is not installed."
     if [[ "$exit_on_failure" == true ]]; then
+      log error "PHP is not installed."
       exit 1
+    else
+      log warning "PHP is not installed."
     fi
   fi
 }
@@ -963,8 +977,9 @@ function php_ensure() {
   # Verify if PHP is already installed
   php_verify
 
-  # If PHP is already installed, simply return
-  if check_command "php"; then
+  # If PHP is already installed, the specified version matches the installed version,
+  # and PHP_ALONGSIDE is not set, simply return
+  if tool_exists "php" && [[ "$(php -v | head -n 1 | awk '{print $2}' | cut -d. -f1-2)" == "$PHP_VERSION_MAJOR_MINOR" ]] && [[ "${PHP_ALONGSIDE:-false}" == "false" ]]; then
     return 0
   fi
 
@@ -986,9 +1001,9 @@ function php_ensure() {
   log verbose "Installing PHP core..."
 
   if [ "$DISTRO" == "Ubuntu" ]; then
-    php_package="php${PHP_VERSION}-${CODENAME}"
+    php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
   elif [ "$DISTRO" == "Debian" ]; then
-    php_package="php${PHP_VERSION}-${CODENAME}"
+    php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
   else
     log error "Unsupported distro: $DISTRO"
     exit 1
@@ -1073,7 +1088,18 @@ log_init
 # detect_distro_and_codename
 
 # Check if the necessary dependencies are available before proceeding
-check_command --exit-on-failure tar unzip wget
+if ! tool_exists "tar"; then
+  log error "tar command not found. Please install tar."
+  exit 1
+fi
+if ! tool_exists "unzip"; then
+  log error "unzip command not found. Please install unzip."
+  exit 1
+fi
+if ! tool_exists "wget"; then
+  log error "wget command not found. Please install wget."
+  exit 1
+fi
 
 # Parse command line options
 if [[ $# -eq 0 ]]; then
@@ -1166,10 +1192,23 @@ while [[ $# -gt 0 ]]; do
   -p | --php)
     PHP_ENSURE=true
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
-      PHP_VERSION="$2"
+      PHP_VERSION_MAJOR_MINOR="$2"
       shift # past value
     else
-      PHP_VERSION="$DEFAULT_PHP_VERSION"
+      PHP_VERSION_MAJOR_MINOR="$DEFAULT_PHP_VERSION_MAJOR_MINOR"
+    fi
+    shift # past argument
+    ;;
+
+  -P | --php-alongside)
+    PHP_ENSURE=true
+    if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
+      PHP_VERSION_MAJOR_MINOR="$2"
+      PHP_VERSION_ALONGSIDE="$2"
+      shift # past value
+    else
+      PHP_VERSION_MAJOR_MINOR="$DEFAULT_PHP_VERSION_MAJOR_MINOR"
+      PHP_VERSION_ALONGSIDE="$DEFAULT_PHP_VERSION_MAJOR_MINOR"
     fi
     shift # past argument
     ;;
@@ -1268,7 +1307,7 @@ if [[ "${LOG_LEVEL}" == "verbose" ]]; then
     fi
   fi
   if $DRY_RUN_CHANGES; then chosen_options+="-n: DRY RUN CHANGES, "; fi
-  if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
+  if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION_MAJOR_MINOR, "; fi
   if $USE_SUDO; then chosen_options+="-s: Use sudo, "; fi
   if [[ "${LOG_LEVEL}" == "verbose" ]]; then chosen_options+="-v: Verbose output, "; fi
   if $APACHE_ENSURE; then chosen_options+="-w: Webserver type set to Apache, "; fi
