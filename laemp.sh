@@ -24,8 +24,8 @@ MEMCACHED_ENSURE=false
 MOODLE_ENSURE=false
 NGINX_ENSURE=false
 PHP_ENSURE=false
-DEFAULT_MOODLE_VERSION="311"
-DEFAULT_PHP_VERSION_MAJOR_MINOR="7.2"
+DEFAULT_MOODLE_VERSION="403"
+DEFAULT_PHP_VERSION_MAJOR_MINOR="8.3"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
 PHP_ALONGSIDE=false
@@ -74,18 +74,19 @@ readonly CODENAME
 function echo_usage() {
   log info "Usage: $0 [options]"
   log info "Options:"
-  log info "  -c, --ci         Run in CI mode (no prompts)"
-  log info "  -d, --database   Database type (default: MySQL, supported: [mysql, pgsql])"
-  log info "  -f, --fpm        Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
-  log info "  -h, --help       Display this help message"
-  log info "  -m, --moodle     Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
-  log info "  -M, --memcached  Ensure Memcached is installed"
-  log info "  -n, --nop        Dry run (show commands without executing)"
-  log info "  -p, --php        Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
-  log info "  -s, --sudo       Use sudo for running commands (default: false)"
-  log info "  -v, --verbose    Enable verbose output"
-  log info "  -w, --web        Web server type (default: apache, supported: [apache, nginx])"
-  log info "  Note: Options -d, -m, and -p require an argument but have defaults."
+  log info "  -c, --ci            Run in CI mode (no prompts)"
+  log info "  -d, --database      Database type (default: mysql, supported: [mysql, pgsql])"
+  log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
+  log info "  -h, --help          Display this help message"
+  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
+  log info "  -M, --memcached     Ensure Memcached is installed"
+  log info "  -n, --nop           Dry run (show commands without executing)"
+  log info "  -p, --php           Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
+  log info "  -P, --php-alongside Ensure specified version of PHP is installed, regardless of whether PHP is already installed"
+  log info "  -s, --sudo          Use sudo for running commands (default: false)"
+  log info "  -v, --verbose       Enable verbose output"
+  log info "  -w, --web           Web server type (default: apache, supported: [apache, nginx])"
+  log info "  Note:               Options -d, -m, -p, -w require an argument but have defaults."
 }
 
 # Set up logging
@@ -465,7 +466,7 @@ function acme_cert_request() {
   fi
 
   # Request SSL certificate
-  run_command certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
+  run_command --makes-changes certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
 function apache_verify() {
@@ -513,40 +514,44 @@ function apache_ensure() {
 
   service_command="systemctl"
 
-  # Install Apache and necessary modules for non-macOS systems
-  package_ensure "${APACHE_NAME}"
-  package_ensure libapache2-mod-headers
-  package_ensure libapache2-mod-deflate
-  package_ensure libapache2-mod-expires
-
-  # Enable essential Apache modules
-  run_command --makes-changes a2enmod ssl
-  run_command --makes-changes a2enmod headers
-  run_command --makes-changes a2enmod rewrite
-  run_command --makes-changes a2enmod deflate
-  run_command --makes-changes a2enmod expires
-
-  if $FPM_ENSURE; then
-    log verbose "Installing PHP FPM for non-macOS systems..."
-    package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
-    package_ensure "libapache2-mod-fcgid"
-
-    log verbose "Configuring Apache for FPM..."
-    run_command --makes-changes a2enmod proxy_fcgi setenvif
-    run_command --makes-changes a2enconf "php${PHP_VERSION_MAJOR_MINOR}-fpm"
-
-    # Enable and start PHP FPM service
-    run_command --makes-changes $service_command enable "php${PHP_VERSION_MAJOR_MINOR}-fpm"
-    run_command --makes-changes $service_command start "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+  if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
+    log verbose "Dry run: Apache installation and configuration skipped."
   else
-    log verbose "Configuring Apache without FPM..."
-    package_ensure "libapache2-mod-php${PHP_VERSION_MAJOR_MINOR}"
+    # Install Apache and necessary modules for non-macOS systems
+    package_ensure "${APACHE_NAME}"
+    package_ensure libapache2-mod-headers
+    package_ensure libapache2-mod-deflate
+    package_ensure libapache2-mod-expires
+
+    # Enable essential Apache modules
+    run_command --makes-changes a2enmod ssl
+    run_command --makes-changes a2enmod headers
+    run_command --makes-changes a2enmod rewrite
+    run_command --makes-changes a2enmod deflate
+    run_command --makes-changes a2enmod expires
+
+    if $FPM_ENSURE; then
+      log verbose "Installing PHP FPM for non-macOS systems..."
+      package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+      package_ensure "libapache2-mod-fcgid"
+
+      log verbose "Configuring Apache for FPM..."
+      run_command --makes-changes a2enmod proxy_fcgi setenvif
+      run_command --makes-changes a2enconf "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+
+      # Enable and start PHP FPM service
+      run_command --makes-changes $service_command enable "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+      run_command --makes-changes $service_command start "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+    else
+      log verbose "Configuring Apache without FPM..."
+      package_ensure "libapache2-mod-php${PHP_VERSION_MAJOR_MINOR}"
+    fi
+
+    run_command --makes-changes $service_command enable "${APACHE_NAME}"
+    run_command --makes-changes $service_command restart "${APACHE_NAME}"
+
+    log verbose "Apache installation and configuration completed."
   fi
-
-  run_command --makes-changes $service_command enable "${APACHE_NAME}"
-  run_command --makes-changes $service_command restart "${APACHE_NAME}"
-
-  log verbose "Apache installation and configuration completed."
 }
 
 function apache_create_vhost() {
@@ -989,34 +994,38 @@ function php_ensure() {
 
   log verbose "Ensuring PHP repository..."
 
-  if [ "$DISTRO" == "Ubuntu" ]; then
-    php_repository="ppa:ondrej/php"
-  elif [ "$DISTRO" == "Debian" ]; then
-    php_repository="deb https://packages.sury.org/php/ $CODENAME main"
+  if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
+    log verbose "DRY_RUN: Skipping repository setup and PHP installation"
   else
-    log error "Unsupported distro: $DISTRO"
-    exit 1
+    if [ "$DISTRO" == "Ubuntu" ]; then
+      php_repository="ppa:ondrej/php"
+    elif [ "$DISTRO" == "Debian" ]; then
+      php_repository="deb https://packages.sury.org/php/ $CODENAME main"
+    else
+      log error "Unsupported distro: $DISTRO"
+      exit 1
+    fi
+
+    if [ "$package_manager" == "apt" ]; then
+      repository_ensure "$php_repository"
+    fi
+
+    log verbose "Installing PHP core..."
+
+    if [ "$DISTRO" == "Ubuntu" ]; then
+      php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
+    elif [ "$DISTRO" == "Debian" ]; then
+      php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
+    else
+      log error "Unsupported distro: $DISTRO"
+      exit 1
+    fi
+
+    package_install "$php_package"
+
+    # Verify PHP installation at end of function
+    php_verify --exit-on-failure
   fi
-
-  if [ "$package_manager" == "apt" ]; then
-    repository_ensure "$php_repository"
-  fi
-
-  log verbose "Installing PHP core..."
-
-  if [ "$DISTRO" == "Ubuntu" ]; then
-    php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
-  elif [ "$DISTRO" == "Debian" ]; then
-    php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
-  else
-    log error "Unsupported distro: $DISTRO"
-    exit 1
-  fi
-
-  package_install "$php_package"
-
-  # Verify PHP installation at end of function
-  php_verify --exit-on-failure
 }
 
 function php_extensions_ensure() {
@@ -1059,6 +1068,12 @@ function main() {
   fi
 
   log verbose "checking MEMCACHED_ENSURE"
+  if $MEMCACHED_ENSURE; then
+    log verbose "Ensuring Memcached..."
+    memcached_ensure
+  fi
+
+  log verbose "checking MOODLE_ENSURE"
   if $MOODLE_ENSURE; then
     log verbose "Ensuring Moodle..."
     moodle_ensure
