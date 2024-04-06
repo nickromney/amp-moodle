@@ -17,7 +17,6 @@ export LC_CTYPE=en_US.UTF-8
 
 # Define default options
 # I tend to leave these as false, and set with command line options
-VERBOSE=true
 DRY_RUN_CHANGES=false
 APACHE_ENSURE=false
 FPM_ENSURE=false
@@ -81,7 +80,7 @@ function echo_usage() {
   log info "  -m, --moodle     Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
   log info "  -M, --memcached  Ensure Memcached is installed"
   log info "  -n, --nop        Dry run (show commands without executing)"
-  log info "  -p, --php        Ensure PHP of specified version is installed (default: ${PHP_VERSION})"
+  log info "  -p, --php        Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION})"
   log info "  -s, --sudo       Use sudo for running commands (default: false)"
   log info "  -v, --verbose    Enable verbose output"
   log info "  -w, --web        Web server type (default: apache, supported: [apache, nginx])"
@@ -1022,19 +1021,27 @@ function main() {
 
   package_manager_ensure
 
+  log verbose "checking PHP_ENSURE"
   if $PHP_ENSURE; then
+    log verbose "Ensuring PHP..."
     php_ensure
   fi
 
+  log verbose "checking APACHE_ENSURE"
   if $APACHE_ENSURE; then
+    log verbose "Ensuring Apache..."
     apache_ensure
   fi
 
+  log verbose "checking NGINX_ENSURE"
   if $NGINX_ENSURE; then
+    log verbose "Ensuring Nginx..."
     nginx_ensure
   fi
 
+  log verbose "checking MEMCACHED_ENSURE"
   if $MOODLE_ENSURE; then
+    log verbose "Ensuring Moodle..."
     moodle_ensure
   fi
 
@@ -1078,28 +1085,34 @@ while [[ $# -gt 0 ]]; do
   key="$1"
 
   case $key in
+  -v | --verbose)
+    LOG_LEVEL="verbose"
+    shift
+    ;;
+
   -c | --ci)
     CI_MODE=true
     shift
     ;;
 
   -d | --database)
-    if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
-      log error "-d|--database option requires an argument"
-      echo_usage
-      exit 1
+    if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
+      case "$2" in
+      mysql | pgsql)
+        DB_TYPE="$2"
+        shift # past value
+        ;;
+      *)
+        log error "Unsupported database type: $2. Supported types are 'mysql' and 'pgsql'."
+        echo_usage
+        exit 1
+        ;;
+      esac
+    else
+      # Use the default value for DB_TYPE
+      DB_TYPE="mysqli"
     fi
-    case "$2" in
-    mysql | pgsql)
-      DB_TYPE="$2"
-      ;;
-    *)
-      log error "Unsupported database type: $2. Supported types are 'mysql' and 'pgsql'."
-      echo_usage
-      exit 1
-      ;;
-    esac
-    shift 2
+    shift # past argument
     ;;
 
   -f | --fpm)
@@ -1136,8 +1149,13 @@ while [[ $# -gt 0 ]]; do
 
   -m | --moodle)
     MOODLE_ENSURE=true
-    MOODLE_VERSION="${2:-$DEFAULT_MOODLE_VERSION}"
-    shift 2
+    if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
+      MOODLE_VERSION="$2"
+      shift # past value
+    else
+      MOODLE_VERSION="$DEFAULT_MOODLE_VERSION"
+    fi
+    shift # past argument
     ;;
 
   -n | --nop)
@@ -1147,8 +1165,13 @@ while [[ $# -gt 0 ]]; do
 
   -p | --php)
     PHP_ENSURE=true
-    PHP_VERSION="${2:-$DEFAULT_PHP_VERSION}"
-    shift 2
+    if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
+      PHP_VERSION="$2"
+      shift # past value
+    else
+      PHP_VERSION="$DEFAULT_PHP_VERSION"
+    fi
+    shift # past argument
     ;;
 
   -s | --sudo)
@@ -1156,31 +1179,30 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
 
-  -v | --verbose)
-    LOG_LEVEL="verbose"
-    shift
-    ;;
-
   -w | --web)
-    if [[ -z "${2:-}" ]] || [[ "${2:-}" == "-"* ]]; then
-      log error "-w|--web option requires an argument"
-      exit 1
-    fi
-    case "$2" in
-    apache)
+    if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
+      case "$2" in
+      apache)
+        APACHE_ENSURE=true
+        NGINX_ENSURE=false
+        ;;
+      nginx)
+        APACHE_ENSURE=false
+        NGINX_ENSURE=true
+        FPM_ENSURE=true
+        ;;
+      *)
+        log error "Unsupported web server type: $2. Supported types are 'apache' and 'nginx'."
+        exit 1
+        ;;
+      esac
+      shift 2
+    else
+      # Use the default web server (Apache)
       APACHE_ENSURE=true
-      ;;
-    nginx)
-      APACHE_ENSURE=false
-      NGINX_ENSURE=true
-      FPM_ENSURE=true
-      ;;
-    *)
-      log error "Unsupported web server type: $2. Supported types are 'apache' and 'nginx'."
-      exit 1
-      ;;
-    esac
-    shift 2
+      NGINX_ENSURE=false
+      shift
+    fi
     ;;
 
   *)
@@ -1192,9 +1214,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 check_log_level
+# check_log_level includes an verbose log message with the log level
 # echo all opts which were set
 log info "DRY_RUN_CHANGES: $DRY_RUN_CHANGES"
-log info "LOG_LEVEL: $LOG_LEVEL"
 
 # If not in CI mode, do the sudo checks
 if ! $CI_MODE; then
@@ -1229,9 +1251,10 @@ fi
 if [[ "${FPM_ENSURE}" == "true" && "${APACHE_ENSURE}" != "true" && "${NGINX_ENSURE}" != "true" ]]; then
   log error "Option -f requires either -w apache or -w nginx to be selected."
   echo_usage
+  exit 1
 fi
 
-if $VERBOSE; then
+if [[ "${LOG_LEVEL}" == "verbose" ]]; then
   chosen_options=""
 
   if $CI_MODE; then chosen_options+="-c: CI mode, "; fi
@@ -1247,7 +1270,7 @@ if $VERBOSE; then
   if $DRY_RUN_CHANGES; then chosen_options+="-n: DRY RUN CHANGES, "; fi
   if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION, "; fi
   if $USE_SUDO; then chosen_options+="-s: Use sudo, "; fi
-  if $VERBOSE; then chosen_options+="-v: Verbose output, "; fi
+  if [[ "${LOG_LEVEL}" == "verbose" ]]; then chosen_options+="-v: Verbose output, "; fi
   if $APACHE_ENSURE; then chosen_options+="-w: Webserver type set to Apache, "; fi
   if $NGINX_ENSURE; then chosen_options+="-w: Webserver type set to Nginx, "; fi
   chosen_options="${chosen_options%, }"
