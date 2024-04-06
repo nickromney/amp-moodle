@@ -30,6 +30,9 @@ MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
 PHP_ALONGSIDE=false
 APACHE_NAME="apache2" # Change to "httpd" for CentOS
+ACME_CERT=false
+ACME_PROVIDER="staging"
+SELF_SIGNED_CERT=false
 
 # Moodle database
 DB_TYPE="mysqli"
@@ -74,6 +77,7 @@ readonly CODENAME
 function echo_usage() {
   log info "Usage: $0 [options]"
   log info "Options:"
+  log info "  -a, --acme-cert     Request an ACME certificate for the specified domain"
   log info "  -c, --ci            Run in CI mode (no prompts)"
   log info "  -d, --database      Database type (default: mysql, supported: [mysql, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
@@ -84,6 +88,7 @@ function echo_usage() {
   log info "  -p, --php           Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
   log info "  -P, --php-alongside Ensure specified version of PHP is installed, regardless of whether PHP is already installed"
   log info "  -s, --sudo          Use sudo for running commands (default: false)"
+  log info "  -S, --self-signed   Create a self-signed certificate for the specified domain"
   log info "  -v, --verbose       Enable verbose output"
   log info "  -w, --web           Web server type (default: apache, supported: [apache, nginx])"
   log info "  Note:               Options -d, -m, -p, -w require an argument but have defaults."
@@ -466,7 +471,9 @@ function acme_cert_request() {
   fi
 
   # Request SSL certificate
-  run_command --makes-changes certbot --apache -d "${domain}" "${san_flag}" -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
+  #ignore ShellCheck warning for $san_flag
+  #shellcheck disable=SC2086
+  run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
 }
 
 function apache_verify() {
@@ -555,14 +562,11 @@ function apache_ensure() {
 }
 
 function apache_create_vhost() {
-  log verbose "Entered function ${FUNCNAME[0]}"
-
   apache_verify --exit-on-failure
 
   declare -n config=$1
   local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
 
-  # Check if required configuration options are provided
   local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
   for option in "${required_options[@]}"; do
     if [[ -z "${config[$option]}" ]]; then
@@ -574,21 +578,27 @@ function apache_create_vhost() {
   local vhost_template="
 <VirtualHost *:80>
     ServerName {{site_name}}
-    Redirect / https://{{site_name}}/
+    Redirect permanent / https://{{site_name}}/
 </VirtualHost>
 
-<IfModule mod_ssl.c>
 <VirtualHost *:443>
-    ServerAdmin {{admin_email}}
-    DocumentRoot {{document_root}}
     ServerName {{site_name}}
-    ErrorLog ${logDir}/error.log
-    CustomLog ${logDir}/access.log combined
+    DocumentRoot {{document_root}}
+
+    ErrorLog ${logDir}/{{site_name}}-error.log
+    CustomLog ${logDir}/{{site_name}}-access.log combined
+
+    SSLEngine on
     SSLCertificateFile {{ssl_cert_file}}
     SSLCertificateKeyFile {{ssl_key_file}}
+
+    <Directory {{document_root}}>
+        AllowOverride All
+        Require all granted
+    </Directory>
+
     {{include_file}}
 </VirtualHost>
-</IfModule>
 "
 
   local vhost_config
@@ -599,11 +609,12 @@ function apache_create_vhost() {
       "admin_email=${config["admin-email"]}" \
       "ssl_cert_file=${config["ssl-cert-file"]}" \
       "ssl_key_file=${config["ssl-key-file"]}" \
-      "include_file=${config["include-file"]:+Include ${config["include-file"]}}"
+      "include_file=${config["include-file"]}"
   )
 
   echo "$vhost_config" >"/etc/apache2/sites-available/${config["site-name"]}.conf"
   run_command --makes-changes a2ensite "${config["site-name"]}"
+  run_command --makes-changes systemctl reload apache2
 }
 
 function moodle_dependencies() {
@@ -613,7 +624,7 @@ function moodle_dependencies() {
     "libaio1"
     "libcurl4"
     "libgss3"
-    "libicu72"
+    "libicu${PHP_VERSION_MAJOR_MINOR}"
     "libmcrypt-dev"
     "libxml2"
     "libxslt1.1"
@@ -729,30 +740,31 @@ function moodle_download_extract() {
   fi
 }
 
+# Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
+## The ctype extension is required (provided by common)
+# The curl extension is required (required for networking and web services).
+## The dom extension is required (provided by xml)
+# The gd extension is recommended (required for manipulating images).
+## The iconv extension is required (provided by common)
+# The intl extension is recommended.
+# The json extension is required.
+# The mbstring extension is required.
+# The openssl extension is recommended (required for networking and web services).
+## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
+# The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
+## The SimpleXML extension is required (provided by xml)
+# The soap extension is recommended (required for web services).
+## The SPL extension is required (provided by core)
+## The tokenizer extension is recommended (provided by core)
+# The xml extension is required.
+# The xmlrpc extension is recommended (required for networking and web services).
+# The zip extension is required.
+
 function moodle_ensure() {
-
   php_verify --exit-on-failure
-  # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
-  ## The ctype extension is required (provided by common)
-  # The curl extension is required (required for networking and web services).
-  ## The dom extension is required (provided by xml)
-  # The gd extension is recommended (required for manipulating images).
-  ## The iconv extension is required (provided by common)
-  # The intl extension is recommended.
-  # The json extension is required.
-  # The mbstring extension is required.
-  # The openssl extension is recommended (required for networking and web services).
-  ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
-  # The pcre extension is required (The PCRE extension is a core PHP extension, so it is always enabled)
-  ## The SimpleXML extension is required (provided by xml)
-  # The soap extension is recommended (required for web services).
-  ## The SPL extension is required (provided by core)
-  ## The tokenizer extension is recommended (provided by core)
-  # The xml extension is required.
-  # The xmlrpc extension is recommended (required for networking and web services).
-  # The zip extension is required.
 
-  declare -a moodle_php_extensions=("php${PHP_VERSION_MAJOR_MINOR}-common"
+  declare -a moodle_php_extensions=(
+    "php${PHP_VERSION_MAJOR_MINOR}-common"
     "php${PHP_VERSION_MAJOR_MINOR}-curl"
     "php${PHP_VERSION_MAJOR_MINOR}-gd"
     "php${PHP_VERSION_MAJOR_MINOR}-intl"
@@ -761,13 +773,12 @@ function moodle_ensure() {
     "php${PHP_VERSION_MAJOR_MINOR}-soap"
     "php${PHP_VERSION_MAJOR_MINOR}-xml"
     "php${PHP_VERSION_MAJOR_MINOR}-xmlrpc"
-    "php${PHP_VERSION_MAJOR_MINOR}-zip")
+    "php${PHP_VERSION_MAJOR_MINOR}-zip"
+  )
 
   if [ "${DB_TYPE}" == "pgsql" ]; then
-    # Add php-pgsql extension for PostgreSQL
     moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-pgsql")
   else
-    # Add php-mysqli extension for MySQL and MariaDB
     moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-mysqli")
   fi
 
@@ -777,8 +788,6 @@ function moodle_ensure() {
   moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
   moodle_dependencies
   moodle_config_files "${moodleDir}"
-  provider=$(acme_cert_provider "staging")
-  acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
 
   declare -A vhost_config=(
     ["site-name"]="${moodleSiteName}"
@@ -1067,6 +1076,13 @@ function main() {
     nginx_ensure
   fi
 
+  log verbose "checking ACME_CERT"
+  if $ACME_CERT; then
+    log verbose "Creating ACME certificate..."
+    provider=$(acme_cert_provider "${ACME_PROVIDER}")
+    acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+  fi
+
   log verbose "checking MEMCACHED_ENSURE"
   if $MEMCACHED_ENSURE; then
     log verbose "Ensuring Memcached..."
@@ -1132,6 +1148,11 @@ while [[ $# -gt 0 ]]; do
   case $key in
   -v | --verbose)
     LOG_LEVEL="verbose"
+    shift
+    ;;
+
+  -a | --acme-cert)
+    ACME_CERT=true
     shift
     ;;
 
@@ -1234,6 +1255,11 @@ while [[ $# -gt 0 ]]; do
 
   -s | --sudo)
     USE_SUDO=true
+    shift
+    ;;
+
+  -S | --self-signed)
+    SELF_SIGNED_CERT=true
     shift
     ;;
 
