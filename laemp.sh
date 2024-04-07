@@ -68,10 +68,6 @@ CI_MODE=false
 SCRIPT_DIRECTORY=$(dirname "$0")
 SCRIPT_NAME=$(basename "$0")
 
-# Supported distributions
-readonly DISTRO
-readonly CODENAME
-
 # helper functions
 
 function echo_usage() {
@@ -300,7 +296,7 @@ function repository_ensure() {
     case "$package_manager" in
     apt)
       for repository in "${missing_repositories[@]}"; do
-        run_command --makes-changes add-apt-repository "$repository"
+        run_command --makes-changes add-apt-repository -y "$repository"
       done
       run_command --makes-changes apt-get update
       ;;
@@ -461,8 +457,10 @@ function acme_cert_request() {
     exit 1
   fi
 
-  # Check if Certbot and python3-certbot-apache are installed
-  package_ensure certbot python3-certbot-apache
+  if ! tool_exists certbot; then
+    log info "Certbot is not installed."
+    package_ensure certbot python3-certbot-apache
+  fi
 
   # Prepare SAN entries
   local san_flag=""
@@ -473,7 +471,7 @@ function acme_cert_request() {
   # Request SSL certificate
   #ignore ShellCheck warning for $san_flag
   #shellcheck disable=SC2086
-  run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} -m "${email}" --agree-tos --"${challenge_type}"-challenge --server "${provider}"
+  run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} -m "${email}" --agree-tos --challenge "${challenge_type}" --server "${provider}"
 }
 
 function apache_verify() {
@@ -522,8 +520,25 @@ function apache_ensure() {
   service_command="systemctl"
 
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
-    log verbose "Dry run: Apache installation and configuration skipped."
+    log verbose "DRY_RUN: Skipping repository setup and Apache installation"
   else
+    log verbose "Setting up Apache repository..."
+    if [ "$DISTRO" == "Ubuntu" ]; then
+      log verbose "Adding Ondrej Apache2 repository for Ubuntu..."
+      apache_repository="ppa:ondrej/apache2"
+    elif [ "$DISTRO" == "Debian" ]; then
+      log verbose "Adding Sury Apache2 repository for Debian..."
+      apache_repository="deb https://packages.sury.org/apache2/ $CODENAME main"
+    else
+      log error "Unsupported distro: $DISTRO"
+      exit 1
+    fi
+
+    if [ "$package_manager" == "apt" ]; then
+      log verbose "Ensuring repository is added $apache_repository..."
+      repository_ensure "$apache_repository"
+    fi
+
     # Install Apache and necessary modules for non-macOS systems
     package_ensure "${APACHE_NAME}"
     package_ensure libapache2-mod-headers
@@ -679,7 +694,7 @@ function moodle_config_files() {
     fi
   else
     log error "Error: ${configDist} does not exist."
-    if [ "${DRY_RUN_CHANGES}" != "true" ]; then
+    if [ "${DRY_RUN_CHANGES}" == "true" ]; then
       exit 1
     fi
   fi
@@ -852,6 +867,27 @@ function nginx_ensure() {
 
   nginx_verify
 
+  if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
+    log verbose "DRY_RUN: Skipping repository setup and Nginx installation"
+  else
+    log verbose "Setting up Nginx repository..."
+    if [ "$DISTRO" == "Ubuntu" ]; then
+      log verbose "Adding Ondrej Nginx repository for Ubuntu..."
+      nginx_repository="ppa:ondrej/nginx-mainline"
+    elif [ "$DISTRO" == "Debian" ]; then
+      log verbose "Adding Sury Nginx repository for Debian..."
+      nginx_repository="deb https://packages.sury.org/nginx-mainline/ $CODENAME main"
+    else
+      log error "Unsupported distro: $DISTRO"
+      exit 1
+    fi
+
+    if [ "$package_manager" == "apt" ]; then
+      log verbose "Ensuring repository is added $nginx_repository..."
+      repository_ensure "$apache_repository"
+    fi
+  fi
+
   # Install Nginx if not already installed
   package_ensure nginx
 
@@ -985,30 +1021,36 @@ function php_verify() {
       fi
     fi
   else
-    log verbose "PHP is not installed."
-    return 1
+    if [[ "$exit_on_failure" == true ]]; then
+      log error "PHP is not installed and exit_on_failure is set."
+      exit 1
+    else
+      log verbose "PHP is not installed."
+      return 0
+    fi
   fi
 }
 
 function php_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
-  # Verify if PHP is already installed
+  log verbose "Checking PHP installation..."
   php_verify
 
-  # If PHP is already installed and PHP_ALONGSIDE is not set, simply return
+  log verbose "Checking if PHP is already installed and PHP_ALONGSIDE is not set..."
   if tool_exists "php" && [[ "${PHP_ALONGSIDE:-false}" == "false" ]]; then
     return 0
   fi
 
-  log verbose "Ensuring PHP repository..."
-
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
     log verbose "DRY_RUN: Skipping repository setup and PHP installation"
   else
+    log verbose "Setting up PHP repository..."
     if [ "$DISTRO" == "Ubuntu" ]; then
+      log verbose "Adding Ondrej PHP repository for Ubuntu..."
       php_repository="ppa:ondrej/php"
     elif [ "$DISTRO" == "Debian" ]; then
+      log verbose "Adding Sury PHP repository for Debian..."
       php_repository="deb https://packages.sury.org/php/ $CODENAME main"
     else
       log error "Unsupported distro: $DISTRO"
@@ -1016,21 +1058,23 @@ function php_ensure() {
     fi
 
     if [ "$package_manager" == "apt" ]; then
+      log verbose "Ensuring repository is added $php_repository..."
       repository_ensure "$php_repository"
     fi
 
     log verbose "Installing PHP core..."
 
     if [ "$DISTRO" == "Ubuntu" ]; then
-      php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
+      php_package="php${PHP_VERSION_MAJOR_MINOR}"
     elif [ "$DISTRO" == "Debian" ]; then
-      php_package="php${PHP_VERSION_MAJOR_MINOR}-${CODENAME}"
+      php_package="php${PHP_VERSION_MAJOR_MINOR}"
     else
       log error "Unsupported distro: $DISTRO"
       exit 1
     fi
 
-    package_install "$php_package"
+    log verbose "Installing PHP package: $php_package"
+    package_ensure "$php_package"
 
     # Verify PHP installation at end of function
     php_verify --exit-on-failure
@@ -1058,6 +1102,13 @@ function main() {
 
   package_manager_ensure
 
+  log verbose "checking ACME_CERT"
+  if $ACME_CERT; then
+    log verbose "Creating ACME certificate..."
+    provider=$(acme_cert_provider "${ACME_PROVIDER}")
+    acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+  fi
+
   log verbose "checking PHP_ENSURE"
   if $PHP_ENSURE; then
     log verbose "Ensuring PHP..."
@@ -1074,13 +1125,6 @@ function main() {
   if $NGINX_ENSURE; then
     log verbose "Ensuring Nginx..."
     nginx_ensure
-  fi
-
-  log verbose "checking ACME_CERT"
-  if $ACME_CERT; then
-    log verbose "Creating ACME certificate..."
-    provider=$(acme_cert_provider "${ACME_PROVIDER}")
-    acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
   fi
 
   log verbose "checking MEMCACHED_ENSURE"
@@ -1120,9 +1164,13 @@ function detect_distro_and_codename() {
 
 log_init
 
-# detect_distro_and_codename
+detect_distro_and_codename
 
 # Check if the necessary dependencies are available before proceeding
+if ! tool_exists "add-apt-repository"; then
+  log error "add-apt-repository command not found. Please install software-properties-common."
+  exit 1
+fi
 if ! tool_exists "tar"; then
   log error "tar command not found. Please install tar."
   exit 1
