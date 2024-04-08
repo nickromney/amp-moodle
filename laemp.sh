@@ -33,6 +33,7 @@ APACHE_NAME="apache2" # Change to "httpd" for CentOS
 ACME_CERT=false
 ACME_PROVIDER="staging"
 SELF_SIGNED_CERT=false
+SERVICE_COMMAND="service" # Change to "systemctl" for CentOS
 
 # Moodle database
 DB_TYPE="mysqli"
@@ -517,8 +518,6 @@ function apache_ensure() {
   # Do not exit if not installed
   apache_verify
 
-  service_command="systemctl"
-
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
     log verbose "DRY_RUN: Skipping repository setup and Apache installation"
   else
@@ -541,9 +540,6 @@ function apache_ensure() {
 
     # Install Apache and necessary modules for non-macOS systems
     package_ensure "${APACHE_NAME}"
-    package_ensure libapache2-mod-headers
-    package_ensure libapache2-mod-deflate
-    package_ensure libapache2-mod-expires
 
     # Enable essential Apache modules
     run_command --makes-changes a2enmod ssl
@@ -562,15 +558,13 @@ function apache_ensure() {
       run_command --makes-changes a2enconf "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
       # Enable and start PHP FPM service
-      run_command --makes-changes $service_command enable "php${PHP_VERSION_MAJOR_MINOR}-fpm"
-      run_command --makes-changes $service_command start "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+      run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
     else
       log verbose "Configuring Apache without FPM..."
       package_ensure "libapache2-mod-php${PHP_VERSION_MAJOR_MINOR}"
     fi
 
-    run_command --makes-changes $service_command enable "${APACHE_NAME}"
-    run_command --makes-changes $service_command restart "${APACHE_NAME}"
+    run_command --makes-changes ${SERVICE_COMMAND} "${APACHE_NAME}" restart
 
     log verbose "Apache installation and configuration completed."
   fi
@@ -629,17 +623,17 @@ function apache_create_vhost() {
 
   echo "$vhost_config" >"/etc/apache2/sites-available/${config["site-name"]}.conf"
   run_command --makes-changes a2ensite "${config["site-name"]}"
-  run_command --makes-changes systemctl reload apache2
+  run_command --makes-changes ${SERVICE_COMMAND} "${APACHE_NAME}" reload
 }
 
 function moodle_dependencies() {
-  # From https://github.com/moodlehq/moodle-php-apache/blob/master/root/tmp/setup/php-extensions.sh
+  # From https://github.com/moodlehq/moodle-php-apache/blob/main/root/tmp/setup/php-extensions.sh
+  # Ran into issues with libicu, and it's not listed in https://docs.moodle.org/403/en/PHP#Required_extensions
   log verbose "Entered function ${FUNCNAME[0]}"
   declare -a runtime=("ghostscript"
     "libaio1"
     "libcurl4"
     "libgss3"
-    "libicu${PHP_VERSION_MAJOR_MINOR}"
     "libmcrypt-dev"
     "libxml2"
     "libxslt1.1"
@@ -762,7 +756,7 @@ function moodle_download_extract() {
 # The gd extension is recommended (required for manipulating images).
 ## The iconv extension is required (provided by common)
 # The intl extension is recommended.
-# The json extension is required.
+## The json extension is required (provided by libapache2-mod-php)
 # The mbstring extension is required.
 # The openssl extension is recommended (required for networking and web services).
 ## To use PHP's OpenSSL support you must also compile PHP --with-openssl[=DIR].
@@ -783,7 +777,6 @@ function moodle_ensure() {
     "php${PHP_VERSION_MAJOR_MINOR}-curl"
     "php${PHP_VERSION_MAJOR_MINOR}-gd"
     "php${PHP_VERSION_MAJOR_MINOR}-intl"
-    "php${PHP_VERSION_MAJOR_MINOR}-json"
     "php${PHP_VERSION_MAJOR_MINOR}-mbstring"
     "php${PHP_VERSION_MAJOR_MINOR}-soap"
     "php${PHP_VERSION_MAJOR_MINOR}-xml"
@@ -897,13 +890,9 @@ function nginx_ensure() {
     package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
   fi
 
-  # Enable and start PHP FPM
-  run_command --makes-changes systemctl enable "php${PHP_VERSION_MAJOR_MINOR}-fpm"
-  run_command --makes-changes systemctl start "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+  run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
 
-  # Enable and restart Nginx
-  run_command --makes-changes systemctl enable nginx
-  run_command --makes-changes systemctl restart nginx
+  run_command --makes-changes ${SERVICE_COMMAND} nginx restart
 
   log verbose "Nginx installation and configuration completed."
 }
@@ -974,7 +963,7 @@ server {
 
   echo "$vhost_config" >"/etc/nginx/sites-available/${config["site-name"]}.conf"
   run_command --makes-changes ln -s "/etc/nginx/sites-available/${config["site-name"]}.conf" "/etc/nginx/sites-enabled/"
-  run_command --makes-changes systemctl reload nginx
+  run_command --makes-changes ${SERVICE_COMMAND} nginx reload
 }
 
 function php_verify() {
@@ -1049,9 +1038,13 @@ function php_ensure() {
     if [ "$DISTRO" == "Ubuntu" ]; then
       log verbose "Adding Ondrej PHP repository for Ubuntu..."
       php_repository="ppa:ondrej/php"
+      log verbose "Adding Ondrej Apache2 repository for Ubuntu..."
+      apache_repository="ppa:ondrej/apache2"
     elif [ "$DISTRO" == "Debian" ]; then
       log verbose "Adding Sury PHP repository for Debian..."
       php_repository="deb https://packages.sury.org/php/ $CODENAME main"
+      log verbose "Adding Sury Apache2 repository for Debian..."
+      apache_repository="deb https://packages.sury.org/apache2/ $CODENAME main"
     else
       log error "Unsupported distro: $DISTRO"
       exit 1
@@ -1060,6 +1053,8 @@ function php_ensure() {
     if [ "$package_manager" == "apt" ]; then
       log verbose "Ensuring repository is added $php_repository..."
       repository_ensure "$php_repository"
+      log verbose "Ensuring repository is added $apache_repository..."
+      repository_ensure "$apache_repository"
     fi
 
     log verbose "Installing PHP core..."
@@ -1095,6 +1090,51 @@ function php_extensions_ensure() {
   package_ensure "${extensions[@]}"
 }
 
+function self_signed_cert_request() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local domain=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --domain)
+      shift
+      domain="$1"
+      shift
+      ;;
+    *)
+      log error "Invalid option: $1"
+      exit 1
+      ;;
+    esac
+  done
+
+  if [ -z "$domain" ]; then
+    log error "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com"
+    exit 1
+  fi
+
+  if ! tool_exists openssl; then
+    log info "openssl is not installed."
+    package_ensure openssl
+  fi
+
+  # Request SSL certificate
+  #ignore ShellCheck warning for $san_flag
+  #shellcheck disable=SC2086
+  if [[ -f "${domain}.cer" ]]; then
+    echo "Certificate .cer already exists ${domain}.cer"
+  else
+    run_command --makes-changes openssl req -x509 -nodes -days 365 \
+      -newkey "rsa:2048" \
+      -out "${domain}.cer" \
+      -keyout "${domain}.key" \
+      -subj "/CN=${domain}" \
+      -addext "subjectAltName = DNS:${domain}, DNS:www.${domain}" \
+      -addext "keyUsage = digitalSignature" \
+      -addext "extendedKeyUsage = serverAuth"
+  fi
+}
+
 # Main function
 function main() {
 
@@ -1107,6 +1147,12 @@ function main() {
     log verbose "Creating ACME certificate..."
     provider=$(acme_cert_provider "${ACME_PROVIDER}")
     acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+  fi
+
+  log verbose "checking SELF_SIGNED_CERT"
+  if $SELF_SIGNED_CERT; then
+    log verbose "Creating self-signed certificate..."
+    self_signed_cert_request --domain "${moodleSiteName}"
   fi
 
   log verbose "checking PHP_ENSURE"
