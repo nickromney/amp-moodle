@@ -24,8 +24,8 @@ MEMCACHED_ENSURE=false
 MOODLE_ENSURE=false
 NGINX_ENSURE=false
 PHP_ENSURE=false
-DEFAULT_MOODLE_VERSION="403"
-DEFAULT_PHP_VERSION_MAJOR_MINOR="8.3"
+DEFAULT_MOODLE_VERSION="311"
+DEFAULT_PHP_VERSION="7.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
 PHP_ALONGSIDE=false
@@ -71,6 +71,61 @@ SCRIPT_NAME=$(basename "$0")
 
 # helper functions
 
+apply_template() {
+    local template="$1"
+    shift
+    local substitutions=("$@")
+
+    for substitution in "${substitutions[@]}"; do
+        IFS="=" read -r key value <<< "$substitution"
+        template="${template//\{\{$key\}\}/$value}"
+    done
+
+    echo "$template"
+}
+
+check_command() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
+
+    for command in "$@"; do
+        if type -P "${command}" &>/dev/null; then
+            echo_stdout_verbose "Dependency is present: ${command}"
+        else
+            echo_stderr "Dependency not found: ${command}, please install it and run this script again."
+            return 1
+        fi
+    done
+    return 0
+}
+
+
+echo_stderr() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ERROR: ${message}" >&2
+}
+
+echo_stdout() {
+  local message="${*}"
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: ${message}" >&1
+}
+
+echo_stdout_verbose() {
+  local message="${*}"
+  local prefix=""
+
+  # If DRY RUN mode is active, prefix the message
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+      prefix="DRY RUN: "
+  fi
+
+  if [[ "${VERBOSE}" == "true" ]]; then
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: VERBOSE: ${prefix}${message}" >&1
+  fi
+}
+
+package_manager_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 function echo_usage() {
   log info "Usage: $0 [options]"
   log info "Options:"
@@ -966,8 +1021,8 @@ server {
   run_command --makes-changes ${SERVICE_COMMAND} nginx reload
 }
 
-function php_verify() {
-  log verbose "Entered function ${FUNCNAME[0]}"
+php_verify() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
   log verbose "PHP_ALONGSIDE: ${PHP_ALONGSIDE}"
 
@@ -1018,10 +1073,25 @@ function php_verify() {
       return 0
     fi
   fi
+    if check_command "php"; then
+        local installed_php_version
+        installed_php_version=$(php -v | head -n 1 | cut -d' ' -f2 | cut -d'-' -f1)
+        if [[ "$installed_php_version" == "${PHP_VERSION}"* ]]; then
+            echo_stdout_verbose "PHP version ${PHP_VERSION} is installed."
+            run_command php -v
+            return 0
+        else
+            echo_stdout_verbose "Installed PHP version is ${installed_php_version}. Expected version is ${PHP_VERSION}."
+            return 1
+        fi
+    else
+        echo_stdout_verbose "PHP is not installed."
+        return 1
+    fi
 }
 
-function php_ensure() {
-  log verbose "Entered function ${FUNCNAME[0]}"
+php_ensure() {
+    echo_stdout_verbose "Entered function ${FUNCNAME[0]}"
 
   log verbose "Checking PHP installation..."
   php_verify
@@ -1063,6 +1133,8 @@ function php_ensure() {
       php_package="php${PHP_VERSION_MAJOR_MINOR}"
     elif [ "$DISTRO" == "Debian" ]; then
       php_package="php${PHP_VERSION_MAJOR_MINOR}"
+    if [ "$DISTRO" == "Ubuntu" ] || [ "$DISTRO" == "Debian" ]; then
+        php_package="php${PHP_VERSION}"
     else
       log error "Unsupported distro: $DISTRO"
       exit 1
@@ -1074,6 +1146,7 @@ function php_ensure() {
     # Verify PHP installation at end of function
     php_verify --exit-on-failure
   fi
+    php_verify
 }
 
 function php_extensions_ensure() {
