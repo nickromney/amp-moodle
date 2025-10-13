@@ -41,7 +41,7 @@ SELF_SIGNED_CERT=false
 SERVICE_COMMAND="service" # Change to "systemctl" for CentOS
 
 # Moodle database
-DB_TYPE="mysql"
+DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
 DB_HOST="localhost"
 DB_NAME="moodle"
 DB_USER="moodle"
@@ -81,7 +81,7 @@ function echo_usage() {
   log info "Options:"
   log info "  -a, --acme-cert     Request an ACME certificate for the specified domain"
   log info "  -c, --ci            Run in CI mode (no prompts)"
-  log info "  -d, --database      Database type (default: mysql, supported: [mysql, pgsql])"
+  log info "  -d, --database      Database type (default: mysql=MariaDB, supported: [mysql, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
   log info "  -h, --help          Display this help message"
   log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0)"
@@ -230,6 +230,15 @@ service_manage() {
   local action="$2"
 
   log debug "Managing service $service_name with action $action"
+
+  # Smart handling for restart/reload: check if service is running first
+  # If not running, convert restart/reload to start (idempotent)
+  if [[ "$action" == "restart" || "$action" == "reload" ]]; then
+    if ! service_manage "$service_name" is-active >/dev/null 2>&1; then
+      log verbose "Service $service_name is not running, converting $action to start"
+      action="start"
+    fi
+  fi
 
   # Check if systemctl is available and systemd is running
   if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
@@ -418,25 +427,27 @@ function replace_file_value() {
   local new_value="$2"
   local file_path="$3"
 
-  # Acquire lock on file
-  exec 200>"$file_path"
+  # Check if file exists before trying to lock it
+  if [ ! -f "$file_path" ]; then
+    log error "File $file_path does not exist, cannot replace values"
+    return 1
+  fi
+
+  # Acquire lock on file using file descriptor 200
+  # Use >> instead of > to avoid truncating the file
+  exec 200>>"$file_path"
   flock -x 200 || exit 1
 
-  if [ -f "$file_path" ]; then
+  # Check if new value already exists (escaped for grep)
+  local escaped_new_value
+  escaped_new_value=$(echo "$new_value" | sed 's/[]\/$*.^[]/\\&/g')
 
-    # Check if current value already exists
-    if run_command grep -q "$current_value" "$file_path"; then
-
-      log verbose "Value $current_value already set in $file_path"
-
-    else
-
-      # Value not present, go ahead and replace
-      run_command --makes-changes sed -i "s|$current_value|$new_value|" "$file_path"
-      log verbose "Replaced $current_value with $new_value in $file_path"
-
-    fi
-
+  if run_command grep -qF "$escaped_new_value" "$file_path"; then
+    log verbose "New value already set in $file_path"
+  else
+    # New value not present, do the replacement
+    run_command --makes-changes sed -i "s|$current_value|$new_value|" "$file_path"
+    log verbose "Replaced $current_value with $new_value in $file_path"
   fi
 
   # Release lock
@@ -1276,7 +1287,9 @@ function moodle_ensure() {
   moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
   moodle_dependencies
   moodle_composer_install "${moodleDir}"
+  log info "DEBUG: DB_PASS before moodle_config_files: ${DB_PASS}"
   moodle_config_files "${moodleDir}"
+  log info "DEBUG: DB_PASS after moodle_config_files: ${DB_PASS}"
   moodle_install_database "${moodleDir}"
   setup_moodle_cron "${moodleDir}"
 
@@ -1688,7 +1701,7 @@ server {
     ssl_certificate_key {{ssl_key_file}};
 
     # Security Headers for HTTPS
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;
 
     # Logging
     error_log ${logDir}/{{site_name}}.error.log;
@@ -1889,7 +1902,7 @@ function php_configure_for_moodle() {
       if grep -q "^max_input_vars" "$php_ini"; then
         run_command --makes-changes sed -i 's/^max_input_vars.*/max_input_vars = 5000/' "$php_ini"
       else
-        run_command --makes-changes sed -i '/; max_input_vars/a max_input_vars = 5000' "$php_ini"
+        run_command --makes-changes sed -i '/;max_input_vars/a max_input_vars = 5000' "$php_ini"
       fi
 
       # Other recommended settings for Moodle
@@ -1902,7 +1915,7 @@ function php_configure_for_moodle() {
     fi
   done
 
-  # Restart PHP-FPM if it's running
+  # Restart PHP-FPM to apply configuration changes
   if $FPM_ENSURE; then
     run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
   fi
@@ -2669,6 +2682,7 @@ function main() {
   if $MYSQL_ENSURE; then
     log verbose "Ensuring MySQL/MariaDB..."
     mysql_ensure
+    log info "DEBUG: DB_PASS after mysql_ensure: ${DB_PASS}"
   fi
 
   log verbose "checking POSTGRES_ENSURE"
@@ -2764,7 +2778,7 @@ while [[ $# -gt 0 ]]; do
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
       case "$2" in
       mysql | mysqli)
-        DB_TYPE="mysql"
+        DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
         MYSQL_ENSURE=true
         POSTGRES_ENSURE=false
         shift # past value
@@ -2776,14 +2790,14 @@ while [[ $# -gt 0 ]]; do
         shift # past value
         ;;
       *)
-        log error "Unsupported database type: $2. Supported types are 'mysql', 'mysqli' and 'pgsql'."
+        log error "Unsupported database type: $2. Supported types are 'mysql' (MariaDB) and 'pgsql' (PostgreSQL)."
         echo_usage
         exit 1
         ;;
       esac
     else
       # Use the default value for DB_TYPE
-      DB_TYPE="mysql"
+      DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
       MYSQL_ENSURE=true
       POSTGRES_ENSURE=false
     fi
