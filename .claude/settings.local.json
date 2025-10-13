@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(mkdir:*)",
+      "Bash(git clone:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(shellcheck:*)",
+      "Bash(bash:*)",
+      "Bash(test:*)",
+      "Bash(./laemp.sh:*)",
+      "Bash(bats:*)",
+      "Bash(chmod:*)",
+      "Read(///**)",
+      "Bash(awk:*)",
+      "Bash(\"/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills\" documentation)",
+      "Bash(cat:*)",
+      "Bash(make precommit:*)",
+      "WebFetch(domain:www.shellcheck.net)",
+      "Bash(podman build:*)",
+      "Bash(podman-compose build:*)",
+      "Bash(podman images:*)",
+      "Bash(podman-compose up:*)",
+      "Bash(podman-compose ps:*)",
+      "Bash(podman-compose exec:*)",
+      "Bash(podman run:*)",
+      "Bash(\"/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills\" \"test\")",
+      "Read(//Users/nickromney/.config/superpowers/skills/skills/testing/testing-anti-patterns/**)",
+      "Read(//Users/nickromney/.config/superpowers/skills/skills/collaboration/brainstorming/**)",
+      "Bash(podman image exists:*)",
+      "Bash(podman ps:*)",
+      "Bash(podman exec:*)",
+      "Bash(npm:*)",
+      "Bash(curl -s https://nginx.org/en/linux_packages.html)",
+      "Bash(podman-compose logs:*)",
+      "Bash(podman logs:*)",
+      "Bash(podman-compose down:*)"
+    ],
+    "deny": []
+  }
+}

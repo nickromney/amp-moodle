@@ -1,0 +1,131 @@
+# Podman Compose configuration for laemp.sh testing
+# Works with both podman-compose and docker compose
+#
+# Services:
+#   - moodle-test-ubuntu: Ubuntu 24.04 LTS test environment
+#   - moodle-test-debian: Debian 13 (Trixie) test environment
+#
+# Usage:
+#   podman-compose up -d                    # Start both containers
+#   podman-compose up -d moodle-test-ubuntu # Start only Ubuntu
+#   podman-compose exec moodle-test-ubuntu bash # Access Ubuntu shell
+#   podman-compose down                     # Stop and remove containers
+#
+# Testing:
+#   podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -h
+#   podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -n -v -p -w nginx
+#   podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -p -w nginx -d mysql -m 501 -S
+#
+# See docs/container-testing.md for comprehensive testing guide
+
+services:
+  moodle-test-ubuntu:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+    image: amp-moodle-ubuntu:24.04
+    container_name: laemp-test-ubuntu
+    platform: linux/amd64
+
+    # Privileged mode required for systemd
+    privileged: true
+
+    # tmpfs mounts for systemd
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/lock
+
+    # Volume for systemd
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - ./laemp.sh:/usr/local/bin/laemp.sh:ro
+      - ubuntu-logs:/var/log
+      - ubuntu-moodle:/var/www
+
+    # Environment variables
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - TZ=UTC
+      - LANG=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+
+    # Keep container running
+    command: /bin/bash -c "sleep infinity"
+
+    # Health check - verifies container is functional and laemp.sh is accessible
+    # Compatible with cloud environments (ECS, Fargate, etc.)
+    healthcheck:
+      test: ["CMD", "test", "-x", "/usr/local/bin/laemp.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Network
+    networks:
+      - laemp-test-network
+
+  moodle-test-debian:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian
+    image: amp-moodle-debian:13
+    container_name: laemp-test-debian
+    platform: linux/amd64
+
+    # Privileged mode required for systemd
+    privileged: true
+
+    # tmpfs mounts for systemd
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/lock
+
+    # Volume for systemd
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - ./laemp.sh:/usr/local/bin/laemp.sh:ro
+      - debian-logs:/var/log
+      - debian-moodle:/var/www
+
+    # Environment variables
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - TZ=UTC
+      - LANG=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+
+    # Keep container running
+    command: /bin/bash -c "sleep infinity"
+
+    # Health check - verifies container is functional and laemp.sh is accessible
+    # Compatible with cloud environments (ECS, Fargate, etc.)
+    healthcheck:
+      test: ["CMD", "test", "-x", "/usr/local/bin/laemp.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Network
+    networks:
+      - laemp-test-network
+
+# Named volumes for persistent data across container restarts
+volumes:
+  ubuntu-logs:
+    name: laemp-ubuntu-logs
+  ubuntu-moodle:
+    name: laemp-ubuntu-moodle
+  debian-logs:
+    name: laemp-debian-logs
+  debian-moodle:
+    name: laemp-debian-moodle
+
+# Isolated network for test containers
+networks:
+  laemp-test-network:
+    name: laemp-test-net
+    driver: bridge

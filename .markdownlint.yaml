@@ -1,0 +1,17 @@
+# Markdownlint configuration
+# Docs: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+# Default: all rules enabled
+default: true
+
+# Line length - disable because code blocks often exceed this
+MD013: false
+
+# Multiple headers with same content - disable for repeated section headings
+MD024: false
+
+# Inline HTML - allow for special formatting when needed
+MD033: false
+
+# First line in file should be a top-level heading - not always applicable
+MD041: false

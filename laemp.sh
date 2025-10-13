@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2289
 # This shebang line uses the env command to locate the bash interpreter in the user's PATH
 #  environment variable. This means that the script will be executed with the bash interpreter
 #  that is found first in the user's PATH. This approach is more flexible and portable because
@@ -24,8 +25,12 @@ MEMCACHED_ENSURE=false
 MOODLE_ENSURE=false
 NGINX_ENSURE=false
 PHP_ENSURE=false
-DEFAULT_MOODLE_VERSION="311"
-DEFAULT_PHP_VERSION_MAJOR_MINOR="7.4"
+PROMETHEUS_ENSURE=false
+MYSQL_ENSURE=false
+POSTGRES_ENSURE=false
+# Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5003 for 5.0.3, etc.
+DEFAULT_MOODLE_VERSION="501"
+DEFAULT_PHP_VERSION_MAJOR_MINOR="8.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
 PHP_ALONGSIDE=false
@@ -36,7 +41,7 @@ SELF_SIGNED_CERT=false
 SERVICE_COMMAND="service" # Change to "systemctl" for CentOS
 
 # Moodle database
-DB_TYPE="mysqli"
+DB_TYPE="mysql"
 DB_HOST="localhost"
 DB_NAME="moodle"
 DB_USER="moodle"
@@ -79,15 +84,16 @@ function echo_usage() {
   log info "  -d, --database      Database type (default: mysql, supported: [mysql, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
   log info "  -h, --help          Display this help message"
-  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION})"
+  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0)"
   log info "  -M, --memcached     Ensure Memcached is installed"
   log info "  -n, --nop           Dry run (show commands without executing)"
   log info "  -p, --php           Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
   log info "  -P, --php-alongside Ensure specified version of PHP is installed, regardless of whether PHP is already installed"
+  log info "  -r, --prometheus    Install Prometheus monitoring with exporters for web server and PHP"
   log info "  -s, --sudo          Use sudo for running commands (default: false)"
   log info "  -S, --self-signed   Create a self-signed certificate for the specified domain"
   log info "  -v, --verbose       Enable verbose output"
-  log info "  -w, --web           Web server type (default: apache, supported: [apache, nginx])"
+  log info "  -w, --web           Web server type (default: nginx, supported: [apache, nginx])"
   log info "  Note:               Options -d, -m, -p, -w require an argument but have defaults."
 }
 
@@ -411,6 +417,100 @@ function acme_cert_provider() {
   echo "$provider"
 }
 
+function get_cert_path() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local domain=""
+  local cert_type="cert"  # "cert" or "key"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --domain)
+      shift
+      domain="$1"
+      shift
+      ;;
+    --type)
+      shift
+      cert_type="$1"
+      shift
+      ;;
+    *)
+      log error "Invalid option: $1"
+      exit 1
+      ;;
+    esac
+  done
+
+  if [ -z "$domain" ]; then
+    log error "Missing domain parameter. Usage: ${FUNCNAME[0]} --domain example.com [--type cert|key]"
+    exit 1
+  fi
+
+  # Return certificate paths based on which flags are set
+  if $ACME_CERT; then
+    if [ "$cert_type" = "key" ]; then
+      echo "/etc/letsencrypt/live/${domain}/privkey.pem"
+    else
+      echo "/etc/letsencrypt/live/${domain}/fullchain.pem"
+    fi
+  elif $SELF_SIGNED_CERT; then
+    if [ "$cert_type" = "key" ]; then
+      echo "/etc/ssl/${domain}.key"
+    else
+      echo "/etc/ssl/${domain}.cert"
+    fi
+  else
+    log error "Neither ACME_CERT nor SELF_SIGNED_CERT is enabled. Cannot determine certificate path."
+    exit 1
+  fi
+}
+
+function validate_certificates() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local domain=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --domain)
+      shift
+      domain="$1"
+      shift
+      ;;
+    *)
+      log error "Invalid option: $1"
+      exit 1
+      ;;
+    esac
+  done
+
+  if [ -z "$domain" ]; then
+    log error "Missing domain parameter. Usage: ${FUNCNAME[0]} --domain example.com"
+    exit 1
+  fi
+
+  # Get certificate paths
+  local cert_file
+  local key_file
+  cert_file=$(get_cert_path --domain "${domain}" --type cert)
+  key_file=$(get_cert_path --domain "${domain}" --type key)
+
+  # Check if certificate files exist
+  if [ ! -f "$cert_file" ]; then
+    log error "Certificate file does not exist: ${cert_file}"
+    return 1
+  fi
+
+  if [ ! -f "$key_file" ]; then
+    log error "Key file does not exist: ${key_file}"
+    return 1
+  fi
+
+  log verbose "Certificate validation successful for domain: ${domain}"
+  log verbose "  Certificate: ${cert_file}"
+  log verbose "  Key: ${key_file}"
+  return 0
+}
+
 function acme_cert_request() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local domain=""
@@ -472,7 +572,7 @@ function acme_cert_request() {
   # Request SSL certificate
   #ignore ShellCheck warning for $san_flag
   #shellcheck disable=SC2086
-  run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} -m "${email}" --agree-tos --challenge "${challenge_type}" --server "${provider}"
+  run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} -m "${email}" --agree-tos --non-interactive --preferred-challenges "${challenge_type}" --server "${provider}"
 }
 
 function apache_verify() {
@@ -606,9 +706,20 @@ function apache_create_vhost() {
         Require all granted
     </Directory>
 
+    {{fpm_config}}
     {{include_file}}
 </VirtualHost>
 "
+
+  # Add FPM configuration if FPM is enabled
+  local fpm_config=""
+  if $FPM_ENSURE; then
+    fpm_config="
+    # PHP-FPM Configuration
+    <FilesMatch \\.php$>
+        SetHandler \"proxy:unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${config["site-name"]}.sock|fcgi://localhost\"
+    </FilesMatch>"
+  fi
 
   local vhost_config
   vhost_config=$(
@@ -618,6 +729,7 @@ function apache_create_vhost() {
       "admin_email=${config["admin-email"]}" \
       "ssl_cert_file=${config["ssl-cert-file"]}" \
       "ssl_key_file=${config["ssl-key-file"]}" \
+      "fpm_config=${fpm_config}" \
       "include_file=${config["include-file"]}"
   )
 
@@ -684,6 +796,39 @@ function moodle_config_files() {
       replace_file_value "\$CFG->wwwroot.*" "\$CFG->wwwroot   = 'https://${moodleSiteName}';" "$configFile"
       replace_file_value "\$CFG->dataroot.*" "\$CFG->dataroot  = '${moodleDataDir}';" "$configFile"
 
+      # Add X-Sendfile configuration for Nginx if using Nginx
+      if $NGINX_ENSURE; then
+        # Check if xsendfile settings already exist
+        if ! grep -q "CFG->xsendfile" "$configFile"; then
+          # Add before the require_once line at the end of the file
+          sed -i "/require_once(__DIR__ . '\/lib\/setup.php');/i\
+\n\
+// X-Sendfile configuration for Nginx\n\
+\$CFG->xsendfile = 'X-Accel-Redirect';\n\
+\$CFG->xsendfilealiases = array(\n\
+    '${moodleDataDir}/' => '/dataroot/'\n\
+);\n" "$configFile"
+          log verbose "Added X-Sendfile configuration for Nginx"
+        fi
+      fi
+
+      # Add Memcached session configuration if Memcached is enabled
+      if $MEMCACHED_ENSURE; then
+        # Check if memcached session settings already exist
+        if ! grep -q "CFG->session_handler_class" "$configFile"; then
+          # Add before the require_once line at the end of the file
+          sed -i "/require_once(__DIR__ . '\/lib\/setup.php');/i\
+\n\
+// Memcached session configuration\n\
+\$CFG->session_handler_class = '\\\\\\\\core\\\\\\\\session\\\\\\\\memcached';\n\
+\$CFG->session_memcached_save_path = '127.0.0.1:11211';\n\
+\$CFG->session_memcached_prefix = 'memc.sess.key.';\n\
+\$CFG->session_memcached_acquire_lock_timeout = 120;\n\
+\$CFG->session_memcached_lock_expire = 7200;\n" "$configFile"
+          log verbose "Added Memcached session configuration"
+        fi
+      fi
+
       log verbose "Configuration file changes completed."
     fi
   else
@@ -749,6 +894,94 @@ function moodle_download_extract() {
   fi
 }
 
+function generate_password() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  # Generate a secure random password (20 characters with letters, numbers, and special characters)
+  local password
+  password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-20)
+  echo "${password}"
+}
+
+function moodle_install_database() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local moodleDir="${1}"
+
+  # Check if Moodle is already installed by checking database schema
+  log verbose "Checking if Moodle is already installed..."
+  if run_command php "${moodleDir}/admin/cli/check_database_schema.php" 2>&1 | grep -q "No errors found"; then
+    log verbose "Moodle is already installed. Skipping database installation."
+    return 0
+  fi
+
+  # Generate secure admin password
+  local admin_password
+  admin_password=$(generate_password)
+
+  log info "Installing Moodle database..."
+  log verbose "Running Moodle CLI installer with the following settings:"
+  log verbose "  Language: en"
+  log verbose "  Admin user: admin"
+  log verbose "  Admin email: admin@${moodleSiteName}"
+  log verbose "  Full name: ${moodleSiteName}"
+  log verbose "  Short name: ${moodleSiteName}"
+
+  # Run Moodle CLI installer
+  run_command --makes-changes php "${moodleDir}/admin/cli/install_database.php" \
+    --lang=en \
+    --adminuser=admin \
+    --adminpass="${admin_password}" \
+    --adminemail="admin@${moodleSiteName}" \
+    --fullname="${moodleSiteName}" \
+    --shortname="${moodleSiteName}" \
+    --agree-license
+
+  # Log the admin password
+  log info "Moodle installation completed successfully!"
+  log info "=========================================="
+  log info "IMPORTANT: Save these credentials securely"
+  log info "=========================================="
+  log info "Admin username: admin"
+  log info "Admin password: ${admin_password}"
+  log info "Admin email: admin@${moodleSiteName}"
+  log info "Site URL: https://${moodleSiteName}"
+  log info "=========================================="
+  log verbose "Admin password has been logged to: ${LOG_FILE}"
+}
+
+function setup_moodle_cron() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local moodleDir="${1}"
+
+  # Create cron job for Moodle (runs every 5 minutes)
+  local cron_job="*/5 * * * * php ${moodleDir}/admin/cli/cron.php"
+  local cron_comment="# Moodle cron job"
+
+  log verbose "Setting up Moodle cron job for ${webserverUser}..."
+
+  # Check if cron job already exists in www-data's crontab
+  if run_command crontab -u "${webserverUser}" -l 2>/dev/null | grep -q "${moodleDir}/admin/cli/cron.php"; then
+    log verbose "Moodle cron job already exists for ${webserverUser}. Skipping cron setup."
+    return 0
+  fi
+
+  # Add cron job to www-data's crontab
+  log verbose "Adding Moodle cron job to ${webserverUser}'s crontab..."
+
+  # Get existing crontab or create empty one if it doesn't exist
+  local existing_crontab
+  existing_crontab=$(run_command crontab -u "${webserverUser}" -l 2>/dev/null || echo "")
+
+  # Add new cron job
+  {
+    echo "${existing_crontab}"
+    echo "${cron_comment}"
+    echo "${cron_job}"
+  } | run_command --makes-changes crontab -u "${webserverUser}" -
+
+  log verbose "Moodle cron job added successfully for ${webserverUser}"
+}
+
 # Alphabetised version of the list from https://docs.moodle.org/310/en/PHP
 ## The ctype extension is required (provided by common)
 # The curl extension is required (required for networking and web services).
@@ -769,8 +1002,79 @@ function moodle_download_extract() {
 # The xmlrpc extension is recommended (required for networking and web services).
 # The zip extension is required.
 
+function moodle_validate_php_version() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  local moodle_version="$1"
+  local php_version="$2"
+
+  # Extract major.minor from PHP version
+  local php_major_minor
+  php_major_minor=$(echo "$php_version" | cut -d. -f1-2)
+
+  # Moodle/PHP compatibility matrix (October 2025)
+  # Reference: https://docs.moodle.org/en/PHP
+  # Version format: 500=5.0.0, 501=5.1.0, 5003=5.0.3 (patch releases use 4 digits)
+  case "$moodle_version" in
+    "500" | "501" | "502" | "5003")
+      # Moodle 5.0+ requires PHP 8.2+ (supports 8.2, 8.3, 8.4)
+      # Moodle 5.1.0 (tag: MOODLE_501) released October 2025
+      if [[ $(echo "$php_major_minor >= 8.2" | bc) -ne 1 ]]; then
+        log error "Moodle 5.0+ requires PHP 8.2 or higher (supports 8.2, 8.3, 8.4). Current: $php_version"
+        exit 1
+      fi
+      ;;
+    "404" | "405")
+      # Moodle 4.4-4.5 requires PHP 8.1+ (supports 8.1, 8.2, 8.3)
+      if [[ $(echo "$php_major_minor >= 8.1" | bc) -ne 1 ]]; then
+        log error "Moodle 4.4-4.5 requires PHP 8.1 or higher (supports 8.1, 8.2, 8.3). Current: $php_version"
+        exit 1
+      fi
+      ;;
+    "402" | "403")
+      # Moodle 4.2-4.3 requires PHP 8.0+ (supports 8.0, 8.1, 8.2)
+      if [[ $(echo "$php_major_minor >= 8.0" | bc) -ne 1 ]]; then
+        log error "Moodle 4.2-4.3 requires PHP 8.0 or higher (supports 8.0, 8.1, 8.2). Current: $php_version"
+        exit 1
+      fi
+      ;;
+    "401")
+      # Moodle 4.1 requires PHP 7.4+ (supports 7.4, 8.0, 8.1)
+      if [[ $(echo "$php_major_minor >= 7.4" | bc) -ne 1 ]]; then
+        log error "Moodle 4.1 requires PHP 7.4 or higher (supports 7.4, 8.0, 8.1). Current: $php_version"
+        exit 1
+      fi
+      ;;
+    "400")
+      # Moodle 4.0 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
+      if [[ $(echo "$php_major_minor >= 7.3" | bc) -ne 1 ]]; then
+        log error "Moodle 4.0 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
+        exit 1
+      fi
+      ;;
+    "311" | "312")
+      # Moodle 3.11 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
+      if [[ $(echo "$php_major_minor >= 7.3" | bc) -ne 1 ]]; then
+        log error "Moodle 3.11 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
+        exit 1
+      fi
+      ;;
+    *)
+      log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
+      log verbose "Note: Default Moodle versions are 405 (4.5) and 500 (5.0)"
+      ;;
+  esac
+
+  log verbose "PHP version $php_version is compatible with Moodle $moodle_version"
+}
+
 function moodle_ensure() {
   php_verify --exit-on-failure
+
+  # Validate PHP version compatibility with Moodle
+  local php_version
+  php_version=$(php -v | head -n 1 | awk '{print $2}')
+  moodle_validate_php_version "${MOODLE_VERSION}" "${php_version}"
 
   declare -a moodle_php_extensions=(
     "php${PHP_VERSION_MAJOR_MINOR}-common"
@@ -782,6 +1086,9 @@ function moodle_ensure() {
     "php${PHP_VERSION_MAJOR_MINOR}-xml"
     "php${PHP_VERSION_MAJOR_MINOR}-xmlrpc"
     "php${PHP_VERSION_MAJOR_MINOR}-zip"
+    "php${PHP_VERSION_MAJOR_MINOR}-sodium"
+    "php${PHP_VERSION_MAJOR_MINOR}-opcache"
+    "php${PHP_VERSION_MAJOR_MINOR}-ldap"
   )
 
   if [ "${DB_TYPE}" == "pgsql" ]; then
@@ -792,26 +1099,64 @@ function moodle_ensure() {
 
   php_extensions_ensure "${moodle_php_extensions[@]}"
 
+  # Configure PHP for Moodle requirements
+  php_configure_for_moodle
+
   moodle_configure_directories "${moodleUser}" "${webserverUser}" "${moodleDataDir}" "${moodleDir}"
   moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
   moodle_dependencies
   moodle_config_files "${moodleDir}"
+  moodle_install_database "${moodleDir}"
+  setup_moodle_cron "${moodleDir}"
+
+  # Get dynamic certificate paths based on ACME_CERT or SELF_SIGNED_CERT flags
+  local ssl_cert_file=""
+  local ssl_key_file=""
+
+  if $ACME_CERT || $SELF_SIGNED_CERT; then
+    # Validate certificates exist before creating vhost
+    if ! validate_certificates --domain "${moodleSiteName}"; then
+      log error "Certificate validation failed. Please ensure certificates are created before configuring vhost."
+      exit 1
+    fi
+
+    # Get certificate paths
+    ssl_cert_file=$(get_cert_path --domain "${moodleSiteName}" --type cert)
+    ssl_key_file=$(get_cert_path --domain "${moodleSiteName}" --type key)
+
+    log verbose "Using SSL certificates:"
+    log verbose "  Certificate: ${ssl_cert_file}"
+    log verbose "  Key: ${ssl_key_file}"
+  else
+    log info "No SSL certificate flags set (ACME_CERT or SELF_SIGNED_CERT). Virtual host will be created without SSL."
+    # Use empty paths for non-SSL configurations
+    ssl_cert_file=""
+    ssl_key_file=""
+  fi
 
   declare -A vhost_config=(
     ["site-name"]="${moodleSiteName}"
     ["document-root"]="/var/www/html/${moodleSiteName}"
     ["admin-email"]="admin@${moodleSiteName}"
-    ["ssl-cert-file"]="/etc/letsencrypt/live/${moodleSiteName}/fullchain.pem"
-    ["ssl-key-file"]="/etc/letsencrypt/live/${moodleSiteName}/privkey.pem"
+    ["ssl-cert-file"]="${ssl_cert_file}"
+    ["ssl-key-file"]="${ssl_key_file}"
   )
 
   if $APACHE_ENSURE; then
     apache_verify --exit-on-failure
+    # Create PHP-FPM pool for Moodle when using FPM
+    if $FPM_ENSURE; then
+      php_fpm_create_pool "${moodleSiteName}" "${webserverUser}"
+    fi
     apache_create_vhost vhost_config
   fi
 
   if $NGINX_ENSURE; then
     nginx_verify --exit-on-failure
+    # Create PHP-FPM pool for Moodle
+    if $FPM_ENSURE; then
+      php_fpm_create_pool "${moodleSiteName}" "${webserverUser}"
+    fi
     nginx_create_vhost vhost_config
   fi
 }
@@ -855,6 +1200,207 @@ function nginx_verify() {
   fi
 }
 
+function nginx_create_optimized_config() {
+  log verbose "Creating optimized Nginx configuration"
+
+  # Backup original nginx.conf if it exists
+  if [ -f "/etc/nginx/nginx.conf" ]; then
+    run_command --makes-changes cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+  fi
+
+  # Create optimized nginx.conf
+  cat > /etc/nginx/nginx.conf << 'EOF'
+# Optimized Nginx Configuration
+# Based on best practices for performance and security
+
+user www-data www-data;
+worker_processes auto;
+worker_rlimit_nofile 8192;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 8000;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    # Basic Settings
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 20s;
+    types_hash_max_size 2048;
+    client_max_body_size 100M;
+    client_body_timeout 30s;
+    client_header_timeout 30s;
+    send_timeout 30s;
+
+    # Buffer sizes for better performance
+    fastcgi_buffers 16 16k;
+    fastcgi_buffer_size 32k;
+
+    # Hide nginx version
+    server_tokens off;
+
+    # MIME Types
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # Logging
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log error;
+
+    # Gzip Compression
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_types
+        application/atom+xml
+        application/geo+json
+        application/javascript
+        application/json
+        application/ld+json
+        application/manifest+json
+        application/rdf+xml
+        application/rss+xml
+        application/vnd.ms-fontobject
+        application/wasm
+        application/x-web-app-manifest+json
+        application/xhtml+xml
+        application/xml
+        font/eot
+        font/otf
+        font/ttf
+        image/svg+xml
+        image/x-icon
+        text/cache-manifest
+        text/calendar
+        text/css
+        text/javascript
+        text/markdown
+        text/plain
+        text/xml
+        text/vcard
+        text/vtt
+        text/x-component
+        text/x-cross-domain-policy;
+
+    # SSL Settings (if using HTTPS)
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers EECDH+CHACHA20:EECDH+AES;
+    ssl_ecdh_curve X25519:prime256v1:secp521r1:secp384r1;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 24h;
+    ssl_session_tickets off;
+
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+
+    # Include additional configurations
+    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
+}
+EOF
+
+  # Create global configuration directory
+  run_command --makes-changes mkdir -p /etc/nginx/global
+
+  # Create security configuration for uploads
+  cat > /etc/nginx/global/uploads-protection.conf << 'EOF'
+# Deny access to any files with a .php extension in uploads directories
+location ~* /uploads/.*\.php$ {
+    deny all;
+    access_log off;
+}
+
+# Deny access to hidden files
+location ~ /\. {
+    deny all;
+    access_log off;
+    log_not_found off;
+}
+EOF
+
+  # Create Moodle-specific security rules
+  cat > /etc/nginx/global/moodle-security.conf << 'EOF'
+# Moodle Security Configuration
+#
+# X-Sendfile Support:
+# The /dataroot/ location allows Nginx to access and serve files from the moodledata
+# directory (which is stored OUTSIDE the web root for security). This only works when:
+# 1. Moodle's config.php has: $CFG->xsendfile = 'X-Accel-Redirect';
+# 2. And: $CFG->xsendfilealiases = array('/path/to/moodledata/' => '/dataroot/');
+#
+# This way, files are secure (outside web root) but can still be efficiently served by Nginx.
+
+# Protect Moodle internal files
+location ~ (/vendor/|/node_modules/|composer\.json|/readme|/README|readme\.txt|/upgrade\.txt|/UPGRADING\.md|db/install\.xml|/fixtures/|/behat/|phpunit\.xml|\.lock|environment\.xml) {
+    deny all;
+    return 404;
+}
+
+# Moodle file serving with X-Sendfile
+# This allows Nginx to serve files from moodledata directory (which is outside web root)
+# when Moodle sends an X-Accel-Redirect header
+#
+# IMPORTANT: The moodledata directory MUST be outside the web root for security!
+# This location block makes it accessible ONLY via internal redirects from PHP
+location /dataroot/ {
+    internal;  # Only accessible via internal redirects, not direct URLs
+    alias ${moodle_data_dir}/;  # Maps to the actual moodledata directory
+
+    # Ensure proper content type detection
+    add_header Content-Disposition 'attachment';
+}
+
+# Disable xmlrpc.php for security
+location = /xmlrpc.php {
+    deny all;
+    access_log off;
+    log_not_found off;
+    return 404;
+}
+EOF
+
+  # Create static files caching configuration
+  cat > /etc/nginx/global/static-files.conf << 'EOF'
+# Cache static files
+location ~* \.(jpg|jpeg|png|gif|ico|webp|svg|css|js|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|gz|bz2|7z)$ {
+    expires 30d;
+    add_header Cache-Control "public, immutable";
+    access_log off;
+}
+
+# Cache fonts
+location ~* \.(ttf|ttc|otf|eot|woff|woff2)$ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    access_log off;
+    add_header Access-Control-Allow-Origin *;
+}
+
+# Don't log robots.txt or favicon.ico
+location = /robots.txt {
+    access_log off;
+    log_not_found off;
+}
+
+location = /favicon.ico {
+    access_log off;
+    log_not_found off;
+}
+EOF
+
+  log verbose "Optimized Nginx configuration created"
+}
+
 function nginx_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
@@ -864,25 +1410,48 @@ function nginx_ensure() {
     log verbose "DRY_RUN: Skipping repository setup and Nginx installation"
   else
     log verbose "Setting up Nginx repository..."
-    if [ "$DISTRO" == "Ubuntu" ]; then
-      log verbose "Adding Ondrej Nginx repository for Ubuntu..."
-      nginx_repository="ppa:ondrej/nginx-mainline"
-    elif [ "$DISTRO" == "Debian" ]; then
-      log verbose "Adding Sury Nginx repository for Debian..."
-      nginx_repository="deb https://packages.sury.org/nginx-mainline/ $CODENAME main"
+
+    # Use official nginx.org repository for both Ubuntu and Debian
+    if [ "$DISTRO" == "Ubuntu" ] || [ "$DISTRO" == "Debian" ]; then
+      log verbose "Adding official nginx.org repository for ${DISTRO}..."
+
+      # Download and add nginx.org GPG key
+      log verbose "Adding nginx.org GPG key..."
+      run_command --makes-changes curl -fSsL https://nginx.org/keys/nginx_signing.key \| gpg --dearmor \| tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
+
+      # Verify GPG key was added successfully
+      if [ ! -f "/usr/share/keyrings/nginx-archive-keyring.gpg" ]; then
+        log error "Failed to add nginx.org GPG key"
+        exit 1
+      fi
+
+      # Add nginx mainline repository
+      # Use lowercase distro name for nginx.org repository URLs
+      log verbose "Adding nginx mainline repository..."
+      local codename
+      local distro_lower
+      codename=$(lsb_release -cs)
+      distro_lower=$(echo "$DISTRO" | tr '[:upper:]' '[:lower:]')
+      echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${distro_lower} ${codename} nginx" | tee /etc/apt/sources.list.d/nginx.list >/dev/null
+
+      # Set APT pinning to prioritize nginx.org packages
+      log verbose "Configuring APT pinning for nginx.org..."
+      echo -e "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" | tee /etc/apt/preferences.d/99nginx >/dev/null
+
+      # Update package list to include new repository
+      run_command --makes-changes apt-get update
+
     else
       log error "Unsupported distro: $DISTRO"
       exit 1
-    fi
-
-    if [ "$package_manager" == "apt" ]; then
-      log verbose "Ensuring repository is added $nginx_repository..."
-      repository_ensure "$apache_repository"
     fi
   fi
 
   # Install Nginx if not already installed
   package_ensure nginx
+
+  # Create optimized Nginx configuration
+  nginx_create_optimized_config "${moodleDataDir}"
 
   # Should always be true, but just in case
   if $FPM_ENSURE; then
@@ -924,26 +1493,54 @@ server {
 }
 
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
     server_name {{site_name}};
 
     root {{document_root}};
-    index index.php;
+    index index.php index.html;
 
-    server_tokens off;
+    # SSL Configuration
     ssl_certificate {{ssl_cert_file}};
     ssl_certificate_key {{ssl_key_file}};
 
+    # Security Headers for HTTPS
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Logging
     error_log ${logDir}/{{site_name}}.error.log;
     access_log ${logDir}/{{site_name}}.access.log;
 
+    # Include global security configurations
+    include /etc/nginx/global/uploads-protection.conf;
+    include /etc/nginx/global/moodle-security.conf;
+    include /etc/nginx/global/static-files.conf;
+
+    # Main location block
     location / {
-        try_files \$uri \$uri/ =404;
+        try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php${PHP_VERSION_MAJOR_MINOR}-fpm.sock;
+    # PHP handling
+    location ~ [^/]\.php(/|$) {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        if (!-f \$document_root\$fastcgi_script_name) {
+            return 404;
+        }
+
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param PATH_INFO \$fastcgi_path_info;
+        fastcgi_param PATH_TRANSLATED \$document_root\$fastcgi_path_info;
+
+        fastcgi_pass unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-{{site_name}}.sock;
+        fastcgi_index index.php;
+
+        # Performance optimizations
+        fastcgi_buffer_size 128k;
+        fastcgi_buffers 256 16k;
+        fastcgi_busy_buffers_size 256k;
+        fastcgi_temp_file_write_size 256k;
+        fastcgi_read_timeout 300;
     }
 
     {{include_file}}
@@ -1088,6 +1685,112 @@ function php_extensions_ensure() {
   package_ensure "${extensions[@]}"
 }
 
+function php_configure_for_moodle() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  # Configure PHP settings for Moodle
+  local php_ini_paths=(
+    "/etc/php/${PHP_VERSION_MAJOR_MINOR}/cli/php.ini"
+    "/etc/php/${PHP_VERSION_MAJOR_MINOR}/apache2/php.ini"
+    "/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/php.ini"
+  )
+
+  for php_ini in "${php_ini_paths[@]}"; do
+    if [ -f "$php_ini" ]; then
+      log verbose "Configuring $php_ini for Moodle requirements"
+
+      # Set max_input_vars to 5000 (Moodle requirement)
+      if grep -q "^max_input_vars" "$php_ini"; then
+        run_command --makes-changes sed -i 's/^max_input_vars.*/max_input_vars = 5000/' "$php_ini"
+      else
+        run_command --makes-changes sed -i '/; max_input_vars/a max_input_vars = 5000' "$php_ini"
+      fi
+
+      # Other recommended settings for Moodle
+      run_command --makes-changes sed -i 's/^max_execution_time.*/max_execution_time = 300/' "$php_ini"
+      run_command --makes-changes sed -i 's/^memory_limit.*/memory_limit = 256M/' "$php_ini"
+      run_command --makes-changes sed -i 's/^post_max_size.*/post_max_size = 100M/' "$php_ini"
+      run_command --makes-changes sed -i 's/^upload_max_filesize.*/upload_max_filesize = 100M/' "$php_ini"
+
+      log verbose "PHP configuration updated in $php_ini"
+    fi
+  done
+
+  # Restart PHP-FPM if it's running
+  if $FPM_ENSURE; then
+    run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+  fi
+}
+
+function php_fpm_create_pool() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  local pool_name="${1}"
+  local pool_user="${2}"
+  local pool_group="${3:-www-data}"
+  local listen_user="${4:-www-data}"
+  local listen_group="${5:-www-data}"
+
+  # Create the pool configuration file
+  local pool_conf="/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d/${pool_name}.conf"
+
+  log verbose "Creating PHP-FPM pool configuration for ${pool_name}"
+
+  cat > "${pool_conf}" << EOF
+[${pool_name}]
+
+; Pool user and group
+user = ${pool_user}
+group = ${pool_group}
+
+; Unix socket configuration
+listen = /run/php/php${PHP_VERSION_MAJOR_MINOR}-${pool_name}.sock
+listen.owner = ${listen_user}
+listen.group = ${listen_group}
+listen.mode = 0660
+
+; Process manager configuration
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 10
+pm.min_spare_servers = 5
+pm.max_spare_servers = 20
+pm.max_requests = 500
+
+; PHP configuration for Moodle
+php_admin_value[error_log] = /var/log/php/${pool_name}-error.log
+php_admin_value[memory_limit] = 256M
+php_admin_value[max_execution_time] = 300
+php_admin_value[max_input_vars] = 5000
+php_admin_value[upload_max_filesize] = 100M
+php_admin_value[post_max_size] = 100M
+php_admin_value[session.save_path] = /var/lib/php/sessions/${pool_name}
+
+; Additional security settings
+php_admin_flag[log_errors] = on
+php_admin_flag[display_errors] = off
+php_admin_value[error_reporting] = E_ALL & ~E_DEPRECATED & ~E_STRICT
+php_admin_value[open_basedir] = ${moodleDir}:${moodleDataDir}:/usr/share/php:/tmp
+
+; Opcache settings for better performance
+php_admin_value[opcache.enable] = 1
+php_admin_value[opcache.memory_consumption] = 128
+php_admin_value[opcache.max_accelerated_files] = 10000
+php_admin_value[opcache.revalidate_freq] = 60
+EOF
+
+  # Create necessary directories
+  run_command --makes-changes mkdir -p "/var/log/php"
+  run_command --makes-changes mkdir -p "/var/lib/php/sessions/${pool_name}"
+  run_command --makes-changes chown -R "${pool_user}:${pool_group}" "/var/lib/php/sessions/${pool_name}"
+  run_command --makes-changes chmod 700 "/var/lib/php/sessions/${pool_name}"
+
+  # Restart PHP-FPM to load the new pool
+  run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+
+  log verbose "PHP-FPM pool '${pool_name}' created successfully"
+}
+
 function self_signed_cert_request() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local domain=""
@@ -1116,21 +1819,593 @@ function self_signed_cert_request() {
     package_ensure openssl
   fi
 
-  # Request SSL certificate
-  #ignore ShellCheck warning for $san_flag
-  #shellcheck disable=SC2086
-  if [[ -f "${domain}.cer" ]]; then
-    echo "Certificate .cer already exists ${domain}.cer"
+  # Define certificate paths in /etc/ssl/
+  local cert_file="/etc/ssl/${domain}.cert"
+  local key_file="/etc/ssl/${domain}.key"
+
+  # Check if certificate already exists
+  if [[ -f "${cert_file}" ]]; then
+    log info "Certificate already exists: ${cert_file}"
   else
+    log info "Creating self-signed certificate for ${domain}"
+    log verbose "  Certificate: ${cert_file}"
+    log verbose "  Key: ${key_file}"
+
+    # Create self-signed certificate in /etc/ssl/
     run_command --makes-changes openssl req -x509 -nodes -days 365 \
       -newkey "rsa:2048" \
-      -out "${domain}.cer" \
-      -keyout "${domain}.key" \
+      -out "${cert_file}" \
+      -keyout "${key_file}" \
       -subj "/CN=${domain}" \
       -addext "subjectAltName = DNS:${domain}, DNS:www.${domain}" \
       -addext "keyUsage = digitalSignature" \
       -addext "extendedKeyUsage = serverAuth"
+
+    log info "Self-signed certificate created successfully"
   fi
+}
+
+function prometheus_ensure() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  # Create prometheus user and group
+  if ! id -u prometheus >/dev/null 2>&1; then
+    run_command --makes-changes adduser --system --group --no-create-home prometheus
+  fi
+
+  # Create directories
+  run_command --makes-changes mkdir -p /etc/prometheus
+  run_command --makes-changes mkdir -p /var/lib/prometheus
+  run_command --makes-changes chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus
+
+  # Download and install Prometheus
+  local prometheus_version="2.47.2"
+  local prometheus_arch="linux-amd64"
+  local prometheus_url="https://github.com/prometheus/prometheus/releases/download/v${prometheus_version}/prometheus-${prometheus_version}.${prometheus_arch}.tar.gz"
+
+  if [ ! -f "/usr/local/bin/prometheus" ]; then
+    log verbose "Downloading Prometheus ${prometheus_version}"
+    run_command --makes-changes wget -O /tmp/prometheus.tar.gz "${prometheus_url}"
+    run_command --makes-changes tar -xzf /tmp/prometheus.tar.gz -C /tmp
+    run_command --makes-changes cp /tmp/prometheus-${prometheus_version}.${prometheus_arch}/prometheus /usr/local/bin/
+    run_command --makes-changes cp /tmp/prometheus-${prometheus_version}.${prometheus_arch}/promtool /usr/local/bin/
+    run_command --makes-changes cp -r /tmp/prometheus-${prometheus_version}.${prometheus_arch}/consoles /etc/prometheus/
+    run_command --makes-changes cp -r /tmp/prometheus-${prometheus_version}.${prometheus_arch}/console_libraries /etc/prometheus/
+    run_command --makes-changes chown -R prometheus:prometheus /usr/local/bin/prometheus /usr/local/bin/promtool
+    run_command --makes-changes chmod +x /usr/local/bin/prometheus /usr/local/bin/promtool
+    run_command --makes-changes rm -rf /tmp/prometheus*
+  fi
+
+  # Create Prometheus configuration
+  cat > /etc/prometheus/prometheus.yml << 'EOF'
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+    - targets: ['localhost:9090']
+
+  - job_name: 'node'
+    static_configs:
+    - targets: ['localhost:9100']
+
+  - job_name: 'apache'
+    static_configs:
+    - targets: ['localhost:9117']
+
+  - job_name: 'nginx'
+    static_configs:
+    - targets: ['localhost:9113']
+
+  - job_name: 'php-fpm'
+    static_configs:
+    - targets: ['localhost:9253']
+EOF
+
+  run_command --makes-changes chown prometheus:prometheus /etc/prometheus/prometheus.yml
+
+  # Create systemd service
+  cat > /etc/systemd/system/prometheus.service << 'EOF'
+[Unit]
+Description=Prometheus
+Documentation=https://prometheus.io/docs/introduction/overview/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --web.console.templates=/etc/prometheus/consoles \
+  --web.console.libraries=/etc/prometheus/console_libraries \
+  --web.listen-address=0.0.0.0:9090 \
+  --web.external-url=
+
+SyslogIdentifier=prometheus
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  # Enable and start Prometheus
+  run_command --makes-changes systemctl daemon-reload
+  run_command --makes-changes systemctl enable prometheus
+  run_command --makes-changes systemctl start prometheus
+
+  log verbose "Prometheus installation completed"
+
+  # Install exporters
+  prometheus_install_node_exporter
+
+  if $APACHE_ENSURE; then
+    prometheus_install_apache_exporter
+  fi
+
+  if $NGINX_ENSURE; then
+    prometheus_install_nginx_exporter
+  fi
+
+  if $FPM_ENSURE; then
+    prometheus_install_phpfpm_exporter
+  fi
+}
+
+function prometheus_install_node_exporter() {
+  log verbose "Installing Node Exporter"
+
+  local node_exporter_version="1.7.0"
+  local node_exporter_arch="linux-amd64"
+  local node_exporter_url="https://github.com/prometheus/node_exporter/releases/download/v${node_exporter_version}/node_exporter-${node_exporter_version}.${node_exporter_arch}.tar.gz"
+
+  if [ ! -f "/usr/local/bin/node_exporter" ]; then
+    run_command --makes-changes wget -O /tmp/node_exporter.tar.gz "${node_exporter_url}"
+    run_command --makes-changes tar -xzf /tmp/node_exporter.tar.gz -C /tmp
+    run_command --makes-changes cp /tmp/node_exporter-${node_exporter_version}.${node_exporter_arch}/node_exporter /usr/local/bin/
+    run_command --makes-changes chown prometheus:prometheus /usr/local/bin/node_exporter
+    run_command --makes-changes chmod +x /usr/local/bin/node_exporter
+    run_command --makes-changes rm -rf /tmp/node_exporter*
+  fi
+
+  # Create systemd service
+  cat > /etc/systemd/system/node_exporter.service << 'EOF'
+[Unit]
+Description=Node Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  run_command --makes-changes systemctl daemon-reload
+  run_command --makes-changes systemctl enable node_exporter
+  run_command --makes-changes systemctl start node_exporter
+}
+
+function prometheus_install_apache_exporter() {
+  log verbose "Installing Apache Exporter"
+
+  # Enable Apache server-status module
+  run_command --makes-changes a2enmod status
+
+  # Configure Apache status page
+  cat > /etc/apache2/conf-available/server-status.conf << 'EOF'
+<Location "/server-status">
+    SetHandler server-status
+    Require local
+    Require ip 127.0.0.1
+</Location>
+EOF
+
+  run_command --makes-changes a2enconf server-status
+  run_command --makes-changes ${SERVICE_COMMAND} apache2 reload
+
+  # Install apache_exporter
+  local apache_exporter_version="1.0.3"
+  local apache_exporter_url="https://github.com/Lusitaniae/apache_exporter/releases/download/v${apache_exporter_version}/apache_exporter-${apache_exporter_version}.linux-amd64.tar.gz"
+
+  if [ ! -f "/usr/local/bin/apache_exporter" ]; then
+    run_command --makes-changes wget -O /tmp/apache_exporter.tar.gz "${apache_exporter_url}"
+    run_command --makes-changes tar -xzf /tmp/apache_exporter.tar.gz -C /tmp
+    run_command --makes-changes cp /tmp/apache_exporter-${apache_exporter_version}.linux-amd64/apache_exporter /usr/local/bin/
+    run_command --makes-changes chown prometheus:prometheus /usr/local/bin/apache_exporter
+    run_command --makes-changes chmod +x /usr/local/bin/apache_exporter
+    run_command --makes-changes rm -rf /tmp/apache_exporter*
+  fi
+
+  # Create systemd service
+  cat > /etc/systemd/system/apache_exporter.service << 'EOF'
+[Unit]
+Description=Apache Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/usr/local/bin/apache_exporter --scrape_uri=http://localhost/server-status?auto
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  run_command --makes-changes systemctl daemon-reload
+  run_command --makes-changes systemctl enable apache_exporter
+  run_command --makes-changes systemctl start apache_exporter
+}
+
+function prometheus_install_nginx_exporter() {
+  log verbose "Installing Nginx Exporter"
+
+  # Configure Nginx stub_status
+  cat > /etc/nginx/sites-available/stub_status << 'EOF'
+server {
+    listen 127.0.0.1:8080;
+    server_name localhost;
+
+    location /nginx_status {
+        stub_status;
+        allow 127.0.0.1;
+        deny all;
+    }
+}
+EOF
+
+  run_command --makes-changes ln -sf /etc/nginx/sites-available/stub_status /etc/nginx/sites-enabled/
+  run_command --makes-changes ${SERVICE_COMMAND} nginx reload
+
+  # Install nginx-prometheus-exporter
+  local nginx_exporter_version="0.11.0"
+  local nginx_exporter_url="https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v${nginx_exporter_version}/nginx-prometheus-exporter_${nginx_exporter_version}_linux_amd64.tar.gz"
+
+  if [ ! -f "/usr/local/bin/nginx-prometheus-exporter" ]; then
+    run_command --makes-changes wget -O /tmp/nginx_exporter.tar.gz "${nginx_exporter_url}"
+    run_command --makes-changes tar -xzf /tmp/nginx_exporter.tar.gz -C /tmp
+    run_command --makes-changes cp /tmp/nginx-prometheus-exporter /usr/local/bin/
+    run_command --makes-changes chown prometheus:prometheus /usr/local/bin/nginx-prometheus-exporter
+    run_command --makes-changes chmod +x /usr/local/bin/nginx-prometheus-exporter
+    run_command --makes-changes rm -rf /tmp/nginx_exporter* /tmp/nginx-prometheus-exporter
+  fi
+
+  # Create systemd service
+  cat > /etc/systemd/system/nginx_exporter.service << 'EOF'
+[Unit]
+Description=Nginx Prometheus Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/usr/local/bin/nginx-prometheus-exporter -nginx.scrape-uri=http://127.0.0.1:8080/nginx_status
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  run_command --makes-changes systemctl daemon-reload
+  run_command --makes-changes systemctl enable nginx_exporter
+  run_command --makes-changes systemctl start nginx_exporter
+}
+
+function prometheus_install_phpfpm_exporter() {
+  log verbose "Installing PHP-FPM Exporter"
+
+  # Enable PHP-FPM status page
+  local fpm_pool_dir="/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d"
+
+  # Add status configuration to www pool
+  if [ -f "${fpm_pool_dir}/www.conf" ]; then
+    if ! grep -q "pm.status_path" "${fpm_pool_dir}/www.conf"; then
+      cat >> "${fpm_pool_dir}/www.conf" << 'EOF'
+
+; Enable status page
+pm.status_path = /status
+pm.status_listen = 127.0.0.1:9001
+EOF
+    fi
+  fi
+
+  run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+
+  # Install php-fpm_exporter
+  local phpfpm_exporter_version="2.2.0"
+  local phpfpm_exporter_url="https://github.com/hipages/php-fpm_exporter/releases/download/v${phpfpm_exporter_version}/php-fpm_exporter_${phpfpm_exporter_version}_linux_amd64"
+
+  if [ ! -f "/usr/local/bin/php-fpm_exporter" ]; then
+    run_command --makes-changes wget -O /usr/local/bin/php-fpm_exporter "${phpfpm_exporter_url}"
+    run_command --makes-changes chown prometheus:prometheus /usr/local/bin/php-fpm_exporter
+    run_command --makes-changes chmod +x /usr/local/bin/php-fpm_exporter
+  fi
+
+  # Create systemd service
+  cat > /etc/systemd/system/php-fpm_exporter.service << 'EOF'
+[Unit]
+Description=PHP-FPM Prometheus Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+Environment="PHP_FPM_SCRAPE_URI=tcp://127.0.0.1:9001/status"
+ExecStart=/usr/local/bin/php-fpm_exporter
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  run_command --makes-changes systemctl daemon-reload
+  run_command --makes-changes systemctl enable php-fpm_exporter
+  run_command --makes-changes systemctl start php-fpm_exporter
+}
+
+function memcached_ensure() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  # Check if memcached is already installed
+  if tool_exists "memcached"; then
+    log verbose "Memcached is already installed."
+    run_command memcached -V
+  else
+    log verbose "Installing memcached..."
+    package_ensure memcached
+  fi
+
+  # Install PHP memcached extension
+  log verbose "Installing PHP memcached extension..."
+  package_ensure "php${PHP_VERSION_MAJOR_MINOR}-memcached"
+
+  # Start memcached service
+  run_command --makes-changes ${SERVICE_COMMAND} memcached start
+
+  log verbose "Memcached installation completed."
+}
+
+function mysql_verify() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  local exit_on_failure=false # Default to false
+
+  # Check if the first argument is the flag for exit on failure
+  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  if [[ "${1:-}" == "--exit-on-failure" ]]; then
+    exit_on_failure=true
+  fi
+
+  # Check if MySQL/MariaDB is installed
+  if tool_exists "mysql"; then
+    log verbose "MySQL/MariaDB is installed."
+    run_command mysql --version
+
+    # Check if MySQL service is running
+    log verbose "Checking MySQL/MariaDB service status:"
+    if run_command systemctl is-active --quiet mysql || run_command systemctl is-active --quiet mariadb; then
+      log verbose "MySQL/MariaDB service is running."
+    else
+      log verbose "MySQL/MariaDB service is not running."
+      if [[ "$exit_on_failure" == true ]]; then
+        exit 1
+      fi
+    fi
+  else
+    log verbose "MySQL/MariaDB is not installed."
+    if [[ "$exit_on_failure" == true ]]; then
+      exit 1
+    fi
+  fi
+}
+
+function mysql_ensure() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  mysql_verify
+
+  if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
+    log verbose "DRY_RUN: Skipping MySQL/MariaDB installation"
+  else
+    log verbose "Installing MySQL/MariaDB..."
+
+    # Install MariaDB server and client
+    package_ensure mariadb-server mariadb-client
+
+    # Start and enable MariaDB service
+    run_command --makes-changes ${SERVICE_COMMAND} mariadb start
+    run_command --makes-changes systemctl enable mariadb
+
+    log verbose "MariaDB installation completed."
+
+    # Generate secure random password
+    local db_password
+    db_password=$(openssl rand -base64 16 | tr -d "=+/")
+
+    # Store password in /tmp with restricted permissions
+    local password_file="/tmp/${DB_USER}-db_password"
+    echo "$db_password" > "$password_file"
+    run_command --makes-changes chmod 600 "$password_file"
+    log verbose "Database password stored in ${password_file}"
+
+    # Update the global DB_PASS variable
+    DB_PASS="$db_password"
+
+    # Create database with UTF-8 encoding
+    log verbose "Creating database ${DB_NAME}..."
+    run_command --makes-changes mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+    # Create database user and grant privileges
+    log verbose "Creating database user ${DB_USER}..."
+    run_command --makes-changes mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
+    run_command --makes-changes mysql -e "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'${DB_HOST}';"
+    run_command --makes-changes mysql -e "FLUSH PRIVILEGES;"
+
+    # Configure MySQL/MariaDB for Moodle
+    log verbose "Configuring MySQL/MariaDB for Moodle requirements..."
+
+    # Create Moodle-specific configuration file
+    cat > /etc/mysql/mariadb.conf.d/99-moodle.cnf << 'EOF'
+[mysqld]
+# Moodle requirements
+innodb_file_format = Barracuda
+innodb_file_per_table = 1
+innodb_large_prefix = ON
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+default-storage-engine = INNODB
+
+# Performance tuning
+max_allowed_packet = 512M
+innodb_buffer_pool_size = 256M
+EOF
+
+    run_command --makes-changes ${SERVICE_COMMAND} mariadb restart
+
+    log verbose "MySQL/MariaDB configuration completed."
+    log info "Database: ${DB_NAME}"
+    log info "User: ${DB_USER}"
+    log info "Password stored in: ${password_file}"
+  fi
+
+  mysql_verify --exit-on-failure
+}
+
+function postgres_verify() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  local exit_on_failure=false # Default to false
+
+  # Check if the first argument is the flag for exit on failure
+  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  if [[ "${1:-}" == "--exit-on-failure" ]]; then
+    exit_on_failure=true
+  fi
+
+  # Check if PostgreSQL is installed
+  if tool_exists "psql"; then
+    log verbose "PostgreSQL is installed."
+    run_command psql --version
+
+    # Check if PostgreSQL service is running
+    log verbose "Checking PostgreSQL service status:"
+    if run_command systemctl is-active --quiet postgresql; then
+      log verbose "PostgreSQL service is running."
+    else
+      log verbose "PostgreSQL service is not running."
+      if [[ "$exit_on_failure" == true ]]; then
+        exit 1
+      fi
+    fi
+  else
+    log verbose "PostgreSQL is not installed."
+    if [[ "$exit_on_failure" == true ]]; then
+      exit 1
+    fi
+  fi
+}
+
+function postgres_ensure() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  postgres_verify
+
+  if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
+    log verbose "DRY_RUN: Skipping PostgreSQL installation"
+  else
+    log verbose "Setting up PostgreSQL repository..."
+
+    # Create APT keyrings directory if it doesn't exist
+    run_command --makes-changes mkdir -p /etc/apt/keyrings
+
+    # Download PostgreSQL signing key
+    if [ ! -f "/etc/apt/keyrings/postgresql.asc" ]; then
+      log verbose "Downloading PostgreSQL signing key..."
+      run_command --makes-changes wget -O /etc/apt/keyrings/postgresql.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    fi
+
+    # Add PostgreSQL APT repository
+    local postgres_version="16"
+    local postgres_repository="deb [arch=amd64 signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main"
+
+    if [ "$package_manager" == "apt" ]; then
+      log verbose "Adding PostgreSQL repository..."
+      repository_ensure "$postgres_repository"
+    fi
+
+    log verbose "Installing PostgreSQL..."
+    package_ensure "postgresql-${postgres_version}" "postgresql-contrib-${postgres_version}" libpq-dev
+
+    # Start and enable PostgreSQL service
+    run_command --makes-changes ${SERVICE_COMMAND} postgresql start
+    run_command --makes-changes systemctl enable postgresql
+
+    log verbose "PostgreSQL installation completed."
+
+    # Generate secure random password
+    local db_password
+    db_password=$(openssl rand -base64 16 | tr -d "=+/")
+
+    # Store password in /tmp with restricted permissions
+    local password_file="/tmp/${DB_USER}-db_password"
+    echo "$db_password" > "$password_file"
+    run_command --makes-changes chmod 600 "$password_file"
+    log verbose "Database password stored in ${password_file}"
+
+    # Update the global DB_PASS variable
+    DB_PASS="$db_password"
+
+    # Create database user
+    log verbose "Creating database user ${DB_USER}..."
+    run_command --makes-changes sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
+
+    # Create database with UTF-8 encoding
+    log verbose "Creating database ${DB_NAME}..."
+    run_command --makes-changes sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} ENCODING 'UTF8' LC_COLLATE='en_US.UTF-8' LC_CTYPE='en_US.UTF-8' TEMPLATE=template0;"
+
+    # Grant privileges
+    run_command --makes-changes sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
+
+    # Configure PostgreSQL for Moodle
+    log verbose "Configuring PostgreSQL for Moodle requirements..."
+
+    # Update postgresql.conf for performance
+    local pg_config="/etc/postgresql/${postgres_version}/main/postgresql.conf"
+    if [ -f "$pg_config" ]; then
+      # Backup original config
+      run_command --makes-changes cp "$pg_config" "${pg_config}.backup"
+
+      # Update configuration values
+      if ! grep -q "^max_connections" "$pg_config"; then
+        echo "max_connections = 200" >> "$pg_config"
+      fi
+      if ! grep -q "^shared_buffers" "$pg_config"; then
+        echo "shared_buffers = 256MB" >> "$pg_config"
+      fi
+
+      run_command --makes-changes ${SERVICE_COMMAND} postgresql restart
+    fi
+
+    log verbose "PostgreSQL configuration completed."
+    log info "Database: ${DB_NAME}"
+    log info "User: ${DB_USER}"
+    log info "Password stored in: ${password_file}"
+  fi
+
+  postgres_verify --exit-on-failure
 }
 
 # Main function
@@ -1177,10 +2452,28 @@ function main() {
     memcached_ensure
   fi
 
+  log verbose "checking MYSQL_ENSURE"
+  if $MYSQL_ENSURE; then
+    log verbose "Ensuring MySQL/MariaDB..."
+    mysql_ensure
+  fi
+
+  log verbose "checking POSTGRES_ENSURE"
+  if $POSTGRES_ENSURE; then
+    log verbose "Ensuring PostgreSQL..."
+    postgres_ensure
+  fi
+
   log verbose "checking MOODLE_ENSURE"
   if $MOODLE_ENSURE; then
     log verbose "Ensuring Moodle..."
     moodle_ensure
+  fi
+
+  log verbose "checking PROMETHEUS_ENSURE"
+  if $PROMETHEUS_ENSURE; then
+    log verbose "Ensuring Prometheus..."
+    prometheus_ensure
   fi
 
 }
@@ -1256,19 +2549,29 @@ while [[ $# -gt 0 ]]; do
   -d | --database)
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
       case "$2" in
-      mysql | pgsql)
-        DB_TYPE="$2"
+      mysql | mysqli)
+        DB_TYPE="mysql"
+        MYSQL_ENSURE=true
+        POSTGRES_ENSURE=false
+        shift # past value
+        ;;
+      pgsql)
+        DB_TYPE="pgsql"
+        MYSQL_ENSURE=false
+        POSTGRES_ENSURE=true
         shift # past value
         ;;
       *)
-        log error "Unsupported database type: $2. Supported types are 'mysql' and 'pgsql'."
+        log error "Unsupported database type: $2. Supported types are 'mysql', 'mysqli' and 'pgsql'."
         echo_usage
         exit 1
         ;;
       esac
     else
       # Use the default value for DB_TYPE
-      DB_TYPE="mysqli"
+      DB_TYPE="mysql"
+      MYSQL_ENSURE=true
+      POSTGRES_ENSURE=false
     fi
     shift # past argument
     ;;
@@ -1345,6 +2648,11 @@ while [[ $# -gt 0 ]]; do
     shift # past argument
     ;;
 
+  -r | --prometheus)
+    PROMETHEUS_ENSURE=true
+    shift
+    ;;
+
   -s | --sudo)
     USE_SUDO=true
     shift
@@ -1374,9 +2682,10 @@ while [[ $# -gt 0 ]]; do
       esac
       shift 2
     else
-      # Use the default web server (Apache)
-      APACHE_ENSURE=true
-      NGINX_ENSURE=false
+      # Use the default web server (Nginx)
+      APACHE_ENSURE=false
+      NGINX_ENSURE=true
+      FPM_ENSURE=true
       shift
     fi
     ;;
@@ -1445,6 +2754,7 @@ if [[ "${LOG_LEVEL}" == "verbose" ]]; then
   fi
   if $DRY_RUN_CHANGES; then chosen_options+="-n: DRY RUN CHANGES, "; fi
   if $PHP_ENSURE; then chosen_options+="-p: Ensure PHP version $PHP_VERSION_MAJOR_MINOR, "; fi
+  if $PROMETHEUS_ENSURE; then chosen_options+="-r: Ensure Prometheus monitoring, "; fi
   if $USE_SUDO; then chosen_options+="-s: Use sudo, "; fi
   if [[ "${LOG_LEVEL}" == "verbose" ]]; then chosen_options+="-v: Verbose output, "; fi
   if $APACHE_ENSURE; then chosen_options+="-w: Webserver type set to Apache, "; fi

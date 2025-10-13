@@ -1,0 +1,56 @@
+# Ubuntu test environment for laemp.sh
+# Ubuntu 24.04 LTS (Noble Numbat) - Released April 2024, supported until April 2029
+FROM ubuntu:24.04
+
+# Set environment variables to avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# Update and install base dependencies including BATS for testing
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    sudo \
+    tar \
+    unzip \
+    locales \
+    bats \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Generate locale
+RUN locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
+
+# Copy the script
+COPY laemp.sh /usr/local/bin/laemp.sh
+RUN chmod +x /usr/local/bin/laemp.sh
+
+# Create a non-root user for testing
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Create tests directory and copy test files
+RUN mkdir -p /home/testuser/tests
+COPY test_*.bats /home/testuser/tests/
+RUN chmod +x /home/testuser/tests/*.bats && \
+    chown -R testuser:testuser /home/testuser/tests
+
+# Set working directory
+WORKDIR /home/testuser
+
+# Switch to non-root user
+USER testuser
+
+# Healthcheck for cloud environments (ECS, Fargate, etc.)
+# Verifies container is functional and laemp.sh is accessible
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD test -x /usr/local/bin/laemp.sh && /bin/bash -c 'exit 0'
+
+# Default command
+CMD ["/bin/bash"]
