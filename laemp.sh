@@ -896,10 +896,11 @@ function moodle_config_files() {
   fi
 
   if [ -f "${configDist}" ]; then
-    if [ -f "${configFile}" ]; then
-      log verbose "${configFile} already exists. Skipping configuration setup."
+    if [ -f "${configFile}" ] && [ -s "${configFile}" ]; then
+      # File exists and has content
+      log verbose "${configFile} already exists with content. Skipping configuration setup."
     else
-      # Copy config-dist.php to config.php
+      # File doesn't exist or is empty, copy from template
       run_command --makes-changes cp "${configDist}" "${configFile}"
       log verbose "${configFile} copied from ${configDist}."
     fi
@@ -1805,14 +1806,16 @@ php_ensure() {
 
     log verbose "Installing PHP core..."
     if [ "$DISTRO" == "Ubuntu" ] || [ "$DISTRO" == "Debian" ]; then
-      php_package="php${PHP_VERSION_MAJOR_MINOR}"
+      # Install only CLI and common packages, avoid the metapackage that pulls in Apache
+      # When using nginx, we'll install php-fpm separately; when using apache, we'll install mod_php separately
+      php_package="php${PHP_VERSION_MAJOR_MINOR}-cli php${PHP_VERSION_MAJOR_MINOR}-common"
     else
       log error "Unsupported distro: $DISTRO"
       exit 1
     fi
 
-    log verbose "Installing PHP package: $php_package"
-    package_ensure "$php_package"
+    log verbose "Installing PHP packages: $php_package"
+    package_ensure $php_package
 
     # Verify PHP installation at end of function
     php_verify --exit-on-failure

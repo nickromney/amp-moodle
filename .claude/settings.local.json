@@ -46,7 +46,11 @@
       "Bash(tee:*)",
       "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"installation container testing\")",
       "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"debugging verification\")",
-      "Read(//Users/nickromney/.config/superpowers/skills/skills/debugging/verification-before-completion/**)"
+      "Read(//Users/nickromney/.config/superpowers/skills/skills/debugging/verification-before-completion/**)",
+      "Bash(podman stop:*)",
+      "Bash(podman rm:*)",
+      "Bash(podman rmi:*)",
+      "Read(//private/tmp/**)"
     ],
     "deny": []
   }
