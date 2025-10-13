@@ -255,7 +255,12 @@ service_manage() {
         fi
         ;;
       is-active)
-        /etc/init.d/"$service_name" status >/dev/null 2>&1 || { log verbose "Service $service_name is not active"; return 0; }
+        if /etc/init.d/"$service_name" status >/dev/null 2>&1; then
+          return 0  # Service is active
+        else
+          log verbose "Service $service_name is not active"
+          return 1  # Service is not active
+        fi
         ;;
       *)
         /etc/init.d/"$service_name" "$action" || { log verbose "Service $service_name $action failed (container environment)"; return 0; }
@@ -269,7 +274,12 @@ service_manage() {
         log verbose "Skipping 'enable' for $service_name (service command doesn't support it)"
         ;;
       is-active)
-        service "$service_name" status >/dev/null 2>&1 || { log verbose "Service $service_name is not active"; return 0; }
+        if service "$service_name" status >/dev/null 2>&1; then
+          return 0  # Service is active
+        else
+          log verbose "Service $service_name is not active"
+          return 1  # Service is not active
+        fi
         ;;
       *)
         service "$service_name" "$action" || { log verbose "Service $service_name $action failed (container environment)"; return 0; }
@@ -742,14 +752,26 @@ function apache_ensure() {
       run_command --makes-changes a2enmod proxy_fcgi setenvif
       run_command --makes-changes a2enconf "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
-      # Enable and start PHP FPM service
-      run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+      # Check if PHP-FPM is running, start if not
+      if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
+        log verbose "PHP-FPM is not running, starting..."
+        run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+      else
+        log verbose "PHP-FPM is already running"
+      fi
     else
       log verbose "Configuring Apache without FPM..."
       package_ensure "libapache2-mod-php${PHP_VERSION_MAJOR_MINOR}"
     fi
 
-    run_command --makes-changes service_manage "${APACHE_NAME}" restart
+    # Check Apache status before restart/reload
+    if service_manage "${APACHE_NAME}" is-active >/dev/null 2>&1; then
+      log verbose "Apache is running, reloading configuration..."
+      run_command --makes-changes service_manage "${APACHE_NAME}" reload
+    else
+      log verbose "Apache is not running, starting..."
+      run_command --makes-changes service_manage "${APACHE_NAME}" start
+    fi
 
     log verbose "Apache installation and configuration completed."
   fi
@@ -1606,11 +1628,24 @@ function nginx_ensure() {
   if $FPM_ENSURE; then
     log verbose "Installing PHP FPM for Nginx..."
     package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
+
+    # Check if PHP-FPM is running, start if not
+    if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
+      log verbose "PHP-FPM is not running, starting..."
+      run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+    else
+      log verbose "PHP-FPM is already running"
+    fi
   fi
 
-  run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
-
-  run_command --makes-changes service_manage nginx restart
+  # Check nginx status before restart/reload
+  if service_manage nginx is-active >/dev/null 2>&1; then
+    log verbose "Nginx is running, reloading configuration..."
+    run_command --makes-changes service_manage nginx reload
+  else
+    log verbose "Nginx is not running, starting..."
+    run_command --makes-changes service_manage nginx start
+  fi
 
   log verbose "Nginx installation and configuration completed."
 }
@@ -2376,30 +2411,57 @@ function mysql_ensure() {
     # Install MariaDB server and client
     package_ensure mariadb-server mariadb-client
 
-    # Start and enable MariaDB service
-    run_command --makes-changes service_manage mariadb start
-    run_command --makes-changes service_manage mariadb enable
+    # Check if MariaDB service is running, start if not
+    if ! service_manage mariadb is-active >/dev/null 2>&1 && ! service_manage mysql is-active >/dev/null 2>&1; then
+      log verbose "MariaDB is not running, starting..."
+      run_command --makes-changes service_manage mariadb start
+      run_command --makes-changes service_manage mariadb enable
+    else
+      log verbose "MariaDB is already running"
+    fi
 
     log verbose "MariaDB installation completed."
 
-    # Generate secure random password
-    local db_password
-    db_password=$(openssl rand -base64 16 | tr -d "=+/")
+    # Check if database and user already exist
+    local db_exists
+    local user_exists
+    db_exists=$(mysql -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}';" 2>/dev/null | tail -n1 || echo "0")
+    user_exists=$(mysql -e "SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='${DB_HOST}';" 2>/dev/null | tail -n1 || echo "0")
 
-    # Store password in /tmp with restricted permissions
+    # Determine password to use
+    local db_password
     local password_file="/tmp/${DB_USER}-db_password"
-    echo "$db_password" > "$password_file"
-    run_command --makes-changes chmod 600 "$password_file"
-    log verbose "Database password stored in ${password_file}"
+
+    if [ "$db_exists" != "0" ] && [ "$user_exists" != "0" ]; then
+      log verbose "Database ${DB_NAME} and user ${DB_USER} already exist."
+      # Try to read existing password from password file
+      if [ -f "$password_file" ]; then
+        db_password=$(cat "$password_file")
+        log verbose "Using existing password from ${password_file}"
+      else
+        # If password file doesn't exist but DB does, we have a problem
+        log error "Database exists but password file ${password_file} not found."
+        log error "Either provide the password file or drop the database to recreate."
+        exit 1
+      fi
+    else
+      # Generate new secure random password
+      db_password=$(openssl rand -base64 16 | tr -d "=+/")
+
+      # Store password in /tmp with restricted permissions
+      echo "$db_password" > "$password_file"
+      run_command --makes-changes chmod 600 "$password_file"
+      log verbose "Generated new database password and stored in ${password_file}"
+    fi
 
     # Update the global DB_PASS variable
     DB_PASS="$db_password"
 
-    # Create database with UTF-8 encoding
+    # Create database with UTF-8 encoding (idempotent with IF NOT EXISTS)
     log verbose "Creating database ${DB_NAME}..."
     run_command --makes-changes mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-    # Create database user and grant privileges
+    # Create database user and grant privileges (idempotent with IF NOT EXISTS)
     log verbose "Creating database user ${DB_USER}..."
     run_command --makes-changes mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
     run_command --makes-changes mysql -e "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'${DB_HOST}';"

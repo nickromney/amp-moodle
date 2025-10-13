@@ -50,7 +50,22 @@
       "Bash(podman stop:*)",
       "Bash(podman rm:*)",
       "Bash(podman rmi:*)",
-      "Read(//private/tmp/**)"
+      "Read(//private/tmp/**)",
+      "WebFetch(domain:docs.docker.com)",
+      "Bash(podman exec:*)",
+      "Bash(podman-compose down:*)",
+      "Bash(podman logs:*)",
+      "Bash(podman inspect:*)",
+      "Bash(dpkg:*)",
+      "Bash(systemctl:*)",
+      "Bash(sudo laemp.sh:*)",
+      "Bash(bats:*)",
+      "Bash(time podman:*)",
+      "Bash(ls -la:*)",
+      "Bash(cat /etc/*:*)",
+      "Bash(cat /var/*:*)",
+      "Bash(ps aux:*)",
+      "Bash(podman system df:*)"
     ],
     "deny": []
   }
