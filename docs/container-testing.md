@@ -328,6 +328,7 @@ Each scenario includes purpose, commands, expected results, and verification ste
 **Purpose**: Verify minimal LEMP installation with default PHP version.
 
 **Setup**:
+
 ```bash
 # Start fresh Ubuntu container
 podman-compose up -d moodle-test-ubuntu
@@ -335,18 +336,21 @@ sleep 15
 ```
 
 **Execute**:
+
 ```bash
 # Install PHP 8.4 and Nginx
 podman-compose exec moodle-test-ubuntu sudo laemp.sh -p -w nginx -c
 ```
 
 **Expected Results**:
+
 - Installation completes without errors (exit code 0)
 - PHP 8.4.x installed
 - Nginx installed and running
 - PHP-FPM 8.4 installed and running (automatic with Nginx)
 
 **Verification Steps**:
+
 ```bash
 # Verify PHP version
 podman-compose exec moodle-test-ubuntu php -v
@@ -370,6 +374,7 @@ podman-compose exec moodle-test-ubuntu nginx -t
 ```
 
 **Cleanup**:
+
 ```bash
 podman-compose down
 ```
@@ -379,18 +384,21 @@ podman-compose down
 **Purpose**: Test complete Moodle installation with Apache web server and MySQL database.
 
 **Setup**:
+
 ```bash
 podman-compose up -d moodle-test-ubuntu
 sleep 15
 ```
 
 **Execute**:
+
 ```bash
 # Install full LAMP stack with Moodle 5.1.0 and self-signed SSL
 podman-compose exec moodle-test-ubuntu sudo laemp.sh -p 8.4 -w apache -d mysql -m 501 -S -c
 ```
 
 **Expected Results**:
+
 - PHP 8.4, Apache, MySQL all installed
 - Moodle 5.1.0 downloaded and extracted
 - Self-signed SSL certificate generated
@@ -399,6 +407,7 @@ podman-compose exec moodle-test-ubuntu sudo laemp.sh -p 8.4 -w apache -d mysql -
 - All services running
 
 **Verification Steps**:
+
 ```bash
 # Verify PHP version
 podman-compose exec moodle-test-ubuntu php -v | head -1
@@ -438,6 +447,7 @@ podman-compose exec moodle-test-ubuntu apache2ctl -t
 ```
 
 **Cleanup**:
+
 ```bash
 podman-compose down
 ```
@@ -447,18 +457,21 @@ podman-compose down
 **Purpose**: Test latest PHP version with PostgreSQL database backend.
 
 **Setup**:
+
 ```bash
 podman-compose up -d moodle-test-debian
 sleep 15
 ```
 
 **Execute**:
+
 ```bash
 # Install Nginx, PHP 8.4, PostgreSQL, and Moodle 5.0.0
 podman-compose exec moodle-test-debian sudo laemp.sh -p 8.4 -w nginx -d pgsql -m 500 -S -c
 ```
 
 **Expected Results**:
+
 - PHP 8.4 installed (bleeding edge)
 - Nginx with PHP-FPM 8.4
 - PostgreSQL installed and configured
@@ -466,6 +479,7 @@ podman-compose exec moodle-test-debian sudo laemp.sh -p 8.4 -w nginx -d pgsql -m
 - Self-signed certificate generated
 
 **Verification Steps**:
+
 ```bash
 # Verify PHP version
 podman-compose exec moodle-test-debian php -v | head -1
@@ -501,6 +515,7 @@ podman-compose exec moodle-test-debian cat /etc/nginx/sites-available/moodle.rom
 ```
 
 **Cleanup**:
+
 ```bash
 podman-compose down
 ```
@@ -510,18 +525,21 @@ podman-compose down
 **Purpose**: Test complete production-ready stack with all optional components.
 
 **Setup**:
+
 ```bash
 podman-compose up -d moodle-test-ubuntu
 sleep 15
 ```
 
 **Execute**:
+
 ```bash
 # Install everything: Nginx, PHP 8.4, MySQL, Moodle 4.5, SSL, Prometheus, Memcached
 podman-compose exec moodle-test-ubuntu sudo laemp.sh -p -w nginx -d mysql -m 405 -S -r -M -c
 ```
 
 **Expected Results**:
+
 - Full LEMP stack operational
 - Moodle 4.5 (405) installed
 - Self-signed SSL certificate
@@ -530,6 +548,7 @@ podman-compose exec moodle-test-ubuntu sudo laemp.sh -p -w nginx -d mysql -m 405
 - All services running
 
 **Verification Steps**:
+
 ```bash
 # Verify core services
 podman-compose exec moodle-test-ubuntu systemctl is-active nginx php8.4-fpm mysql
@@ -573,6 +592,7 @@ podman-compose exec moodle-test-ubuntu grep "release.*4.5" /var/www/html/moodle.
 ```
 
 **Cleanup**:
+
 ```bash
 podman-compose down
 ```
@@ -582,18 +602,21 @@ podman-compose down
 **Purpose**: Validate command parsing and installation planning without making changes.
 
 **Setup**:
+
 ```bash
 podman-compose up -d moodle-test-ubuntu
 sleep 15
 ```
 
 **Execute**:
+
 ```bash
 # Dry-run with verbose output for full stack
 podman-compose exec moodle-test-ubuntu sudo laemp.sh -n -v -p 8.4 -w nginx -d mysql -m 501 -S -r -M
 ```
 
 **Expected Results**:
+
 - Exit code 0 (success)
 - Verbose output showing planned actions
 - "DRY RUN" messages in output
@@ -602,6 +625,7 @@ podman-compose exec moodle-test-ubuntu sudo laemp.sh -n -v -p 8.4 -w nginx -d my
 - No files created
 
 **Verification Steps**:
+
 ```bash
 # Verify output contains dry-run indicators
 # (Check previous command output for "DRY RUN" or "would install")
@@ -624,6 +648,7 @@ podman-compose exec moodle-test-ubuntu systemctl list-units --state=running | gr
 ```
 
 **Cleanup**:
+
 ```bash
 podman-compose down
 ```
@@ -690,7 +715,7 @@ bats test_integration.bats --formatter tap
 
 #### Success Example
 
-```
+```text
 ✓ install nginx with php
 ✓ install apache with php without fpm
 ✓ install specific php version
@@ -701,7 +726,7 @@ bats test_integration.bats --formatter tap
 
 #### Failure Example
 
-```
+```text
 ✗ install nginx with php
   (in test file test_integration.bats, line 125)
   `[ "$status" -eq 0 ]' failed
@@ -796,6 +821,7 @@ All permutations tested:
 **Symptom**: `podman-compose up -d` fails or container exits immediately.
 
 **Solution**:
+
 ```bash
 # Check container logs
 podman-compose logs moodle-test-ubuntu
@@ -813,6 +839,7 @@ podman-compose up -d --build
 **Symptom**: `laemp.sh: command not found` when executing script.
 
 **Solution**:
+
 ```bash
 # Verify script is mounted
 podman-compose exec moodle-test-ubuntu ls -l /usr/local/bin/laemp.sh
@@ -831,6 +858,7 @@ podman-compose up -d
 **Symptom**: `systemctl is-active nginx` returns "inactive" after installation.
 
 **Solution**:
+
 ```bash
 # Check service status
 podman-compose exec moodle-test-ubuntu systemctl status nginx
@@ -850,6 +878,7 @@ podman-compose exec moodle-test-ubuntu systemctl restart nginx
 **Symptom**: `Cannot connect to Podman. Please verify your connection...`
 
 **Solution**:
+
 ```bash
 # Check machine status
 podman machine list
@@ -873,16 +902,19 @@ podman machine start
 #### Debian vs Ubuntu Differences
 
 **Package Names**:
+
 - Ubuntu: `php8.4-fpm`
 - Debian: May use `php-fpm` or `php8.4-fpm` depending on version
 
 **Solution**: Script auto-detects OS via `/etc/os-release`.
 
 **Systemd Init**:
+
 - Debian may take longer to initialize systemd in containers
 - Increase sleep time after container start: `sleep 20`
 
 **PostgreSQL Setup**:
+
 - Debian may require explicit UTF-8 locale generation
 - Script handles this via `locale-gen en_US.UTF-8`
 
@@ -891,6 +923,7 @@ podman machine start
 **Issue**: Some systemd features don't work in containers.
 
 **Solution**:
+
 ```yaml
 # Ensure compose.yml has correct configuration
 privileged: true
@@ -903,6 +936,7 @@ volumes:
 ```
 
 **Workaround for non-privileged containers**:
+
 ```bash
 # Use service commands instead of systemctl where possible
 podman-compose exec container service nginx start
@@ -913,6 +947,7 @@ podman-compose exec container service nginx start
 **Issue**: Container cannot download packages.
 
 **Solution**:
+
 ```bash
 # Test DNS resolution
 podman-compose exec moodle-test-ubuntu ping -c 2 google.com
@@ -934,6 +969,7 @@ podman-compose up -d
 **Issue**: `Permission denied` when accessing files or running commands.
 
 **Solution**:
+
 ```bash
 # Run command as root
 podman-compose exec -u root moodle-test-ubuntu bash
@@ -1117,28 +1153,28 @@ Add testing targets to project `Makefile`:
 
 .PHONY: test-build
 test-build: ## Build test container images
-	@echo "Building test images..."
-	@podman-compose build
+ @echo "Building test images..."
+ @podman-compose build
 
 .PHONY: test-smoke
 test-smoke: ## Run fast smoke tests
-	@echo "Running smoke tests..."
-	@bats test_smoke.bats
+ @echo "Running smoke tests..."
+ @bats test_smoke.bats
 
 .PHONY: test-integration
 test-integration: test-build ## Run integration tests in containers
-	@echo "Running integration tests..."
-	@bats test_integration.bats
+ @echo "Running integration tests..."
+ @bats test_integration.bats
 
 .PHONY: test-all
 test-all: test-smoke test-integration ## Run all tests
-	@echo "All tests complete"
+ @echo "All tests complete"
 
 .PHONY: test-clean
 test-clean: ## Clean up test containers and volumes
-	@echo "Cleaning up test environment..."
-	@podman-compose down
-	@podman volume rm laemp-ubuntu-logs laemp-ubuntu-moodle laemp-debian-logs laemp-debian-moodle 2>/dev/null || true
+ @echo "Cleaning up test environment..."
+ @podman-compose down
+ @podman volume rm laemp-ubuntu-logs laemp-ubuntu-moodle laemp-debian-logs laemp-debian-moodle 2>/dev/null || true
 ```
 
 ---
@@ -1146,9 +1182,9 @@ test-clean: ## Clean up test containers and volumes
 ## Additional Resources
 
 - **Project Documentation**: See `CLAUDE.md` for script architecture details
-- **Moodle Documentation**: https://docs.moodle.org/
-- **Podman Documentation**: https://docs.podman.io/
-- **BATS Testing Framework**: https://bats-core.readthedocs.io/
+- **Moodle Documentation**: <https://docs.moodle.org/>
+- **Podman Documentation**: <https://docs.podman.io/>
+- **BATS Testing Framework**: <https://bats-core.readthedocs.io/>
 
 ## Contributing
 

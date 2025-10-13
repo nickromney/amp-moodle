@@ -28,7 +28,8 @@ This document describes how to achieve the same Moodle deployment functionality 
 ## Architecture Comparison
 
 ### laemp.sh Structure
-```
+
+```text
 amp-moodle/
 ├── laemp.sh                 # 2,242 lines, all logic
 ├── test_laemp.bats          # Basic CLI tests
@@ -38,7 +39,8 @@ amp-moodle/
 ```
 
 ### Ansible Equivalent Structure
-```
+
+```text
 moodle-playbook/
 ├── playbook.yml             # Main playbook (entry point)
 ├── inventory/
@@ -173,6 +175,7 @@ php_admin_value[post_max_size] = {{ php_post_max_size }}
 ```
 
 Compare to `laemp.sh` heredoc (line 1460):
+
 ```bash
 cat > "${pool_conf}" << EOF
 [${pool_name}]
@@ -186,6 +189,7 @@ EOF
 ### 1. PHP Installation
 
 **laemp.sh approach** (line 1342):
+
 ```bash
 php_ensure() {
   # Detect OS
@@ -196,6 +200,7 @@ php_ensure() {
 ```
 
 **Ansible approach**:
+
 ```yaml
 # Use geerlingguy.php role
 - name: Install PHP
@@ -243,6 +248,7 @@ php_ensure() {
 ```
 
 **Benefits**:
+
 - Role handles OS detection automatically (Ubuntu/Debian/RedHat)
 - Repository setup included (ondrej/sury PPAs)
 - Idempotent: Can run multiple times safely
@@ -251,6 +257,7 @@ php_ensure() {
 ### 2. Web Server Installation (Nginx)
 
 **laemp.sh approach** (line 1145):
+
 ```bash
 nginx_ensure() {
   # Add repository
@@ -262,6 +269,7 @@ nginx_ensure() {
 ```
 
 **Ansible approach**:
+
 ```yaml
 # Use geerlingguy.nginx role
 - name: Install and configure Nginx
@@ -320,6 +328,7 @@ nginx_ensure() {
 ```
 
 **Benefits**:
+
 - Role handles service management (enable, start, reload)
 - Configuration validation before reload
 - Handler-based restarts (only when config changes)
@@ -328,6 +337,7 @@ nginx_ensure() {
 ### 3. Database Installation (MySQL)
 
 **laemp.sh approach** (NOT YET IMPLEMENTED):
+
 ```bash
 mysql_ensure() {
   # Install MySQL server
@@ -338,6 +348,7 @@ mysql_ensure() {
 ```
 
 **Ansible approach**:
+
 ```yaml
 # Use geerlingguy.mysql role
 - name: Install and configure MySQL
@@ -363,6 +374,7 @@ mysql_ensure() {
 ```
 
 **Ansible Vault** for secrets:
+
 ```bash
 # Create encrypted vault
 ansible-vault create group_vars/all/vault.yml
@@ -374,6 +386,7 @@ vault_moodle_db_password: "MoodleDbPassword456!"
 ```
 
 **Benefits**:
+
 - Secrets encrypted at rest (Ansible Vault)
 - No plaintext passwords in version control
 - Idempotent database creation
@@ -382,6 +395,7 @@ vault_moodle_db_password: "MoodleDbPassword456!"
 ### 4. Moodle Deployment
 
 **laemp.sh approach** (line 837):
+
 ```bash
 moodle_ensure() {
   # Download tarball
@@ -393,6 +407,7 @@ moodle_ensure() {
 ```
 
 **Ansible approach** (using `geoffreyvanwyk.moodle`):
+
 ```yaml
 # Use specialized Moodle role
 - name: Deploy Moodle
@@ -442,6 +457,7 @@ moodle_ensure() {
 ### 5. SSL Certificates
 
 **laemp.sh approach** (line 417, 1515):
+
 ```bash
 acme_cert_request() {
   # Run certbot with --challenge flag (BROKEN)
@@ -453,6 +469,7 @@ self_signed_cert_request() {
 ```
 
 **Ansible approach**:
+
 ```yaml
 # Use geerlingguy.certbot role
 - name: Install SSL certificates
@@ -476,6 +493,7 @@ self_signed_cert_request() {
 ```
 
 For self-signed (development):
+
 ```yaml
 - name: Generate self-signed certificate
   when: not (moodle_web_letsencrypt | bool)
@@ -503,6 +521,7 @@ For self-signed (development):
 ```
 
 **Benefits**:
+
 - Role handles certbot installation and configuration
 - Automatic renewal with cron job
 - Certificate validation before use
@@ -511,6 +530,7 @@ For self-signed (development):
 ### 6. Prometheus Monitoring
 
 **laemp.sh approach** (line 1560):
+
 ```bash
 prometheus_ensure() {
   # Download prometheus binary
@@ -520,6 +540,7 @@ prometheus_ensure() {
 ```
 
 **Ansible approach**:
+
 ```yaml
 # Use cloudalchemy.prometheus and exporters
 - name: Install monitoring stack
@@ -555,6 +576,7 @@ prometheus_ensure() {
 ```
 
 **Benefits**:
+
 - Roles handle binary downloads and updates
 - Systemd service creation and management
 - Configuration templating
@@ -653,6 +675,7 @@ prometheus_ensure() {
 ```
 
 **Run playbook**:
+
 ```bash
 # Install role dependencies first
 ansible-galaxy install -r requirements.yml
@@ -803,6 +826,7 @@ molecule login -h moodle-ubuntu-2204
 ```
 
 **Equivalent to**:
+
 ```bash
 # What laemp.sh testing would look like:
 podman build -f Dockerfile.ubuntu -t amp-moodle-ubuntu .
@@ -814,19 +838,23 @@ sudo ./laemp.sh -p -w nginx -d mysql -m 405 -S
 ## Migration Path
 
 ### Option 1: Coexistence
+
 Keep `laemp.sh` for simple, single-server deployments. Use Ansible for:
+
 - Multi-server deployments
 - Complex configurations
 - Continuous deployments
 - Infrastructure updates
 
 ### Option 2: Gradual Migration
+
 1. Start with Ansible for new installations
 2. Use `laemp.sh` as documentation for role development
 3. Migrate components incrementally
 4. Keep bash script as fallback
 
 ### Option 3: Full Rewrite
+
 1. Adopt `ansible-role-moodle` as base
 2. Customize with additional roles
 3. Add organization-specific configurations
@@ -837,6 +865,7 @@ Keep `laemp.sh` for simple, single-server deployments. Use Ansible for:
 ### Key Principles
 
 1. **Defaults First**:
+
 ```yaml
 # defaults/main.yml - User-configurable with sensible defaults
 php_memory_limit: "256M"
@@ -844,7 +873,8 @@ php_webserver_daemon: "nginx"
 php_enable_php_fpm: true
 ```
 
-2. **OS-Specific Variables**:
+1. **OS-Specific Variables**:
+
 ```yaml
 # vars/Debian.yml
 php_packages:
@@ -857,7 +887,8 @@ php_packages:
   - "php-cli"
 ```
 
-3. **Handlers for Service Management**:
+1. **Handlers for Service Management**:
+
 ```yaml
 # handlers/main.yml
 - name: restart nginx
@@ -867,13 +898,15 @@ php_packages:
     daemon_reload: yes
 ```
 
-4. **Minimal External Dependencies**:
+1. **Minimal External Dependencies**:
+
 ```yaml
 # meta/main.yml
 dependencies: []  # Or minimal, well-maintained roles
 ```
 
-5. **Comprehensive Testing**:
+1. **Comprehensive Testing**:
+
 - Multiple OS distributions
 - Different configuration scenarios
 - Idempotence verification
@@ -926,6 +959,7 @@ Rather than one monolithic role (like `laemp.sh` in one file), Geerling advocate
 ```
 
 **Benefits**:
+
 - Each role maintained by experts
 - Mix and match for different stacks
 - Easy to swap components (Nginx → Apache)
@@ -936,6 +970,7 @@ Rather than one monolithic role (like `laemp.sh` in one file), Geerling advocate
 ### When to Use laemp.sh (Bash)
 
 ****Good for**:
+
 - Quick, one-off installations
 - Learning/understanding the installation process
 - Environments without Ansible
@@ -946,6 +981,7 @@ Rather than one monolithic role (like `laemp.sh` in one file), Geerling advocate
 ### When to Use Ansible
 
 ****Good for**:
+
 - Multi-server deployments
 - Configuration management at scale
 - Continuous deployment pipelines
@@ -957,6 +993,7 @@ Rather than one monolithic role (like `laemp.sh` in one file), Geerling advocate
 ### Hybrid Approach
 
 Many organizations use both:
+
 - **Ansible** for production infrastructure
 - **Bash scripts** for development environments
 - **Ansible** calls bash scripts for custom tasks
@@ -966,8 +1003,8 @@ Many organizations use both:
 
 1. **Ansible for DevOps** by Jeff Geerling (book)
 2. Geerling's YouTube channel - Ansible 101 series
-3. Ansible Galaxy roles - https://galaxy.ansible.com/geerlingguy
-4. Molecule documentation - https://molecule.readthedocs.io/
+3. Ansible Galaxy roles - <https://galaxy.ansible.com/geerlingguy>
+4. Molecule documentation - <https://molecule.readthedocs.io/>
 
 ### Next Steps for amp-moodle Project
 

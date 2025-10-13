@@ -16,6 +16,7 @@ The optimized Dockerfiles (`Dockerfile.ubuntu.optimized` and `Dockerfile.debian.
 ### 1. BuildKit Syntax Directive
 
 **Added to line 1 of both Dockerfiles:**
+
 ```dockerfile
 # syntax=docker/dockerfile:1
 ```
@@ -44,6 +45,7 @@ COPY laemp.sh...
 ```
 
 **Benefits:**
+
 - Allows parallel building of stages
 - Clearer separation of concerns
 - Better layer reuse when rebuilding
@@ -51,6 +53,7 @@ COPY laemp.sh...
 ### 3. Cache Mounts for apt
 
 **Original:**
+
 ```dockerfile
 RUN apt-get update && apt-get install -y \
     package1 package2 package3 \
@@ -58,6 +61,7 @@ RUN apt-get update && apt-get install -y \
 ```
 
 **Optimized:**
+
 ```dockerfile
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -69,6 +73,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ```
 
 **Benefits:**
+
 - apt package cache is persisted between builds
 - Rebuilds skip downloading packages already in cache
 - `sharing=locked` allows concurrent builds to share cache safely
@@ -77,22 +82,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ### 4. COPY --link Optimization
 
 **Original:**
+
 ```dockerfile
 COPY laemp.sh /usr/local/bin/laemp.sh
 RUN chmod +x /usr/local/bin/laemp.sh
 ```
 
 **Optimized:**
+
 ```dockerfile
 COPY --link --chmod=755 laemp.sh /usr/local/bin/laemp.sh
 ```
 
 **Benefits:**
+
 - `--link` creates independent layer that doesn't invalidate previous layers
 - `--chmod` sets permissions in one step (no separate RUN command)
 - Better cache reuse when modifying files
 
 **For test files:**
+
 ```dockerfile
 COPY --link --chown=testuser:testuser test_*.bats /home/testuser/tests/
 ```
@@ -102,6 +111,7 @@ COPY --link --chown=testuser:testuser test_*.bats /home/testuser/tests/
 **Original:** Random package order
 
 **Optimized:** Alphabetically sorted for readability
+
 ```dockerfile
 RUN apt-get install -y --no-install-recommends \
     curl \
@@ -123,11 +133,13 @@ Added to all `apt-get install` commands to reduce image size by skipping recomme
 **Debian uses:** `ca-certificates`
 
 **Ubuntu locale generation:**
+
 ```dockerfile
 RUN locale-gen en_US.UTF-8
 ```
 
 **Debian locale generation:**
+
 ```dockerfile
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 ```
@@ -155,6 +167,7 @@ RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 ### Cache Hit Improvements
 
 With BuildKit cache mounts:
+
 - **apt packages:** 50-70% fewer downloads on rebuilds
 - **Layer reuse:** 30-40% better layer caching with COPY --link
 - **Parallel builds:** 20-30% faster when building both images concurrently
@@ -164,6 +177,7 @@ With BuildKit cache mounts:
 ### Prerequisites
 
 **For Docker:**
+
 ```bash
 # Enable BuildKit (Docker 18.09+)
 export DOCKER_BUILDKIT=1
@@ -174,6 +188,7 @@ sudo systemctl restart docker
 ```
 
 **For Podman:**
+
 ```bash
 # Podman 4.0+ has BuildKit support via docker compatibility
 # No additional setup required
@@ -182,6 +197,7 @@ sudo systemctl restart docker
 ### Building Optimized Images
 
 #### Using Docker
+
 ```bash
 # Build Ubuntu optimized image
 DOCKER_BUILDKIT=1 docker build \
@@ -199,6 +215,7 @@ DOCKER_BUILDKIT=1 docker build \
 ```
 
 #### Using Podman
+
 ```bash
 # Build Ubuntu optimized image
 podman build \
@@ -216,6 +233,7 @@ podman build \
 ```
 
 #### Using Compose (Docker Compose or Podman Compose)
+
 ```bash
 # Build both images with optimizations
 DOCKER_BUILDKIT=1 docker compose -f compose.optimized.yml build
@@ -302,9 +320,10 @@ podman images | grep amp-moodle
 
 ### For Development
 
-**Option 1: Use optimized files side-by-side (Recommended)**
+#### Option 1: Use optimized files side-by-side (Recommended)
 
 Keep both versions for comparison:
+
 ```bash
 # Build optimized versions
 podman-compose -f compose.optimized.yml build
@@ -317,9 +336,10 @@ podman-compose -f compose.optimized.yml exec moodle-test-ubuntu sudo laemp.sh -h
 podman-compose -f compose.yml up -d
 ```
 
-**Option 2: Replace original files**
+#### Option 2: Replace original files
 
 After testing, replace originals:
+
 ```bash
 # Backup originals
 cp Dockerfile.ubuntu Dockerfile.ubuntu.original
@@ -337,6 +357,7 @@ cp compose.optimized.yml compose.yml
 ### For CI/CD
 
 **GitHub Actions:**
+
 ```yaml
 - name: Build test containers
   run: |
@@ -345,6 +366,7 @@ cp compose.optimized.yml compose.yml
 ```
 
 **GitLab CI:**
+
 ```yaml
 build:
   variables:
@@ -374,6 +396,7 @@ podman-compose -f compose.optimized.yml exec moodle-test-ubuntu bash -c "cd test
 **Error:** `unknown flag: --mount`
 
 **Solution:**
+
 ```bash
 # Docker: Verify BuildKit is enabled
 docker version | grep BuildKit
@@ -389,6 +412,7 @@ podman --version
 **Error:** `permission denied: /var/cache/apt`
 
 **Solution:**
+
 ```bash
 # Run with sudo
 sudo DOCKER_BUILDKIT=1 docker build ...
@@ -403,6 +427,7 @@ newgrp docker
 **Error:** `unknown flag: --link`
 
 **Solution:**
+
 - Ensure BuildKit syntax directive is present: `# syntax=docker/dockerfile:1`
 - Update Docker/Podman to latest version
 
@@ -411,12 +436,14 @@ newgrp docker
 **Issue:** Optimized builds not faster than original
 
 **Possible causes:**
+
 1. **Cold cache:** First build will be same speed
 2. **No BuildKit:** Verify `DOCKER_BUILDKIT=1` is set
 3. **Cache cleared:** Check cache with `docker system df` or `podman system df`
 4. **Filesystem:** Overlayfs (Linux) is faster than osxfs (macOS)
 
 **Solution:**
+
 ```bash
 # Verify cache exists
 docker system df -v | grep build-cache

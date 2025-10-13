@@ -26,7 +26,7 @@ MOODLE_ENSURE=false
 NGINX_ENSURE=false
 PHP_ENSURE=false
 PROMETHEUS_ENSURE=false
-MYSQL_ENSURE=false
+MARIADB_ENSURE=false
 POSTGRES_ENSURE=false
 # Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5003 for 5.0.3, etc.
 DEFAULT_MOODLE_VERSION="501"
@@ -38,7 +38,6 @@ APACHE_NAME="apache2" # Change to "httpd" for CentOS
 ACME_CERT=false
 ACME_PROVIDER="staging"
 SELF_SIGNED_CERT=false
-SERVICE_COMMAND="service" # Change to "systemctl" for CentOS
 
 # Moodle database
 DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
@@ -81,7 +80,7 @@ function echo_usage() {
   log info "Options:"
   log info "  -a, --acme-cert     Request an ACME certificate for the specified domain"
   log info "  -c, --ci            Run in CI mode (no prompts)"
-  log info "  -d, --database      Database type (default: mysql=MariaDB, supported: [mysql, pgsql])"
+  log info "  -d, --database      Database type (default: mariadb, supported: [mariadb, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
   log info "  -h, --help          Display this help message"
   log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0)"
@@ -158,12 +157,8 @@ log() {
 
   log_msg+="${message}"
 
-  # Output log message
-  if [[ ${log_level} == "error" ]]; then
-    echo "${log_msg}" >&2
-  else
-    echo "${log_msg}"
-  fi
+  # Output log message (always to stderr to avoid breaking command substitution)
+  echo "${log_msg}" >&2
 
   # Log to file
   if [[ ${log_to_file} == "true" ]]; then
@@ -272,10 +267,17 @@ service_manage() {
         fi
         ;;
       *)
-        /etc/init.d/"$service_name" "$action" || { log verbose "Service $service_name $action failed (container environment)"; return 0; }
+        # Try init.d script first
+        if /etc/init.d/"$service_name" "$action" 2>/dev/null; then
+          log verbose "Service $service_name $action succeeded via init.d"
+          return 0
+        else
+          log verbose "Service $service_name $action failed via init.d, trying direct daemon start..."
+          # Fall through to direct daemon management
+        fi
         ;;
     esac
-  # Try service command as last resort
+  # Try service command
   elif command -v service >/dev/null 2>&1; then
     log debug "Using service command for service management"
     case "$action" in
@@ -291,13 +293,218 @@ service_manage() {
         fi
         ;;
       *)
-        service "$service_name" "$action" || { log verbose "Service $service_name $action failed (container environment)"; return 0; }
+        # Try service command first
+        if service "$service_name" "$action" 2>/dev/null; then
+          log verbose "Service $service_name $action succeeded via service command"
+          return 0
+        else
+          log verbose "Service $service_name $action failed via service command, trying direct daemon start..."
+          # Fall through to direct daemon management
+        fi
         ;;
     esac
-  else
-    log verbose "Cannot manage service $service_name - no service manager available (container environment)"
-    return 0
   fi
+
+  # Final fallback: Direct daemon management for container environments
+  # This handles cases where systemd/init.d/service commands fail
+  log debug "Attempting direct daemon management for $service_name"
+
+  case "$service_name" in
+    nginx)
+      case "$action" in
+        start)
+          if pidof nginx >/dev/null 2>&1; then
+            log verbose "Nginx is already running"
+            return 0
+          fi
+          log verbose "Starting nginx directly..."
+          if nginx; then
+            log verbose "Nginx started successfully"
+            return 0
+          else
+            log error "Failed to start nginx"
+            return 1
+          fi
+          ;;
+        stop)
+          if ! pidof nginx >/dev/null 2>&1; then
+            log verbose "Nginx is not running"
+            return 0
+          fi
+          log verbose "Stopping nginx directly..."
+          if nginx -s quit; then
+            log verbose "Nginx stopped successfully"
+            return 0
+          else
+            log error "Failed to stop nginx"
+            return 1
+          fi
+          ;;
+        reload)
+          if ! pidof nginx >/dev/null 2>&1; then
+            log verbose "Nginx is not running, cannot reload"
+            return 1
+          fi
+          log verbose "Reloading nginx directly..."
+          if nginx -s reload; then
+            log verbose "Nginx reloaded successfully"
+            return 0
+          else
+            log error "Failed to reload nginx"
+            return 1
+          fi
+          ;;
+        is-active)
+          pidof nginx >/dev/null 2>&1
+          ;;
+        enable)
+          log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
+          return 0
+          ;;
+      esac
+      ;;
+    php*-fpm)
+      # Extract PHP version from service name (e.g., php8.4-fpm -> 8.4)
+      local php_version
+      php_version=$(echo "$service_name" | sed -n 's/php\([0-9.]*\)-fpm/\1/p')
+
+      case "$action" in
+        start)
+          if pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+            log verbose "PHP-FPM ${php_version} is already running"
+            return 0
+          fi
+          log verbose "Starting php-fpm${php_version} directly..."
+          if "php-fpm${php_version}"; then
+            log verbose "PHP-FPM ${php_version} started successfully"
+            return 0
+          else
+            log error "Failed to start PHP-FPM ${php_version}"
+            return 1
+          fi
+          ;;
+        stop)
+          if ! pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+            log verbose "PHP-FPM ${php_version} is not running"
+            return 0
+          fi
+          log verbose "Stopping php-fpm${php_version} directly..."
+          if pkill -QUIT "php-fpm${php_version}"; then
+            log verbose "PHP-FPM ${php_version} stopped successfully"
+            return 0
+          else
+            log error "Failed to stop PHP-FPM ${php_version}"
+            return 1
+          fi
+          ;;
+        reload|restart)
+          if ! pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+            log verbose "PHP-FPM ${php_version} is not running, starting..."
+            if "php-fpm${php_version}"; then
+              log verbose "PHP-FPM ${php_version} started successfully"
+              return 0
+            else
+              log error "Failed to start PHP-FPM ${php_version}"
+              return 1
+            fi
+          else
+            log verbose "Reloading php-fpm${php_version} directly..."
+            if pkill -USR2 "php-fpm${php_version}"; then
+              log verbose "PHP-FPM ${php_version} reloaded successfully"
+              return 0
+            else
+              log error "Failed to reload PHP-FPM ${php_version}"
+              return 1
+            fi
+          fi
+          ;;
+        is-active)
+          pidof "php-fpm${php_version}" >/dev/null 2>&1
+          ;;
+        enable)
+          log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
+          return 0
+          ;;
+      esac
+      ;;
+    mariadb|mysql)
+      case "$action" in
+        start)
+          if pidof mariadbd >/dev/null 2>&1 || pidof mysqld >/dev/null 2>&1; then
+            log verbose "MariaDB/MySQL is already running"
+            return 0
+          fi
+          log verbose "Starting MariaDB/MySQL directly..."
+          # MariaDB/MySQL needs to be started with proper user and data directory
+          if command -v mariadbd >/dev/null 2>&1; then
+            mariadbd --user=mysql --datadir=/var/lib/mysql &
+            # Wait for MariaDB to be fully ready (not just started)
+            log verbose "Waiting for MariaDB to be ready..."
+            # shellcheck disable=SC2034
+            for i in {1..30}; do
+              if mysqladmin ping >/dev/null 2>&1; then
+                log verbose "MariaDB is ready"
+                return 0
+              fi
+              sleep 1
+            done
+            log error "MariaDB started but failed to become ready within 30 seconds"
+            return 1
+          elif command -v mysqld >/dev/null 2>&1; then
+            mysqld --user=mysql --datadir=/var/lib/mysql &
+            # Wait for MySQL to be fully ready
+            log verbose "Waiting for MySQL to be ready..."
+            # shellcheck disable=SC2034
+            for i in {1..30}; do
+              if mysqladmin ping >/dev/null 2>&1; then
+                log verbose "MySQL is ready"
+                return 0
+              fi
+              sleep 1
+            done
+            log error "MySQL started but failed to become ready within 30 seconds"
+            return 1
+          else
+            log error "Neither mariadbd nor mysqld found"
+            return 1
+          fi
+          ;;
+        stop)
+          if ! pidof mariadbd >/dev/null 2>&1 && ! pidof mysqld >/dev/null 2>&1; then
+            log verbose "MariaDB/MySQL is not running"
+            return 0
+          fi
+          log verbose "Stopping MariaDB/MySQL directly..."
+          if mysqladmin shutdown; then
+            log verbose "MariaDB/MySQL stopped successfully"
+            return 0
+          else
+            log error "Failed to stop MariaDB/MySQL"
+            return 1
+          fi
+          ;;
+        restart)
+          service_manage "$service_name" stop
+          service_manage "$service_name" start
+          ;;
+        is-active)
+          pidof mariadbd >/dev/null 2>&1 || pidof mysqld >/dev/null 2>&1
+          ;;
+        enable)
+          log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
+          return 0
+          ;;
+        *)
+          log verbose "Unsupported action '$action' for $service_name"
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      log verbose "Cannot manage service $service_name - no service manager available and no direct daemon handler (container environment)"
+      return 0
+      ;;
+  esac
 }
 
 function package_manager_ensure() {
@@ -1061,10 +1268,31 @@ function moodle_install_database() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
 
+  # Verify database is accessible before attempting installation
+  log verbose "Verifying database connection..."
+  if ! mysqladmin ping >/dev/null 2>&1; then
+    log error "MariaDB is not responding to ping. Checking service status..."
+    service_manage mariadb status || true
+    log error "Database is not accessible. Cannot proceed with Moodle installation."
+    exit 1
+  fi
+  log verbose "Database is accessible."
+
   # Check if Moodle is already installed by checking database schema
   log verbose "Checking if Moodle is already installed..."
-  if run_command php "${moodleDir}/admin/cli/check_database_schema.php" 2>&1 | grep -q "No errors found"; then
+  local check_output
+  check_output=$(run_command php "${moodleDir}/admin/cli/check_database_schema.php" 2>&1 || true)
+
+  if echo "$check_output" | grep -q "No errors found"; then
     log verbose "Moodle is already installed. Skipping database installation."
+    return 0
+  fi
+
+  # Also check if database tables already exist (another way to detect existing installation)
+  if echo "$check_output" | grep -q "Database tables already present"; then
+    log verbose "Database tables already present. Moodle appears to be installed."
+    log info "If you need to reinstall, drop the database and re-run:"
+    log info "  mysql -e \"DROP DATABASE ${DB_NAME}; CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\""
     return 0
   fi
 
@@ -1106,6 +1334,12 @@ function moodle_install_database() {
 function setup_moodle_cron() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
+
+  # Ensure cron is installed
+  if ! tool_exists crontab; then
+    log verbose "Installing cron package..."
+    package_ensure cron
+  fi
 
   # Create cron job for Moodle (runs every 5 minutes)
   local cron_job="*/5 * * * * php ${moodleDir}/admin/cli/cron.php"
@@ -1863,6 +2097,7 @@ php_ensure() {
     fi
 
     log verbose "Installing PHP packages: $php_package"
+    # shellcheck disable=SC2086
     package_ensure $php_package
 
     # Verify PHP installation at end of function
@@ -2377,7 +2612,7 @@ function memcached_ensure() {
   log verbose "Memcached installation completed."
 }
 
-function mysql_verify() {
+function mariadb_verify() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
   local exit_on_failure=false # Default to false
@@ -2411,10 +2646,10 @@ function mysql_verify() {
   fi
 }
 
-function mysql_ensure() {
+function mariadb_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
-  mysql_verify
+  mariadb_verify
 
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
     log verbose "DRY_RUN: Skipping MySQL/MariaDB installation"
@@ -2452,9 +2687,17 @@ function mysql_ensure() {
         db_password=$(cat "$password_file")
         log verbose "Using existing password from ${password_file}"
       else
-        # If password file doesn't exist but DB does, we have a problem
-        log error "Database exists but password file ${password_file} not found."
-        log error "Either provide the password file or drop the database to recreate."
+        # If password file doesn't exist but DB does, provide helpful instructions
+        log error "Database ${DB_NAME} exists but password file ${password_file} not found."
+        log error ""
+        log error "To recreate with a new password, run:"
+        log error "  mysql -u root -e \"DROP DATABASE ${DB_NAME}; DROP USER IF EXISTS '${DB_USER}'@'${DB_HOST}';\""
+        log error "  rm -f ${password_file}"
+        log error "  # Then re-run this script"
+        log error ""
+        log error "Or to reuse existing database, create the password file:"
+        log error "  echo 'YOUR_PASSWORD' > ${password_file}"
+        log error "  chmod 600 ${password_file}"
         exit 1
       fi
     else
@@ -2501,13 +2744,31 @@ EOF
 
     run_command --makes-changes service_manage mariadb restart
 
+    # Wait for MariaDB to be fully ready after restart
+    log verbose "Waiting for MariaDB to be ready after restart..."
+    local ready=false
+    # shellcheck disable=SC2034
+    for i in {1..30}; do
+      if mysqladmin ping >/dev/null 2>&1; then
+        log verbose "MariaDB is ready"
+        ready=true
+        break
+      fi
+      sleep 1
+    done
+
+    if [ "$ready" = false ]; then
+      log error "MariaDB failed to become ready within 30 seconds after restart"
+      exit 1
+    fi
+
     log verbose "MySQL/MariaDB configuration completed."
     log info "Database: ${DB_NAME}"
     log info "User: ${DB_USER}"
     log info "Password stored in: ${password_file}"
   fi
 
-  mysql_verify --exit-on-failure
+  mariadb_verify --exit-on-failure
 }
 
 function postgres_verify() {
@@ -2678,11 +2939,11 @@ function main() {
     memcached_ensure
   fi
 
-  log verbose "checking MYSQL_ENSURE"
-  if $MYSQL_ENSURE; then
+  log verbose "checking MARIADB_ENSURE"
+  if $MARIADB_ENSURE; then
     log verbose "Ensuring MySQL/MariaDB..."
-    mysql_ensure
-    log info "DEBUG: DB_PASS after mysql_ensure: ${DB_PASS}"
+    mariadb_ensure
+    log info "DEBUG: DB_PASS after mariadb_ensure: ${DB_PASS}"
   fi
 
   log verbose "checking POSTGRES_ENSURE"
@@ -2777,20 +3038,20 @@ while [[ $# -gt 0 ]]; do
   -d | --database)
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
       case "$2" in
-      mysql | mysqli)
+      mariadb | mysql | mysqli)
         DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
-        MYSQL_ENSURE=true
+        MARIADB_ENSURE=true
         POSTGRES_ENSURE=false
         shift # past value
         ;;
       pgsql)
         DB_TYPE="pgsql"
-        MYSQL_ENSURE=false
+        MARIADB_ENSURE=false
         POSTGRES_ENSURE=true
         shift # past value
         ;;
       *)
-        log error "Unsupported database type: $2. Supported types are 'mysql' (MariaDB) and 'pgsql' (PostgreSQL)."
+        log error "Unsupported database type: $2. Supported types are 'mariadb' and 'pgsql' (PostgreSQL)."
         echo_usage
         exit 1
         ;;
@@ -2798,7 +3059,7 @@ while [[ $# -gt 0 ]]; do
     else
       # Use the default value for DB_TYPE
       DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
-      MYSQL_ENSURE=true
+      MARIADB_ENSURE=true
       POSTGRES_ENSURE=false
     fi
     shift # past argument
@@ -2997,7 +3258,7 @@ main
 
 ## Still to do
 # Add option for memcached support
-# Add option to install mysql locally
+# Add option to install mariadb locally
 # Add option to install moodle with git rather than download
 
 # [2023-08-13T09:07:03+0000]: VERBOSE: Preparing to execute: sudo certbot --apache -d moodle.romn.co -m admin@example.com --agree-tos --http-challenge --server https://acme-staging-v02.api.letsencrypt.org/directory

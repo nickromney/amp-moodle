@@ -9,6 +9,7 @@
 All requested files have been created successfully:
 
 ### 1. Dockerfile.ubuntu.optimized
+
 - **Path:** `/Users/nickromney/Developer/personal/amp-moodle/Dockerfile.ubuntu.optimized`
 - **Size:** 3.5K (99 lines)
 - **Original:** 1.5K (56 lines)
@@ -21,6 +22,7 @@ All requested files have been created successfully:
   - --no-install-recommends on all apt commands
 
 ### 2. Dockerfile.debian.optimized
+
 - **Path:** `/Users/nickromney/Developer/personal/amp-moodle/Dockerfile.debian.optimized`
 - **Size:** 3.6K (101 lines)
 - **Original:** 1.6K (57 lines)
@@ -31,6 +33,7 @@ All requested files have been created successfully:
   - Same 3-stage structure and cache mounts
 
 ### 3. compose.optimized.yml
+
 - **Path:** `/Users/nickromney/Developer/personal/amp-moodle/compose.optimized.yml`
 - **Size:** 4.4K (174 lines)
 - **Original:** 3.5K (137 lines)
@@ -43,6 +46,7 @@ All requested files have been created successfully:
   - Preserved all functionality (healthchecks, volumes, networks, ports)
 
 ### 4. docs/dockerfile-optimization.md
+
 - **Path:** `/Users/nickromney/Developer/personal/amp-moodle/docs/dockerfile-optimization.md`
 - **Size:** 12K (468 lines)
 - **Sections:**
@@ -56,6 +60,7 @@ All requested files have been created successfully:
   - References and next steps
 
 ### 5. docs/dockerfile-comparison.md (Bonus)
+
 - **Path:** `/Users/nickromney/Developer/personal/amp-moodle/docs/dockerfile-comparison.md`
 - **Size:** 8.9K (385 lines)
 - **Sections:**
@@ -72,12 +77,15 @@ All requested files have been created successfully:
 ## BuildKit Features Implemented
 
 ### 1. BuildKit Syntax Directive (✓)
+
 ```dockerfile
 # syntax=docker/dockerfile:1
 ```
+
 Present in both optimized Dockerfiles on line 1.
 
 ### 2. Multi-Stage Build Pattern (✓)
+
 - **Stage 1 (base):** System packages (curl, gnupg, sudo, tar, unzip, wget)
 - **Stage 2 (test-tools):** Testing tools (bats, git, locales)
 - **Stage 3 (runtime):** Configuration and scripts
@@ -85,27 +93,34 @@ Present in both optimized Dockerfiles on line 1.
 Both Dockerfiles have 3 stages each.
 
 ### 3. Cache Mounts for apt (✓)
+
 ```dockerfile
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     ...
 ```
+
 4 cache mount declarations per Dockerfile (2 per stage).
 
 ### 4. COPY Optimizations (✓)
+
 ```dockerfile
 COPY --link --chmod=755 laemp.sh /usr/local/bin/laemp.sh
 COPY --link --chown=testuser:testuser test_*.bats /home/testuser/tests/
 ```
+
 3 COPY --link optimizations per Dockerfile.
 
 ### 5. Sorted Packages (✓)
+
 All package lists are alphabetically sorted for readability.
 
 ### 6. --no-install-recommends (✓)
+
 Added to all `apt-get install` commands to reduce image size.
 
 ### 7. Preserved Functionality (✓)
+
 - Healthcheck: Same configuration
 - testuser: Same sudo access
 - Working directory: Same (/home/testuser)
@@ -157,6 +172,7 @@ Based on research and BuildKit documentation:
 ## Testing Commands
 
 ### Build Optimized Images
+
 ```bash
 # Ubuntu optimized
 podman build --platform linux/amd64 \
@@ -173,6 +189,7 @@ podman-compose -f compose.optimized.yml build
 ```
 
 ### Compare Build Times
+
 ```bash
 # Cold cache (first build)
 time podman build --no-cache -f Dockerfile.ubuntu.optimized -t test .
@@ -184,6 +201,7 @@ time podman build -f Dockerfile.ubuntu.optimized -t test .
 ```
 
 ### Compare Image Sizes
+
 ```bash
 podman images | grep amp-moodle
 
@@ -195,6 +213,7 @@ podman images | grep amp-moodle
 ```
 
 ### Test Functionality
+
 ```bash
 # Start optimized container
 podman-compose -f compose.optimized.yml up -d moodle-test-ubuntu
@@ -209,17 +228,20 @@ podman-compose -f compose.optimized.yml exec moodle-test-ubuntu bash -c "cd test
 ## Next Steps
 
 ### Immediate Actions
+
 1. **Test Build:** Build both optimized images and verify they complete successfully
 2. **Benchmark:** Run build time comparisons (cold and warm cache)
 3. **Validate:** Run BATS test suite in optimized containers
 4. **Compare:** Check image sizes match expected reductions
 
 ### Short-term Actions
+
 1. **Side-by-side Testing:** Run both original and optimized containers in parallel for 1-2 weeks
 2. **CI/CD Update:** Update pipeline to use optimized Dockerfiles
 3. **Documentation Update:** Update CLAUDE.md and container-testing.md to reference new files
 
 ### Long-term Actions
+
 1. **Migration Decision:** After validation, decide whether to:
    - Replace original Dockerfiles with optimized versions
    - Keep both versions (side-by-side)
@@ -230,6 +252,7 @@ podman-compose -f compose.optimized.yml exec moodle-test-ubuntu bash -c "cd test
 ## Documentation Cross-References
 
 Related documentation:
+
 - [Dockerfile Optimization Guide](./dockerfile-optimization.md) - Comprehensive guide to BuildKit features
 - [Dockerfile Comparison](./dockerfile-comparison.md) - Side-by-side comparison with migration paths
 - [Container Testing Guide](./container-testing.md) - Testing workflows (should be updated to reference optimized files)
@@ -238,7 +261,8 @@ Related documentation:
 ## Architecture Notes
 
 ### Multi-Stage Build Flow
-```
+
+```text
 ┌─────────────────────────┐
 │ Stage 1: base           │
 │ - System packages       │ ← Cache mount speeds up rebuilds
@@ -262,12 +286,14 @@ Related documentation:
 ```
 
 ### Cache Mount Strategy
+
 - `/var/cache/apt`: Downloaded .deb packages (speeds up package installation)
 - `/var/lib/apt`: Package lists (speeds up apt-get update)
 - `sharing=locked`: Allows concurrent builds to share cache safely
 - Persistent across builds: Cache survives container deletion
 
 ### COPY --link Benefits
+
 - Creates independent layer that doesn't invalidate previous layers
 - When `laemp.sh` changes, only runtime stage rebuilds (not base or test-tools)
 - Combined with `--chmod` and `--chown` flags for one-step operations

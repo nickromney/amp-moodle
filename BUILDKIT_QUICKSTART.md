@@ -5,6 +5,7 @@
 ## Quick Commands
 
 ### Build Optimized Images
+
 ```bash
 # Single command for both distros
 podman-compose -f compose.optimized.yml build
@@ -15,6 +16,7 @@ podman build --platform linux/amd64 -f Dockerfile.debian.optimized -t amp-moodle
 ```
 
 ### Use Optimized Containers
+
 ```bash
 # Start optimized Ubuntu container
 podman-compose -f compose.optimized.yml up -d moodle-test-ubuntu
@@ -28,6 +30,7 @@ podman-compose -f compose.optimized.yml exec moodle-test-ubuntu sudo laemp.sh -n
 ```
 
 ### Compare Performance
+
 ```bash
 # Benchmark original
 time podman build -f Dockerfile.ubuntu -t test-orig .
@@ -42,11 +45,13 @@ podman images | grep amp-moodle
 ## What's Different?
 
 ### Files
+
 - `Dockerfile.ubuntu.optimized` - BuildKit-optimized Ubuntu 24.04 build
 - `Dockerfile.debian.optimized` - BuildKit-optimized Debian 13 build
 - `compose.optimized.yml` - Compose file for optimized builds
 
 ### Features
+
 - **Multi-stage builds:** 3 stages (base → test-tools → runtime)
 - **Cache mounts:** apt packages cached between builds
 - **COPY --link:** Better layer caching
@@ -54,6 +59,7 @@ podman images | grep amp-moodle
 - **--no-install-recommends:** Smaller images
 
 ### Performance
+
 - 50-70% faster rebuilds (warm cache)
 - 15-20% smaller final images
 - Better layer reuse
@@ -61,12 +67,14 @@ podman images | grep amp-moodle
 ## When to Use
 
 ### Use Optimized (compose.optimized.yml)
+
 - ✓ Local development with frequent rebuilds
 - ✓ CI/CD pipelines
 - ✓ When you need faster iteration cycles
 - ✓ When disk space is a concern
 
 ### Use Original (compose.yml)
+
 - ✓ Quick one-off tests
 - ✓ Simple debugging (fewer stages)
 - ✓ Environments without BuildKit support
@@ -79,6 +87,7 @@ podman images | grep amp-moodle
 ## Troubleshooting
 
 ### "unknown flag: --mount"
+
 ```bash
 # Enable BuildKit for Docker
 export DOCKER_BUILDKIT=1
@@ -88,6 +97,7 @@ podman --version  # Should be 4.0+
 ```
 
 ### Builds not faster
+
 ```bash
 # First build will be same speed (cold cache)
 # Second build should be 50-70% faster

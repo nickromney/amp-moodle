@@ -7,6 +7,7 @@ This document outlines the implementation plan to transform `laemp.sh` from a pa
 ## Current State Analysis
 
 ### What Works Well
+
 - **Web Server Installation**: Both Apache and Nginx with optimized configurations
 - **PHP Management**: Version-flexible installation with PHP-FPM pools and Moodle-specific tuning
 - **Partial Moodle Setup**: Downloads source, creates directories, generates partial config.php
@@ -14,6 +15,7 @@ This document outlines the implementation plan to transform `laemp.sh` from a pa
 - **Utility Infrastructure**: Robust logging, dry-run mode, package management
 
 ### Critical Gaps
+
 1. **No Database Installation**: Script accepts database config but never installs MySQL/PostgreSQL
 2. **Broken SSL Integration**: Certificate paths hardcoded, no validation, ACME command has wrong flag
 3. **Incomplete Moodle Setup**: Creates config.php but doesn't run CLI installer or populate database
@@ -47,6 +49,7 @@ postgres_ensure() {
 ```
 
 **Changes Required**:
+
 - Add `MYSQL_ENSURE=false` and `POSTGRES_ENSURE=false` to defaults (line 21)
 - Modify `-d` flag parsing to set appropriate database flag (line 2019)
 - Call database function in `main()` before Moodle installation (line 1937)
@@ -54,6 +57,7 @@ postgres_ensure() {
 - Add `database_verify()` function similar to `apache_verify()` pattern
 
 **Testing**:
+
 - Unit test: Verify `-d mysql` and `-d pgsql` flags parse correctly
 - Integration test: Verify database service starts and accepts connections
 - Integration test: Verify database and user created with correct permissions
@@ -63,6 +67,7 @@ postgres_ensure() {
 **Changes Required**:
 
 **a) Dynamic Certificate Paths in vhost_config** (lines 876-882):
+
 ```bash
 # Instead of hardcoded /etc/letsencrypt paths:
 declare -A vhost_config=(
@@ -84,6 +89,7 @@ get_cert_path() {
 ```
 
 **b) Certificate Validation** (before lines 890, 899):
+
 ```bash
 validate_certificates() {
   local cert_file="$1"
@@ -102,6 +108,7 @@ validate_certificates() {
 ```
 
 **c) Fix ACME Certbot Command** (line 478):
+
 ```bash
 # Change --challenge to --preferred-challenges
 run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} \
@@ -110,6 +117,7 @@ run_command --makes-changes certbot --apache -d "${domain}" ${san_flag} \
 ```
 
 **d) Self-Signed Certificate Location** (line 1549):
+
 ```bash
 # Move certificates to standard location
 run_command --makes-changes mkdir -p /etc/ssl
@@ -122,6 +130,7 @@ run_command --makes-changes openssl req -x509 -nodes -days 365 \
 ```
 
 **Testing**:
+
 - Unit test: Verify certificate path logic returns correct paths
 - Integration test: Self-signed certificate generation creates valid certs
 - Integration test: ACME certificate request succeeds in staging mode
@@ -132,6 +141,7 @@ run_command --makes-changes openssl req -x509 -nodes -days 365 \
 **Location**: In `moodle_ensure()` after line 874
 
 **New Code**:
+
 ```bash
 moodle_install_database() {
   log verbose "Running Moodle CLI installation"
@@ -175,6 +185,7 @@ generate_password() {
 ```
 
 **Memcached Configuration** (line 700, after dataroot):
+
 ```bash
 # Add memcached configuration if enabled
 if $MEMCACHED_ENSURE; then
@@ -192,6 +203,7 @@ fi
 ```
 
 **Testing**:
+
 - Integration test: Verify Moodle database tables created
 - Integration test: Verify admin user can log in
 - Integration test: Verify cron job added to www-data crontab
@@ -203,11 +215,13 @@ fi
 ### 2.1 Update Unit Tests (test_laemp.bats)
 
 **Current Issues**:
+
 - Tests expect "Options chosen:" output that doesn't exist
 - Tests reference old `-a` flag for Apache (now `-w apache`)
 - No tests for new database flags
 
 **New Tests Needed**:
+
 ```bash
 # Database flag tests
 @test "-d mysql flag" {
@@ -431,32 +445,34 @@ teardown() {
 ### 2.4 Testing Infrastructure Updates
 
 **Update Makefile**:
+
 ```makefile
 # Add new test targets
 .PHONY: test-unit
 test-unit: ## Run unit tests only
-	@echo "$(YELLOW)Running BATS unit tests...$(NC)"
-	@bats test_laemp.bats
+ @echo "$(YELLOW)Running BATS unit tests...$(NC)"
+ @bats test_laemp.bats
 
 .PHONY: test-integration
 test-integration: ## Run integration tests (requires Podman)
-	@echo "$(YELLOW)Running integration tests...$(NC)"
-	@echo "$(YELLOW)Building test containers...$(NC)"
-	@podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu .
-	@podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian .
-	@bats test_integration.bats
+ @echo "$(YELLOW)Running integration tests...$(NC)"
+ @echo "$(YELLOW)Building test containers...$(NC)"
+ @podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu .
+ @podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian .
+ @bats test_integration.bats
 
 .PHONY: test-smoke
 test-smoke: ## Run quick smoke tests
-	@echo "$(YELLOW)Running smoke tests...$(NC)"
-	@bats test_smoke.bats
+ @echo "$(YELLOW)Running smoke tests...$(NC)"
+ @bats test_smoke.bats
 
 .PHONY: test
 test: test-smoke test-unit test-integration ## Run all tests
-	@echo "$(GREEN)✓ All tests passed$(NC)"
+ @echo "$(GREEN)✓ All tests passed$(NC)"
 ```
 
 **Update Dockerfiles**:
+
 - Add systemd support for service testing
 - Add networking for web server tests
 - Add volume mounts for test artifacts
@@ -769,6 +785,7 @@ main() {
 ### 4.1 Update CLAUDE.md
 
 **Changes Needed**:
+
 - Update "Important Considerations" with new database support
 - Add section on state tracking and rollback
 - Document new testing infrastructure
@@ -795,6 +812,7 @@ make test-unit
 Runs BATS unit tests for command-line parsing and basic functionality.
 
 ### Integration Tests
+
 ```bash
 make test-integration
 ```
@@ -802,6 +820,7 @@ make test-integration
 Runs full installation tests in Podman containers. Tests both Ubuntu and Debian.
 
 ### Smoke Tests
+
 ```bash
 make test-smoke
 ```
@@ -809,6 +828,7 @@ make test-smoke
 Quick validation tests that run in seconds.
 
 ### Manual Testing
+
 ```bash
 # Build test container
 podman build -f Dockerfile.ubuntu -t amp-moodle-ubuntu .
@@ -818,7 +838,6 @@ podman run -it --platform linux/amd64 amp-moodle-ubuntu
 
 # Inside container:
 sudo laemp.sh -p -w nginx -d mysql -m 405 -S
-```
 ```
 
 ## Implementation Order
@@ -851,7 +870,7 @@ sudo laemp.sh -p -w nginx -d mysql -m 405 -S
 - Phase 3: 6-8 hours (hardening)
 - Phase 4: 4-6 hours (documentation)
 
-**Total: 24-36 hours of development time**
+### Total: 24-36 hours of development time
 
 ## Risk Mitigation
 

@@ -20,12 +20,14 @@ This document provides a side-by-side comparison of the original and optimized D
 ### 1. Syntax Directive
 
 **Original:**
+
 ```dockerfile
 # Ubuntu test environment for laemp.sh
 FROM ubuntu:24.04
 ```
 
 **Optimized:**
+
 ```dockerfile
 # syntax=docker/dockerfile:1
 # Ubuntu test environment for laemp.sh with BuildKit optimizations
@@ -35,6 +37,7 @@ FROM ubuntu:24.04 AS base
 ### 2. Package Installation
 
 **Original (single RUN command):**
+
 ```dockerfile
 RUN apt-get update && apt-get install -y \
     wget \
@@ -52,6 +55,7 @@ RUN apt-get update && apt-get install -y \
 ```
 
 **Optimized (with cache mounts, split into stages):**
+
 ```dockerfile
 # Stage 1: Base packages
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -82,6 +86,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ### 3. File Copying
 
 **Original:**
+
 ```dockerfile
 COPY laemp.sh /usr/local/bin/laemp.sh
 RUN chmod +x /usr/local/bin/laemp.sh
@@ -92,6 +97,7 @@ RUN chmod +x /home/testuser/tests/*.bats && \
 ```
 
 **Optimized:**
+
 ```dockerfile
 COPY --link --chmod=755 laemp.sh /usr/local/bin/laemp.sh
 
@@ -102,10 +108,12 @@ RUN chmod +x /home/testuser/tests/*.bats
 ### 4. Multi-Stage Structure
 
 **Original:**
+
 - Single stage with all operations in sequence
 - 56-57 lines total
 
 **Optimized:**
+
 - Three stages: base → test-tools → runtime
 - 99-101 lines total (including extensive comments)
 - Allows parallel building and better caching
@@ -113,7 +121,8 @@ RUN chmod +x /home/testuser/tests/*.bats
 ## Build Architecture Comparison
 
 ### Original Build Flow
-```
+
+```text
 ┌─────────────────────────────────────────┐
 │ FROM ubuntu:24.04                       │
 ├─────────────────────────────────────────┤
@@ -128,7 +137,8 @@ RUN chmod +x /home/testuser/tests/*.bats
 ```
 
 ### Optimized Build Flow
-```
+
+```text
 ┌─────────────────────────────────────────┐
 │ Stage 1: base                           │
 │ FROM ubuntu:24.04                       │
@@ -165,6 +175,7 @@ RUN chmod +x /home/testuser/tests/*.bats
 ## Compose Configuration Comparison
 
 ### Original compose.yml
+
 ```yaml
 services:
   moodle-test-ubuntu:
@@ -175,6 +186,7 @@ services:
 ```
 
 ### Optimized compose.optimized.yml
+
 ```yaml
 services:
   moodle-test-ubuntu:
@@ -191,6 +203,7 @@ services:
 ### Option 1: Side-by-side (Recommended for Testing)
 
 Keep both versions during evaluation:
+
 ```bash
 # Build and test optimized
 podman-compose -f compose.optimized.yml build
@@ -208,6 +221,7 @@ time podman build -f Dockerfile.ubuntu -t test-orig .
 ### Option 2: Replace (After Validation)
 
 Replace original files with optimized versions:
+
 ```bash
 # Backup originals
 cp Dockerfile.ubuntu Dockerfile.ubuntu.original
@@ -222,18 +236,19 @@ mv compose.optimized.yml compose.yml
 ### Option 3: Makefile Integration
 
 Add targets to Makefile:
+
 ```makefile
 .PHONY: build-containers build-containers-optimized
 
 build-containers:
-	podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 .
-	podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian:13 .
+ podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 .
+ podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian:13 .
 
 build-containers-optimized:
-	DOCKER_BUILDKIT=1 podman build --platform linux/amd64 \
-		-f Dockerfile.ubuntu.optimized -t amp-moodle-ubuntu:24.04-optimized .
-	DOCKER_BUILDKIT=1 podman build --platform linux/amd64 \
-		-f Dockerfile.debian.optimized -t amp-moodle-debian:13-optimized .
+ DOCKER_BUILDKIT=1 podman build --platform linux/amd64 \
+  -f Dockerfile.ubuntu.optimized -t amp-moodle-ubuntu:24.04-optimized .
+ DOCKER_BUILDKIT=1 podman build --platform linux/amd64 \
+  -f Dockerfile.debian.optimized -t amp-moodle-debian:13-optimized .
 ```
 
 ## Compatibility Matrix
@@ -265,18 +280,22 @@ Before migrating to optimized Dockerfiles:
 ## Common Issues and Solutions
 
 ### Issue: "unknown flag: --mount"
+
 **Cause:** BuildKit not enabled or old Docker/Podman version
 
 **Solution:**
+
 ```bash
 export DOCKER_BUILDKIT=1
 # Or update Docker/Podman to latest version
 ```
 
 ### Issue: Slower than expected
+
 **Cause:** Cache not populated or BuildKit not active
 
 **Solution:**
+
 ```bash
 # Verify BuildKit
 docker version | grep -i buildkit
@@ -287,9 +306,11 @@ time docker build -f Dockerfile.ubuntu.optimized -t test2 .
 ```
 
 ### Issue: Permission errors with cache mounts
+
 **Cause:** Insufficient permissions on cache directories
 
 **Solution:**
+
 ```bash
 # Run with sudo
 sudo DOCKER_BUILDKIT=1 docker build ...
@@ -315,6 +336,7 @@ The optimized Dockerfiles provide significant performance improvements for devel
 - **Developer experience:** Faster iteration cycles
 
 The increased file size (56 → 99 lines) is offset by:
+
 - Better comments and documentation
 - Clearer multi-stage structure
 - Significant runtime benefits

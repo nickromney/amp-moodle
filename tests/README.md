@@ -5,6 +5,7 @@ This project has three tiers of tests: Unit, Integration, and End-to-End (E2E).
 ## Test Tiers
 
 ### Tier 1: Unit Tests (test_laemp.bats)
+
 **Purpose:** Test command-line option parsing and flag combinations
 
 **Runtime:** Seconds
@@ -20,6 +21,7 @@ bats test_laemp.bats --filter "php flag"
 ```
 
 **Coverage:**
+
 - Web server flags (`-w apache`, `-w nginx`)
 - Database flags (`-d mysql`, `-d pgsql`)
 - PHP version flags (`-p`, `-P`)
@@ -30,6 +32,7 @@ bats test_laemp.bats --filter "php flag"
 ---
 
 ### Tier 2: Integration Tests (test_integration.bats)
+
 **Purpose:** Test full script execution inside Podman containers
 
 **Runtime:** Minutes per test
@@ -52,6 +55,7 @@ bats -j 4 test_integration.bats
 ```
 
 **Coverage:**
+
 - Basic installations (nginx/apache with PHP)
 - Database installations (MySQL/PostgreSQL)
 - SSL certificate creation
@@ -64,6 +68,7 @@ bats -j 4 test_integration.bats
 - Cross-distribution testing (Ubuntu 24.04/Debian 13)
 
 **How it works:**
+
 1. BATS runs on macOS host
 2. Each test starts a fresh Podman container
 3. Test copies `laemp.sh` into container
@@ -74,6 +79,7 @@ bats -j 4 test_integration.bats
 ---
 
 ### Tier 3: End-to-End Tests (tests/e2e/moodle.spec.ts)
+
 **Purpose:** Test actual web behavior with Playwright
 
 **Runtime:** Seconds per test (after stack startup)
@@ -109,6 +115,7 @@ npm run test:report   # View HTML report
 ```
 
 **Coverage:**
+
 - HTTPS/SSL verification (redirects, self-signed certs)
 - Moodle homepage accessibility
 - Login page rendering
@@ -120,7 +127,8 @@ npm run test:report   # View HTML report
 - Performance (page load times)
 
 **Test Structure:**
-```
+
+```text
 tests/e2e/moodle.spec.ts
 ├── SSL/HTTPS tests (3 tests)
 ├── Homepage tests (4 tests)
@@ -162,12 +170,14 @@ npm test
 **Decision:** Tests assume compose stack is already running
 
 **Rationale:**
+
 - Faster test execution (no startup overhead between test runs)
 - Easier debugging (stack stays running, can inspect manually)
 - Simpler test code (no Docker/Podman orchestration from Node)
 - Explicit stack lifecycle (developers control when to start/stop)
 
 **Trade-off:**
+
 - Requires manual stack management
 - Tests may fail if stack is in bad state
 
@@ -182,6 +192,7 @@ npm test
 **Problem:** Test timeout or hangs during execution
 
 **Solutions:**
+
 ```bash
 # Check if Podman is running
 podman ps
@@ -197,9 +208,10 @@ podman rm -f $(podman ps -a --filter name=laemp-test -q)
 
 ### E2E Tests Fail with Connection Errors
 
-**Problem:** Cannot connect to Moodle at https://moodle.romn.co
+**Problem:** Cannot connect to Moodle at <https://moodle.romn.co>
 
 **Solutions:**
+
 ```bash
 # 1. Check compose stack is running
 podman-compose ps
@@ -222,6 +234,7 @@ curl -k https://moodle.romn.co
 **Problem:** Tests skip because credentials not set
 
 **Solution:**
+
 ```bash
 # 1. Get admin password from container logs
 podman-compose logs ubuntu | grep "Admin password"
@@ -294,6 +307,6 @@ jobs:
 ## Additional Resources
 
 - **Container testing guide:** `docs/container-testing.md`
-- **BATS documentation:** https://bats-core.readthedocs.io/
-- **Playwright documentation:** https://playwright.dev/
-- **Moodle documentation:** https://docs.moodle.org/
+- **BATS documentation:** <https://bats-core.readthedocs.io/>
+- **Playwright documentation:** <https://playwright.dev/>
+- **Moodle documentation:** <https://docs.moodle.org/>

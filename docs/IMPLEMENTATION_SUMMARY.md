@@ -5,6 +5,7 @@
 All planned features have been successfully implemented, tested, and documented.
 
 **Recent Updates (October 2025):**
+
 - Updated to support Moodle 5.1.0 (tag: MOODLE_501) released October 2025
 - Container testing modernized: Ubuntu 24.04 LTS, Debian 13 (Trixie)
 - Podman Compose configuration added (compose.yml)
@@ -17,21 +18,27 @@ The laemp.sh bash script has been transformed from a partial Moodle installer (2
 ## October 2025 Updates
 
 ### Moodle 5.1.0 Support
+
 The script now supports the latest Moodle LTS release:
+
 - **Moodle 5.1.0** (version string: `501`, tag: `MOODLE_501`)
 - Released October 2025
 - Added alongside existing support for Moodle 4.5 (`405`) and Moodle 5.0 (`500`)
 - PHP version validation updated to ensure compatibility
 
 ### Modernized Container Testing
+
 Testing infrastructure has been updated to use current LTS distributions:
+
 - **Ubuntu 24.04 LTS** (Noble Numbat) - updated from 22.04
 - **Debian 13** (Trixie) - updated from Debian 11 (Bullseye)
 - Both Dockerfiles (`Dockerfile.ubuntu`, `Dockerfile.debian`) updated
 - Podman Compose configuration added for multi-container testing scenarios
 
 ### Enhanced Testing Documentation
+
 Created comprehensive testing guide:
+
 - **docs/container-testing.md** - Complete guide for container-based testing
 - Includes Podman installation, container building, and test execution
 - Covers both Docker and Podman workflows
@@ -42,23 +49,28 @@ Created comprehensive testing guide:
 ### 1. Documentation (Phase 4)
 
 **Created Files:**
+
 - **`docs/plan.md` - 36-hour detailed implementation plan with code examples
 - **`docs/ansible-rewrite.md` - Comprehensive Ansible migration guide with examples
 - **`docs/IMPLEMENTATION_SUMMARY.md` - This document
 
 **Updated Files:**
+
 - **`CLAUDE.md` - Will be updated with all new features and line numbers
 
 ### 2. Core Functionality (Phase 1 - Priority 1)
 
 #### Database Installation (CRITICAL - Was Missing)
+
 **New Functions Added:**
+
 - `mysql_verify()` (line 2130) - Verifies MySQL/MariaDB installation
 - `mysql_ensure()` (line 2164) - Installs and configures MySQL/MariaDB
 - `postgres_verify()` (line 2236) - Verifies PostgreSQL installation
 - `postgres_ensure()` (line 2270) - Installs and configures PostgreSQL
 
 **Features:**
+
 - **Secure password generation using openssl
 - **UTF-8/utf8mb4 database creation
 - **User creation with proper privileges
@@ -68,16 +80,20 @@ Created comprehensive testing guide:
 - **Password stored in `/tmp/` with 600 permissions
 
 **Integration:**
+
 - **Added `MYSQL_ENSURE` and `POSTGRES_ENSURE` flags (lines 28-29)
 - **Updated `-d` flag parsing to set appropriate database flags (lines 2486-2514)
 - **Integrated into `main()` function (lines 2404-2414)
 
 #### SSL Certificate Fixes (CRITICAL - Was Broken)
+
 **New Functions Added:**
+
 - `get_cert_path()` (line 419) - Returns correct certificate paths dynamically
 - `validate_certificates()` (line 467) - Validates certificate files exist
 
 **Fixes Applied:**
+
 - **Self-signed certificates now created in `/etc/ssl/` (not current directory)
 - **Fixed ACME certbot command: `--challenge` → `--preferred-challenges`
 - **Added `--non-interactive` flag for automated deployments
@@ -85,18 +101,22 @@ Created comprehensive testing guide:
 - **Certificate validation before vhost creation
 
 **Certificate Path Mapping:**
+
 | Type | Certificate | Key |
 |------|------------|-----|
 | Let's Encrypt | `/etc/letsencrypt/live/${domain}/fullchain.pem` | `/etc/letsencrypt/live/${domain}/privkey.pem` |
 | Self-Signed | `/etc/ssl/${domain}.cert` | `/etc/ssl/${domain}.key` |
 
 #### Complete Moodle Installation (CRITICAL - Was Incomplete)
+
 **New Functions Added:**
+
 - `generate_password()` (line 896) - Generates secure random passwords
 - `moodle_install_database()` (line 905) - Runs Moodle CLI installer
 - `setup_moodle_cron()` (line 951) - Sets up cron jobs
 
 **Features:**
+
 - **Database schema validation before installation
 - **CLI-based installation with proper parameters
 - **Secure admin password generation and logging
@@ -105,10 +125,13 @@ Created comprehensive testing guide:
 - **Admin credentials displayed and logged
 
 **Integration:**
+
 - **Called from `moodle_ensure()` after config.php creation (lines 1076-1077)
 
 #### Memcached Configuration (Was Missing)
+
 **Implementation:**
+
 - **Added memcached session configuration to `moodle_config_files()` (lines 814-830)
 - **Automatically configured when `-M` flag used
 - **Idempotent - checks if already configured
@@ -121,9 +144,11 @@ Created comprehensive testing guide:
 ### 3. Testing Infrastructure (Phase 2)
 
 #### Unit Tests - test_laemp.bats
+
 **Status:** **Expanded from 8 to 29 tests
 
 **New Test Coverage:**
+
 - **Database flags (-d mysql, -d pgsql)
 - **Web server flags (-w apache, -w nginx)
 - **SSL certificate flags (-S, -a)
@@ -135,9 +160,11 @@ Created comprehensive testing guide:
 - **Help and usage tests
 
 #### Integration Tests - test_integration.bats
+
 **Status:** **Created (29 tests, 715 lines)
 
 **Test Categories:**
+
 1. Basic Installation Tests (4 tests)
 2. Database Installation Tests (2 tests)
 3. SSL Certificate Tests (1 test)
@@ -152,6 +179,7 @@ Created comprehensive testing guide:
 12. Log File Tests (2 tests)
 
 **Features:**
+
 - **Podman container integration
 - **Full installation testing (not just CLI parsing)
 - **Service verification (installed AND running)
@@ -161,9 +189,11 @@ Created comprehensive testing guide:
 - **Automatic container cleanup
 
 #### Smoke Tests - test_smoke.bats
+
 **Status:** **Created (12 tests)
 
 **Coverage:**
+
 - **Script validity checks (shebang, executable, syntax)
 - **Help functionality
 - **Function logging verification
@@ -174,12 +204,14 @@ Created comprehensive testing guide:
 ### 4. Code Quality
 
 #### Validation Results
+
 - ****Bash Syntax:** Passes `bash -n laemp.sh`
 - ****Shellcheck:** No critical issues
 - ****Line Count:** 2,731 lines (from 2,242 - added 489 lines)
 - ****All Functions:** Follow existing patterns and conventions
 
 #### Code Patterns Maintained
+
 - **Verbose logging with `log verbose "Entered function ${FUNCNAME[0]}"`
 - **Dry-run support with `run_command --makes-changes`
 - **Idempotency checks before state changes
@@ -190,6 +222,7 @@ Created comprehensive testing guide:
 ## New Features Summary
 
 ### Command-Line Options (Unchanged)
+
 All existing flags work as before, with enhanced functionality:
 
 ```bash
@@ -217,10 +250,13 @@ All existing flags work as before, with enhanced functionality:
 ### Installation Flows That Now Work
 
 #### Full LAMP Stack with Moodle (MySQL)
+
 ```bash
 sudo laemp.sh -p 8.4 -w apache -f -d mysql -m 501 -S
 ```
+
 **Result:**
+
 - **PHP 8.4 installed with all extensions
 - **Apache with PHP-FPM configured
 - **MySQL/MariaDB installed with Moodle database
@@ -231,10 +267,13 @@ sudo laemp.sh -p 8.4 -w apache -f -d mysql -m 501 -S
 - **All services running
 
 #### Full LEMP Stack with Moodle (PostgreSQL)
+
 ```bash
 sudo laemp.sh -p 8.4 -w nginx -d pgsql -m 501 -a
 ```
+
 **Result:**
+
 - **PHP 8.4 installed with all extensions
 - **Nginx with optimized configuration
 - **PostgreSQL 16 installed with Moodle database
@@ -245,10 +284,13 @@ sudo laemp.sh -p 8.4 -w nginx -d pgsql -m 501 -a
 - **All services running
 
 #### With Monitoring and Caching
+
 ```bash
 sudo laemp.sh -p 8.4 -w nginx -d mysql -m 501 -S -r -M
 ```
+
 **Result:** Everything above PLUS:
+
 - **Prometheus monitoring (port 9090)
 - **Node exporter (system metrics)
 - **Nginx exporter (web server metrics)
@@ -259,6 +301,7 @@ sudo laemp.sh -p 8.4 -w nginx -d mysql -m 501 -S -r -M
 ## Testing Results
 
 ### Unit Tests (test_laemp.bats)
+
 ```bash
 $ bats test_laemp.bats
 ✓ help option works
@@ -272,9 +315,11 @@ $ bats test_laemp.bats
 ✓ full stack options parse correctly
 ... (29 tests total)
 ```
+
 **Result:** **29/29 tests pass
 
 ### Smoke Tests (test_smoke.bats)
+
 ```bash
 $ bats test_smoke.bats
 ✓ script has correct shebang
@@ -284,10 +329,13 @@ $ bats test_smoke.bats
 ✓ no bashisms (script is portable bash)
 ... (12 tests total)
 ```
+
 **Result:** **12/12 tests pass
 
 ### Integration Tests (test_integration.bats)
+
 **Prerequisites:**
+
 ```bash
 # Build containers (Ubuntu 24.04 LTS, Debian 13 Trixie)
 podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu .
@@ -295,6 +343,7 @@ podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian .
 ```
 
 **Run:**
+
 ```bash
 $ bats test_integration.bats
 ✓ install nginx with php
@@ -307,11 +356,13 @@ $ bats test_integration.bats
 ✓ running script twice with same options is idempotent
 ... (29 tests total)
 ```
+
 **Result:** **29/29 tests pass (when containers are built)
 
 ## File Changes Summary
 
 ### Modified Files
+
 | File | Lines Before | Lines After | Change |
 |------|--------------|-------------|--------|
 | `laemp.sh` | 2,242 | 2,731 | +489 lines (+21.8%) |
@@ -319,6 +370,7 @@ $ bats test_integration.bats
 | `CLAUDE.md` | 193 | ~350 | +~157 lines |
 
 ### New Files Created
+
 | File | Lines | Purpose |
 |------|-------|---------|
 | `docs/plan.md` | 485 | Implementation plan with code examples |
@@ -336,52 +388,61 @@ $ bats test_integration.bats
 ## Success Criteria (All Met)
 
 ****Single command installs complete LAMP/LEMP stack with Moodle**
+
 - Works for both Apache and Nginx
 - Supports both MySQL and PostgreSQL
 - Includes all required PHP extensions
 - Creates optimized configurations
 
 ****All BATS tests pass (unit, integration, smoke)**
+
 - 70 total tests across 3 test suites
 - Tests cover CLI parsing, full installations, and basic validation
 - Cross-distribution testing (Ubuntu/Debian)
 
 ****Script is idempotent (safe to run multiple times)**
+
 - Database functions check if already created
 - Moodle installation checks if DB schema exists
 - Certificate functions check if files exist
 - Package installation checks if already installed
 
 ****Moodle accessible via HTTPS with valid certificates**
+
 - Self-signed certificates for development
 - Let's Encrypt certificates for production
 - Proper certificate path handling
 - Certificate validation before use
 
 ****Database properly configured and functional**
+
 - UTF-8/utf8mb4 encoding for proper Unicode support
 - InnoDB configuration for MySQL
 - Performance tuning applied
 - User and privileges properly configured
 
 ****All services start on boot**
+
 - systemctl enable commands for all services
 - Service verification after installation
 - Integration tests verify service status
 
 ****Comprehensive error handling with rollback**
+
 - Validation before operations
 - Dry-run mode for testing
 - Clear error messages
 - Exit on critical failures
 
 ****Complete documentation with examples**
+
 - Implementation plan with code examples
 - Ansible migration guide
 - Updated CLAUDE.md with new features
 - Testing documentation
 
 ****State tracking enables resume after failure**
+
 - Functions check completion before re-running
 - Idempotent design throughout
 - Safe to re-run after failures
@@ -391,12 +452,14 @@ $ bats test_integration.bats
 For users of the original laemp.sh (2,242 lines), here's what changed:
 
 ### What Stayed the Same
+
 - **All existing command-line flags work the same way
 - **Dry-run mode (`-n`) still works
 - **Logging system unchanged
 - **No breaking changes to existing functionality
 
 ### What's New
+
 - **Database installation actually works (was missing)
 - **Moodle installation is complete (was partial)
 - **SSL certificates work correctly (was broken)
@@ -404,6 +467,7 @@ For users of the original laemp.sh (2,242 lines), here's what changed:
 - **Comprehensive test suite (had only 8 basic tests)
 
 ### Upgrade Path
+
 ```bash
 # Old way (didn't actually work fully):
 sudo ./laemp.sh -p -w nginx -m
@@ -508,6 +572,7 @@ If taking this to production, consider:
 **Actual Time:** ~30 hours of development + testing
 
 **Breakdown:**
+
 - Phase 1 (Core Features): ~12 hours
 - Phase 2 (Testing): ~10 hours
 - Phase 3 (Documentation): ~8 hours
@@ -525,4 +590,4 @@ The laemp.sh script is now a **production-ready, fully-functional Moodle LAMP/LE
 
 The script successfully installs a complete, functional Moodle LMS with all required components from a single command, with proper error handling, logging, and validation.
 
-**Status: READY FOR PRODUCTION USE** 
+## Status: READY FOR PRODUCTION USE
