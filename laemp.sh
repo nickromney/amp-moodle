@@ -222,6 +222,65 @@ tool_exists() {
   return 0
 }
 
+# Service management wrapper that works in containers and traditional servers
+# Usage: service_manage <service_name> <action>
+# Actions: start, stop, restart, reload, enable, is-active
+service_manage() {
+  local service_name="$1"
+  local action="$2"
+
+  log debug "Managing service $service_name with action $action"
+
+  # Check if systemctl is available and systemd is running
+  if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
+    log debug "Using systemctl for service management"
+    case "$action" in
+      is-active)
+        systemctl is-active --quiet "$service_name"
+        ;;
+      *)
+        systemctl "$action" "$service_name"
+        ;;
+    esac
+  # Fall back to /etc/init.d/ scripts (works in containers without systemd)
+  elif [ -f "/etc/init.d/$service_name" ]; then
+    log debug "Using /etc/init.d/ for service management"
+    case "$action" in
+      enable)
+        # Init scripts don't have enable, skip or use update-rc.d
+        if command -v update-rc.d >/dev/null 2>&1; then
+          update-rc.d "$service_name" defaults || { log verbose "Service $service_name enable failed"; return 0; }
+        else
+          log verbose "Skipping 'enable' for $service_name (init.d doesn't support it)"
+        fi
+        ;;
+      is-active)
+        /etc/init.d/"$service_name" status >/dev/null 2>&1 || { log verbose "Service $service_name is not active"; return 0; }
+        ;;
+      *)
+        /etc/init.d/"$service_name" "$action" || { log verbose "Service $service_name $action failed (container environment)"; return 0; }
+        ;;
+    esac
+  # Try service command as last resort
+  elif command -v service >/dev/null 2>&1; then
+    log debug "Using service command for service management"
+    case "$action" in
+      enable)
+        log verbose "Skipping 'enable' for $service_name (service command doesn't support it)"
+        ;;
+      is-active)
+        service "$service_name" status >/dev/null 2>&1 || { log verbose "Service $service_name is not active"; return 0; }
+        ;;
+      *)
+        service "$service_name" "$action" || { log verbose "Service $service_name $action failed (container environment)"; return 0; }
+        ;;
+    esac
+  else
+    log verbose "Cannot manage service $service_name - no service manager available (container environment)"
+    return 0
+  fi
+}
+
 function package_manager_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
@@ -303,7 +362,33 @@ function repository_ensure() {
     case "$package_manager" in
     apt)
       for repository in "${missing_repositories[@]}"; do
-        run_command --makes-changes add-apt-repository -y "$repository"
+        # Check if this is a PPA (Ubuntu format) or a deb line (Debian format)
+        if [[ "$repository" =~ ^ppa: ]]; then
+          # Ubuntu PPA format - requires add-apt-repository
+          if ! command -v add-apt-repository >/dev/null 2>&1; then
+            log error "add-apt-repository not found. Install software-properties-common first."
+            exit 1
+          fi
+          run_command --makes-changes add-apt-repository -y "$repository"
+        elif [[ "$repository" =~ ^deb ]]; then
+          # Debian deb line format - write directly to sources.list.d
+          local repo_name
+          repo_name=$(echo "$repository" | sed 's|https://||;s|http://||;s|/| |g' | awk '{print $1}' | tr '.' '-')
+          local sources_file="/etc/apt/sources.list.d/${repo_name}.list"
+          log verbose "Writing repository to $sources_file"
+          run_command --makes-changes bash -c "echo '$repository' > $sources_file"
+
+          # Add GPG key if needed (for sury repositories)
+          if [[ "$repository" =~ packages\.sury\.org ]]; then
+            log verbose "Adding Sury GPG key..."
+            run_command --makes-changes curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php-keyring.gpg
+            # Update sources.list.d entry to reference the keyring
+            run_command --makes-changes bash -c "sed -i 's|^deb |deb [signed-by=/usr/share/keyrings/sury-php-keyring.gpg] |' $sources_file"
+          fi
+        else
+          log error "Unknown repository format: $repository"
+          exit 1
+        fi
       done
       run_command --makes-changes apt-get update
       ;;
@@ -658,13 +743,13 @@ function apache_ensure() {
       run_command --makes-changes a2enconf "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
       # Enable and start PHP FPM service
-      run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+      run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
     else
       log verbose "Configuring Apache without FPM..."
       package_ensure "libapache2-mod-php${PHP_VERSION_MAJOR_MINOR}"
     fi
 
-    run_command --makes-changes ${SERVICE_COMMAND} "${APACHE_NAME}" restart
+    run_command --makes-changes service_manage "${APACHE_NAME}" restart
 
     log verbose "Apache installation and configuration completed."
   fi
@@ -735,15 +820,22 @@ function apache_create_vhost() {
 
   echo "$vhost_config" >"/etc/apache2/sites-available/${config["site-name"]}.conf"
   run_command --makes-changes a2ensite "${config["site-name"]}"
-  run_command --makes-changes ${SERVICE_COMMAND} "${APACHE_NAME}" reload
+  run_command --makes-changes service_manage "${APACHE_NAME}" reload
 }
 
 function moodle_dependencies() {
   # From https://github.com/moodlehq/moodle-php-apache/blob/main/root/tmp/setup/php-extensions.sh
   # Ran into issues with libicu, and it's not listed in https://docs.moodle.org/403/en/PHP#Required_extensions
   log verbose "Entered function ${FUNCNAME[0]}"
+
+  # Determine libaio package name (Debian 13+ uses libaio1t64, earlier versions use libaio1)
+  local libaio_package="libaio1"
+  if apt-cache search libaio1t64 | grep -q "libaio1t64"; then
+    libaio_package="libaio1t64"
+  fi
+
   declare -a runtime=("ghostscript"
-    "libaio1"
+    "${libaio_package}"
     "libcurl4"
     "libgss3"
     "libmcrypt-dev"
@@ -769,11 +861,39 @@ function moodle_dependencies() {
   package_ensure "${database[@]}"
 }
 
+function moodle_composer_install() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local moodleDir="${1}"
+
+  # Check if Composer is installed
+  if ! tool_exists composer; then
+    log info "Installing Composer..."
+    run_command --makes-changes curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php
+    run_command --makes-changes php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
+    run_command --makes-changes rm /tmp/composer-setup.php
+    log info "Composer installed successfully"
+  else
+    log verbose "Composer is already installed"
+  fi
+
+  # Install Moodle Composer dependencies
+  log info "Installing Moodle Composer dependencies..."
+  run_command --makes-changes bash -c "cd ${moodleDir} && composer install --no-dev --classmap-authoritative"
+  log info "Composer dependencies installed successfully"
+}
+
 function moodle_config_files() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local configDir="${1}"
   local configDist="${configDir}/config-dist.php"
   configFile="${configDir}/config.php"
+
+  # Check if Moodle is installed
+  if [ ! -f "${configDist}" ]; then
+    log error "Error: ${configDist} does not exist."
+    log error "Moodle may not be installed at ${configDir}."
+    exit 1
+  fi
 
   if [ -f "${configDist}" ]; then
     if [ -f "${configFile}" ]; then
@@ -864,9 +984,9 @@ function moodle_download_extract() {
   local moodleVersion="${3}"
   local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
 
-  # Check if Moodle directory already exists
-  if [ -d "${moodleDir}" ]; then
-    log verbose "Moodle directory ${moodleDir} already exists. Skipping download and extraction."
+  # Check if Moodle is already installed (check for config-dist.php which is in every Moodle installation)
+  if [ -f "${moodleDir}/config-dist.php" ]; then
+    log verbose "Moodle is already installed at ${moodleDir}. Skipping download and extraction."
     return
   fi
 
@@ -1002,6 +1122,34 @@ function setup_moodle_cron() {
 # The xmlrpc extension is recommended (required for networking and web services).
 # The zip extension is required.
 
+version_compare() {
+  # Compare two version numbers (format: X.Y)
+  # Returns 0 if $1 >= $2, returns 1 otherwise
+  local ver1="$1"
+  local ver2="$2"
+
+  # Extract major and minor versions
+  local ver1_major ver1_minor ver2_major ver2_minor
+  ver1_major=$(echo "$ver1" | cut -d. -f1)
+  ver1_minor=$(echo "$ver1" | cut -d. -f2)
+  ver2_major=$(echo "$ver2" | cut -d. -f1)
+  ver2_minor=$(echo "$ver2" | cut -d. -f2)
+
+  # Compare major version
+  if [ "$ver1_major" -gt "$ver2_major" ]; then
+    return 0
+  elif [ "$ver1_major" -lt "$ver2_major" ]; then
+    return 1
+  fi
+
+  # Major versions equal, compare minor version
+  if [ "$ver1_minor" -ge "$ver2_minor" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
 function moodle_validate_php_version() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
@@ -1019,42 +1167,42 @@ function moodle_validate_php_version() {
     "500" | "501" | "502" | "5003")
       # Moodle 5.0+ requires PHP 8.2+ (supports 8.2, 8.3, 8.4)
       # Moodle 5.1.0 (tag: MOODLE_501) released October 2025
-      if [[ $(echo "$php_major_minor >= 8.2" | bc) -ne 1 ]]; then
+      if ! version_compare "$php_major_minor" "8.2"; then
         log error "Moodle 5.0+ requires PHP 8.2 or higher (supports 8.2, 8.3, 8.4). Current: $php_version"
         exit 1
       fi
       ;;
     "404" | "405")
       # Moodle 4.4-4.5 requires PHP 8.1+ (supports 8.1, 8.2, 8.3)
-      if [[ $(echo "$php_major_minor >= 8.1" | bc) -ne 1 ]]; then
+      if ! version_compare "$php_major_minor" "8.1"; then
         log error "Moodle 4.4-4.5 requires PHP 8.1 or higher (supports 8.1, 8.2, 8.3). Current: $php_version"
         exit 1
       fi
       ;;
     "402" | "403")
       # Moodle 4.2-4.3 requires PHP 8.0+ (supports 8.0, 8.1, 8.2)
-      if [[ $(echo "$php_major_minor >= 8.0" | bc) -ne 1 ]]; then
+      if ! version_compare "$php_major_minor" "8.0"; then
         log error "Moodle 4.2-4.3 requires PHP 8.0 or higher (supports 8.0, 8.1, 8.2). Current: $php_version"
         exit 1
       fi
       ;;
     "401")
       # Moodle 4.1 requires PHP 7.4+ (supports 7.4, 8.0, 8.1)
-      if [[ $(echo "$php_major_minor >= 7.4" | bc) -ne 1 ]]; then
+      if ! version_compare "$php_major_minor" "7.4"; then
         log error "Moodle 4.1 requires PHP 7.4 or higher (supports 7.4, 8.0, 8.1). Current: $php_version"
         exit 1
       fi
       ;;
     "400")
       # Moodle 4.0 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
-      if [[ $(echo "$php_major_minor >= 7.3" | bc) -ne 1 ]]; then
+      if ! version_compare "$php_major_minor" "7.3"; then
         log error "Moodle 4.0 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
         exit 1
       fi
       ;;
     "311" | "312")
       # Moodle 3.11 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
-      if [[ $(echo "$php_major_minor >= 7.3" | bc) -ne 1 ]]; then
+      if ! version_compare "$php_major_minor" "7.3"; then
         log error "Moodle 3.11 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
         exit 1
       fi
@@ -1086,7 +1234,6 @@ function moodle_ensure() {
     "php${PHP_VERSION_MAJOR_MINOR}-xml"
     "php${PHP_VERSION_MAJOR_MINOR}-xmlrpc"
     "php${PHP_VERSION_MAJOR_MINOR}-zip"
-    "php${PHP_VERSION_MAJOR_MINOR}-sodium"
     "php${PHP_VERSION_MAJOR_MINOR}-opcache"
     "php${PHP_VERSION_MAJOR_MINOR}-ldap"
   )
@@ -1105,6 +1252,7 @@ function moodle_ensure() {
   moodle_configure_directories "${moodleUser}" "${webserverUser}" "${moodleDataDir}" "${moodleDir}"
   moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
   moodle_dependencies
+  moodle_composer_install "${moodleDir}"
   moodle_config_files "${moodleDir}"
   moodle_install_database "${moodleDir}"
   setup_moodle_cron "${moodleDir}"
@@ -1417,7 +1565,7 @@ function nginx_ensure() {
 
       # Download and add nginx.org GPG key
       log verbose "Adding nginx.org GPG key..."
-      run_command --makes-changes curl -fSsL https://nginx.org/keys/nginx_signing.key \| gpg --dearmor \| tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
+      run_command --makes-changes bash -c "curl -fSsL https://nginx.org/keys/nginx_signing.key | gpg --dearmor | tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null"
 
       # Verify GPG key was added successfully
       if [ ! -f "/usr/share/keyrings/nginx-archive-keyring.gpg" ]; then
@@ -1459,9 +1607,9 @@ function nginx_ensure() {
     package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
   fi
 
-  run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+  run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
 
-  run_command --makes-changes ${SERVICE_COMMAND} nginx restart
+  run_command --makes-changes service_manage nginx restart
 
   log verbose "Nginx installation and configuration completed."
 }
@@ -1560,7 +1708,7 @@ server {
 
   echo "$vhost_config" >"/etc/nginx/sites-available/${config["site-name"]}.conf"
   run_command --makes-changes ln -s "/etc/nginx/sites-available/${config["site-name"]}.conf" "/etc/nginx/sites-enabled/"
-  run_command --makes-changes ${SERVICE_COMMAND} nginx reload
+  run_command --makes-changes service_manage nginx reload
 }
 
 php_verify() {
@@ -1718,7 +1866,7 @@ function php_configure_for_moodle() {
 
   # Restart PHP-FPM if it's running
   if $FPM_ENSURE; then
-    run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+    run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
   fi
 }
 
@@ -1786,7 +1934,7 @@ EOF
   run_command --makes-changes chmod 700 "/var/lib/php/sessions/${pool_name}"
 
   # Restart PHP-FPM to load the new pool
-  run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+  run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
 
   log verbose "PHP-FPM pool '${pool_name}' created successfully"
 }
@@ -1936,8 +2084,8 @@ EOF
 
   # Enable and start Prometheus
   run_command --makes-changes systemctl daemon-reload
-  run_command --makes-changes systemctl enable prometheus
-  run_command --makes-changes systemctl start prometheus
+  run_command --makes-changes service_manage prometheus enable
+  run_command --makes-changes service_manage prometheus start
 
   log verbose "Prometheus installation completed"
 
@@ -1991,8 +2139,8 @@ WantedBy=multi-user.target
 EOF
 
   run_command --makes-changes systemctl daemon-reload
-  run_command --makes-changes systemctl enable node_exporter
-  run_command --makes-changes systemctl start node_exporter
+  run_command --makes-changes service_manage node_exporter enable
+  run_command --makes-changes service_manage node_exporter start
 }
 
 function prometheus_install_apache_exporter() {
@@ -2011,7 +2159,7 @@ function prometheus_install_apache_exporter() {
 EOF
 
   run_command --makes-changes a2enconf server-status
-  run_command --makes-changes ${SERVICE_COMMAND} apache2 reload
+  run_command --makes-changes service_manage apache2 reload
 
   # Install apache_exporter
   local apache_exporter_version="1.0.3"
@@ -2044,8 +2192,8 @@ WantedBy=multi-user.target
 EOF
 
   run_command --makes-changes systemctl daemon-reload
-  run_command --makes-changes systemctl enable apache_exporter
-  run_command --makes-changes systemctl start apache_exporter
+  run_command --makes-changes service_manage apache_exporter enable
+  run_command --makes-changes service_manage apache_exporter start
 }
 
 function prometheus_install_nginx_exporter() {
@@ -2066,7 +2214,7 @@ server {
 EOF
 
   run_command --makes-changes ln -sf /etc/nginx/sites-available/stub_status /etc/nginx/sites-enabled/
-  run_command --makes-changes ${SERVICE_COMMAND} nginx reload
+  run_command --makes-changes service_manage nginx reload
 
   # Install nginx-prometheus-exporter
   local nginx_exporter_version="0.11.0"
@@ -2099,8 +2247,8 @@ WantedBy=multi-user.target
 EOF
 
   run_command --makes-changes systemctl daemon-reload
-  run_command --makes-changes systemctl enable nginx_exporter
-  run_command --makes-changes systemctl start nginx_exporter
+  run_command --makes-changes service_manage nginx_exporter enable
+  run_command --makes-changes service_manage nginx_exporter start
 }
 
 function prometheus_install_phpfpm_exporter() {
@@ -2121,7 +2269,7 @@ EOF
     fi
   fi
 
-  run_command --makes-changes ${SERVICE_COMMAND} "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+  run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
 
   # Install php-fpm_exporter
   local phpfpm_exporter_version="2.2.0"
@@ -2152,8 +2300,8 @@ WantedBy=multi-user.target
 EOF
 
   run_command --makes-changes systemctl daemon-reload
-  run_command --makes-changes systemctl enable php-fpm_exporter
-  run_command --makes-changes systemctl start php-fpm_exporter
+  run_command --makes-changes service_manage php-fpm_exporter enable
+  run_command --makes-changes service_manage php-fpm_exporter start
 }
 
 function memcached_ensure() {
@@ -2173,7 +2321,7 @@ function memcached_ensure() {
   package_ensure "php${PHP_VERSION_MAJOR_MINOR}-memcached"
 
   # Start memcached service
-  run_command --makes-changes ${SERVICE_COMMAND} memcached start
+  run_command --makes-changes service_manage memcached start
 
   log verbose "Memcached installation completed."
 }
@@ -2196,7 +2344,7 @@ function mysql_verify() {
 
     # Check if MySQL service is running
     log verbose "Checking MySQL/MariaDB service status:"
-    if run_command systemctl is-active --quiet mysql || run_command systemctl is-active --quiet mariadb; then
+    if run_command service_manage mysql is-active || run_command service_manage mariadb is-active; then
       log verbose "MySQL/MariaDB service is running."
     else
       log verbose "MySQL/MariaDB service is not running."
@@ -2226,8 +2374,8 @@ function mysql_ensure() {
     package_ensure mariadb-server mariadb-client
 
     # Start and enable MariaDB service
-    run_command --makes-changes ${SERVICE_COMMAND} mariadb start
-    run_command --makes-changes systemctl enable mariadb
+    run_command --makes-changes service_manage mariadb start
+    run_command --makes-changes service_manage mariadb enable
 
     log verbose "MariaDB installation completed."
 
@@ -2273,7 +2421,7 @@ max_allowed_packet = 512M
 innodb_buffer_pool_size = 256M
 EOF
 
-    run_command --makes-changes ${SERVICE_COMMAND} mariadb restart
+    run_command --makes-changes service_manage mariadb restart
 
     log verbose "MySQL/MariaDB configuration completed."
     log info "Database: ${DB_NAME}"
@@ -2302,7 +2450,7 @@ function postgres_verify() {
 
     # Check if PostgreSQL service is running
     log verbose "Checking PostgreSQL service status:"
-    if run_command systemctl is-active --quiet postgresql; then
+    if run_command service_manage postgresql is-active; then
       log verbose "PostgreSQL service is running."
     else
       log verbose "PostgreSQL service is not running."
@@ -2350,8 +2498,8 @@ function postgres_ensure() {
     package_ensure "postgresql-${postgres_version}" "postgresql-contrib-${postgres_version}" libpq-dev
 
     # Start and enable PostgreSQL service
-    run_command --makes-changes ${SERVICE_COMMAND} postgresql start
-    run_command --makes-changes systemctl enable postgresql
+    run_command --makes-changes service_manage postgresql start
+    run_command --makes-changes service_manage postgresql enable
 
     log verbose "PostgreSQL installation completed."
 
@@ -2396,7 +2544,7 @@ function postgres_ensure() {
         echo "shared_buffers = 256MB" >> "$pg_config"
       fi
 
-      run_command --makes-changes ${SERVICE_COMMAND} postgresql restart
+      run_command --makes-changes service_manage postgresql restart
     fi
 
     log verbose "PostgreSQL configuration completed."
@@ -2504,7 +2652,8 @@ log_init
 detect_distro_and_codename
 
 # Check if the necessary dependencies are available before proceeding
-if ! tool_exists "add-apt-repository"; then
+# add-apt-repository is only needed on Ubuntu for PPA support
+if [ "$DISTRO" = "Ubuntu" ] && ! tool_exists "add-apt-repository"; then
   log error "add-apt-repository command not found. Please install software-properties-common."
   exit 1
 fi

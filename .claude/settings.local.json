@@ -35,7 +35,18 @@
       "Bash(curl -s https://nginx.org/en/linux_packages.html)",
       "Bash(podman-compose logs:*)",
       "Bash(podman logs:*)",
-      "Bash(podman-compose down:*)"
+      "Bash(podman-compose down:*)",
+      "Bash(podman-compose restart:*)",
+      "Bash(podman cp:*)",
+      "Read(//private/etc/**)",
+      "Bash(sudo tee:*)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(curl -k -I https://localhost:8443)",
+      "Bash(curl:*)",
+      "Bash(tee:*)",
+      "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"installation container testing\")",
+      "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"debugging verification\")",
+      "Read(//Users/nickromney/.config/superpowers/skills/skills/debugging/verification-before-completion/**)"
     ],
     "deny": []
   }

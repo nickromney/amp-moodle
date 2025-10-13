@@ -100,6 +100,11 @@ services:
     # Keep container running
     command: /bin/bash -c "sleep infinity"
 
+    # Port mappings for web access to Moodle
+    ports:
+      - "8080:80"    # HTTP
+      - "8443:443"   # HTTPS
+
     # Health check - verifies container is functional and laemp.sh is accessible
     # Compatible with cloud environments (ECS, Fargate, etc.)
     healthcheck:
