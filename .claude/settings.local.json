@@ -65,7 +65,14 @@
       "Bash(cat /etc/*:*)",
       "Bash(cat /var/*:*)",
       "Bash(ps aux:*)",
-      "Bash(podman system df:*)"
+      "Bash(podman system df:*)",
+      "Bash(laemp.sh)",
+      "Bash(time podman-compose exec:*)",
+      "Bash(podman volume rm:*)",
+      "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"dockerfile container layering\")",
+      "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"monitoring async testing\")",
+      "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle status --short)",
+      "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle diff --stat)"
     ],
     "deny": []
   }

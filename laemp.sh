@@ -1001,7 +1001,7 @@ function apache_create_vhost() {
   declare -n config=$1
   local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
 
-  local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
+  local required_options=("site_name" "document_root" "admin_email" "ssl_cert_file" "ssl_key_file")
   for option in "${required_options[@]}"; do
     if [[ -z "${config[$option]}" ]]; then
       log error "Missing required configuration option: $option"
@@ -1042,24 +1042,24 @@ function apache_create_vhost() {
     fpm_config="
     # PHP-FPM Configuration
     <FilesMatch \\.php$>
-        SetHandler \"proxy:unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${config["site-name"]}.sock|fcgi://localhost\"
+        SetHandler \"proxy:unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${config["site_name"]}.sock|fcgi://localhost\"
     </FilesMatch>"
   fi
 
   local vhost_config
   vhost_config=$(
     apply_template "$vhost_template" \
-      "site_name=${config["site-name"]}" \
-      "document_root=${config["document-root"]}" \
-      "admin_email=${config["admin-email"]}" \
-      "ssl_cert_file=${config["ssl-cert-file"]}" \
-      "ssl_key_file=${config["ssl-key-file"]}" \
+      "site_name=${config["site_name"]}" \
+      "document_root=${config["document_root"]}" \
+      "admin_email=${config["admin_email"]}" \
+      "ssl_cert_file=${config["ssl_cert_file"]}" \
+      "ssl_key_file=${config["ssl_key_file"]}" \
       "fpm_config=${fpm_config}" \
-      "include_file=${config["include-file"]}"
+      "include_file=${config["include_file"]}"
   )
 
-  echo "$vhost_config" >"/etc/apache2/sites-available/${config["site-name"]}.conf"
-  run_command --makes-changes a2ensite "${config["site-name"]}"
+  echo "$vhost_config" >"/etc/apache2/sites-available/${config["site_name"]}.conf"
+  run_command --makes-changes a2ensite "${config["site_name"]}"
   run_command --makes-changes service_manage "${APACHE_NAME}" reload
 }
 
@@ -1553,11 +1553,12 @@ function moodle_ensure() {
   fi
 
   declare -A vhost_config=(
-    ["site-name"]="${moodleSiteName}"
-    ["document-root"]="/var/www/html/${moodleSiteName}"
-    ["admin-email"]="admin@${moodleSiteName}"
-    ["ssl-cert-file"]="${ssl_cert_file}"
-    ["ssl-key-file"]="${ssl_key_file}"
+    ["site_name"]="${moodleSiteName}"
+    ["document_root"]="/var/www/html/${moodleSiteName}"
+    ["admin_email"]="admin@${moodleSiteName}"
+    ["ssl_cert_file"]="${ssl_cert_file}"
+    ["ssl_key_file"]="${ssl_key_file}"
+    ["include_file"]=""
   )
 
   if $APACHE_ENSURE; then
@@ -1906,7 +1907,7 @@ function nginx_create_vhost() {
   local logDir="${NGINX_LOG_DIR:-/var/log/nginx}"
 
   # Check if required configuration options are provided
-  local required_options=("site-name" "document-root" "admin-email" "ssl-cert-file" "ssl-key-file")
+  local required_options=("site_name" "document_root" "admin_email" "ssl_cert_file" "ssl_key_file")
   for option in "${required_options[@]}"; do
     if [[ -z "${config[$option]}" ]]; then
       log error "Missing required configuration option: $option"
@@ -1981,16 +1982,16 @@ server {
   local vhost_config
   vhost_config=$(
     apply_template "$vhost_template" \
-      "site_name=${config["site-name"]}" \
-      "document_root=${config["document-root"]}" \
-      "admin_email=${config["admin-email"]}" \
-      "ssl_cert_file=${config["ssl-cert-file"]}" \
-      "ssl_key_file=${config["ssl-key-file"]}" \
-      "include_file=${config["include-file"]}"
+      "site_name=${config["site_name"]}" \
+      "document_root=${config["document_root"]}" \
+      "admin_email=${config["admin_email"]}" \
+      "ssl_cert_file=${config["ssl_cert_file"]}" \
+      "ssl_key_file=${config["ssl_key_file"]}" \
+      "include_file=${config["include_file"]}"
   )
 
-  echo "$vhost_config" >"/etc/nginx/sites-available/${config["site-name"]}.conf"
-  run_command --makes-changes ln -s "/etc/nginx/sites-available/${config["site-name"]}.conf" "/etc/nginx/sites-enabled/"
+  echo "$vhost_config" >"/etc/nginx/sites-available/${config["site_name"]}.conf"
+  run_command --makes-changes ln -s "/etc/nginx/sites-available/${config["site_name"]}.conf" "/etc/nginx/sites-enabled/"
   run_command --makes-changes service_manage nginx reload
 }
 
