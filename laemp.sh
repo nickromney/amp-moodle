@@ -40,7 +40,7 @@ ACME_PROVIDER="staging"
 SELF_SIGNED_CERT=false
 
 # Moodle database
-DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
+DB_TYPE="mariadb" # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
 DB_HOST="localhost"
 DB_NAME="moodle"
 DB_USER="moodle"
@@ -217,6 +217,15 @@ tool_exists() {
   return 0
 }
 
+# Container detection helper
+is_container() {
+  # Check multiple indicators for container environment
+  [[ -f /.dockerenv ]] ||
+    [[ -f /run/.containerenv ]] ||
+    grep -q '/docker/' /proc/1/cgroup 2>/dev/null ||
+    [[ ! -d /run/systemd/system ]]
+}
+
 # Service management wrapper that works in containers and traditional servers
 # Usage: service_manage <service_name> <action>
 # Actions: start, stop, restart, reload, enable, is-active
@@ -225,6 +234,13 @@ service_manage() {
   local action="$2"
 
   log debug "Managing service $service_name with action $action"
+
+  # Detect container mode
+  local container_mode=false
+  if is_container; then
+    log debug "Container environment detected"
+    container_mode=true
+  fi
 
   # Smart handling for restart/reload: check if service is running first
   # If not running, convert restart/reload to start (idempotent)
@@ -235,275 +251,295 @@ service_manage() {
     fi
   fi
 
-  # Check if systemctl is available and systemd is running
-  if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
-    log debug "Using systemctl for service management"
-    case "$action" in
+  # Idempotency: Don't start if already running
+  if [[ "$action" == "start" ]] && service_manage "$service_name" is-active >/dev/null 2>&1; then
+    log verbose "Service $service_name already running, skipping start"
+    return 0
+  fi
+
+  # In container mode, skip straight to direct daemon management
+  if $container_mode; then
+    log debug "Container mode: skipping traditional service managers"
+  else
+    # Check if systemctl is available and systemd is running
+    if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
+      log debug "Using systemctl for service management"
+      case "$action" in
       is-active)
         systemctl is-active --quiet "$service_name"
+        return $?
         ;;
       *)
         systemctl "$action" "$service_name"
+        return $?
         ;;
-    esac
-  # Fall back to /etc/init.d/ scripts (works in containers without systemd)
-  elif [ -f "/etc/init.d/$service_name" ]; then
-    log debug "Using /etc/init.d/ for service management"
-    case "$action" in
+      esac
+    # Fall back to /etc/init.d/ scripts
+    elif [ -f "/etc/init.d/$service_name" ]; then
+      log debug "Using /etc/init.d/ for service management"
+      case "$action" in
       enable)
-        # Init scripts don't have enable, skip or use update-rc.d
         if command -v update-rc.d >/dev/null 2>&1; then
-          update-rc.d "$service_name" defaults || { log verbose "Service $service_name enable failed"; return 0; }
+          update-rc.d "$service_name" defaults || {
+            log verbose "Service $service_name enable failed"
+            return 0
+          }
         else
           log verbose "Skipping 'enable' for $service_name (init.d doesn't support it)"
         fi
+        return 0
         ;;
       is-active)
         if /etc/init.d/"$service_name" status >/dev/null 2>&1; then
-          return 0  # Service is active
+          return 0
         else
           log verbose "Service $service_name is not active"
-          return 1  # Service is not active
+          return 1
         fi
         ;;
       *)
-        # Try init.d script first
         if /etc/init.d/"$service_name" "$action" 2>/dev/null; then
           log verbose "Service $service_name $action succeeded via init.d"
           return 0
         else
-          log verbose "Service $service_name $action failed via init.d, trying direct daemon start..."
-          # Fall through to direct daemon management
+          log verbose "Service $service_name $action failed via init.d, trying direct daemon..."
         fi
         ;;
-    esac
-  # Try service command
-  elif command -v service >/dev/null 2>&1; then
-    log debug "Using service command for service management"
-    case "$action" in
+      esac
+    # Try service command
+    elif command -v service >/dev/null 2>&1; then
+      log debug "Using service command for service management"
+      case "$action" in
       enable)
         log verbose "Skipping 'enable' for $service_name (service command doesn't support it)"
+        return 0
         ;;
       is-active)
         if service "$service_name" status >/dev/null 2>&1; then
-          return 0  # Service is active
+          return 0
         else
           log verbose "Service $service_name is not active"
-          return 1  # Service is not active
+          return 1
         fi
         ;;
       *)
-        # Try service command first
         if service "$service_name" "$action" 2>/dev/null; then
           log verbose "Service $service_name $action succeeded via service command"
           return 0
         else
-          log verbose "Service $service_name $action failed via service command, trying direct daemon start..."
-          # Fall through to direct daemon management
+          log verbose "Service $service_name $action failed via service command, trying direct daemon..."
         fi
         ;;
-    esac
+      esac
+    fi
   fi
 
   # Final fallback: Direct daemon management for container environments
-  # This handles cases where systemd/init.d/service commands fail
   log debug "Attempting direct daemon management for $service_name"
 
   case "$service_name" in
-    nginx)
-      case "$action" in
-        start)
-          if pidof nginx >/dev/null 2>&1; then
-            log verbose "Nginx is already running"
+  nginx)
+    case "$action" in
+    start)
+      if pidof nginx >/dev/null 2>&1; then
+        log verbose "Nginx is already running"
+        return 0
+      fi
+      log verbose "Starting nginx directly..."
+      if nginx; then
+        # Wait for nginx to be responsive
+        for i in {1..10}; do
+          if nginx -t >/dev/null 2>&1 && pidof nginx >/dev/null 2>&1; then
+            log verbose "Nginx started and responding"
             return 0
           fi
-          log verbose "Starting nginx directly..."
-          if nginx; then
-            log verbose "Nginx started successfully"
-            return 0
-          else
-            log error "Failed to start nginx"
-            return 1
-          fi
-          ;;
-        stop)
-          if ! pidof nginx >/dev/null 2>&1; then
-            log verbose "Nginx is not running"
-            return 0
-          fi
-          log verbose "Stopping nginx directly..."
-          if nginx -s quit; then
-            log verbose "Nginx stopped successfully"
-            return 0
-          else
-            log error "Failed to stop nginx"
-            return 1
-          fi
-          ;;
-        reload)
-          if ! pidof nginx >/dev/null 2>&1; then
-            log verbose "Nginx is not running, cannot reload"
-            return 1
-          fi
-          log verbose "Reloading nginx directly..."
-          if nginx -s reload; then
-            log verbose "Nginx reloaded successfully"
-            return 0
-          else
-            log error "Failed to reload nginx"
-            return 1
-          fi
-          ;;
-        is-active)
-          pidof nginx >/dev/null 2>&1
-          ;;
-        enable)
-          log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
-          return 0
-          ;;
-      esac
+          sleep 0.5
+        done
+        log verbose "Nginx started successfully"
+        return 0
+      else
+        log error "Failed to start nginx"
+        return 1
+      fi
       ;;
-    php*-fpm)
-      # Extract PHP version from service name (e.g., php8.4-fpm -> 8.4)
-      local php_version
-      php_version=$(echo "$service_name" | sed -n 's/php\([0-9.]*\)-fpm/\1/p')
-
-      case "$action" in
-        start)
-          if pidof "php-fpm${php_version}" >/dev/null 2>&1; then
-            log verbose "PHP-FPM ${php_version} is already running"
-            return 0
-          fi
-          log verbose "Starting php-fpm${php_version} directly..."
-          if "php-fpm${php_version}"; then
-            log verbose "PHP-FPM ${php_version} started successfully"
-            return 0
-          else
-            log error "Failed to start PHP-FPM ${php_version}"
-            return 1
-          fi
-          ;;
-        stop)
-          if ! pidof "php-fpm${php_version}" >/dev/null 2>&1; then
-            log verbose "PHP-FPM ${php_version} is not running"
-            return 0
-          fi
-          log verbose "Stopping php-fpm${php_version} directly..."
-          if pkill -QUIT "php-fpm${php_version}"; then
-            log verbose "PHP-FPM ${php_version} stopped successfully"
-            return 0
-          else
-            log error "Failed to stop PHP-FPM ${php_version}"
-            return 1
-          fi
-          ;;
-        reload|restart)
-          if ! pidof "php-fpm${php_version}" >/dev/null 2>&1; then
-            log verbose "PHP-FPM ${php_version} is not running, starting..."
-            if "php-fpm${php_version}"; then
-              log verbose "PHP-FPM ${php_version} started successfully"
-              return 0
-            else
-              log error "Failed to start PHP-FPM ${php_version}"
-              return 1
-            fi
-          else
-            log verbose "Reloading php-fpm${php_version} directly..."
-            if pkill -USR2 "php-fpm${php_version}"; then
-              log verbose "PHP-FPM ${php_version} reloaded successfully"
-              return 0
-            else
-              log error "Failed to reload PHP-FPM ${php_version}"
-              return 1
-            fi
-          fi
-          ;;
-        is-active)
-          pidof "php-fpm${php_version}" >/dev/null 2>&1
-          ;;
-        enable)
-          log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
-          return 0
-          ;;
-      esac
+    stop)
+      if ! pidof nginx >/dev/null 2>&1; then
+        log verbose "Nginx is not running"
+        return 0
+      fi
+      log verbose "Stopping nginx directly..."
+      if nginx -s quit; then
+        log verbose "Nginx stopped successfully"
+        return 0
+      else
+        log error "Failed to stop nginx"
+        return 1
+      fi
       ;;
-    mariadb|mysql)
-      case "$action" in
-        start)
-          if pidof mariadbd >/dev/null 2>&1 || pidof mysqld >/dev/null 2>&1; then
-            log verbose "MariaDB/MySQL is already running"
-            return 0
-          fi
-          log verbose "Starting MariaDB/MySQL directly..."
-          # MariaDB/MySQL needs to be started with proper user and data directory
-          if command -v mariadbd >/dev/null 2>&1; then
-            mariadbd --user=mysql --datadir=/var/lib/mysql &
-            # Wait for MariaDB to be fully ready (not just started)
-            log verbose "Waiting for MariaDB to be ready..."
-            # shellcheck disable=SC2034
-            for i in {1..30}; do
-              if mysqladmin ping >/dev/null 2>&1; then
-                log verbose "MariaDB is ready"
-                return 0
-              fi
-              sleep 1
-            done
-            log error "MariaDB started but failed to become ready within 30 seconds"
-            return 1
-          elif command -v mysqld >/dev/null 2>&1; then
-            mysqld --user=mysql --datadir=/var/lib/mysql &
-            # Wait for MySQL to be fully ready
-            log verbose "Waiting for MySQL to be ready..."
-            # shellcheck disable=SC2034
-            for i in {1..30}; do
-              if mysqladmin ping >/dev/null 2>&1; then
-                log verbose "MySQL is ready"
-                return 0
-              fi
-              sleep 1
-            done
-            log error "MySQL started but failed to become ready within 30 seconds"
-            return 1
-          else
-            log error "Neither mariadbd nor mysqld found"
-            return 1
-          fi
-          ;;
-        stop)
-          if ! pidof mariadbd >/dev/null 2>&1 && ! pidof mysqld >/dev/null 2>&1; then
-            log verbose "MariaDB/MySQL is not running"
-            return 0
-          fi
-          log verbose "Stopping MariaDB/MySQL directly..."
-          if mysqladmin shutdown; then
-            log verbose "MariaDB/MySQL stopped successfully"
-            return 0
-          else
-            log error "Failed to stop MariaDB/MySQL"
-            return 1
-          fi
-          ;;
-        restart)
-          service_manage "$service_name" stop
-          service_manage "$service_name" start
-          ;;
-        is-active)
-          pidof mariadbd >/dev/null 2>&1 || pidof mysqld >/dev/null 2>&1
-          ;;
-        enable)
-          log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
-          return 0
-          ;;
-        *)
-          log verbose "Unsupported action '$action' for $service_name"
-          return 1
-          ;;
-      esac
+    reload)
+      if ! pidof nginx >/dev/null 2>&1; then
+        log verbose "Nginx is not running, cannot reload"
+        return 1
+      fi
+      log verbose "Reloading nginx directly..."
+      if nginx -s reload; then
+        log verbose "Nginx reloaded successfully"
+        return 0
+      else
+        log error "Failed to reload nginx"
+        return 1
+      fi
       ;;
-    *)
-      log verbose "Cannot manage service $service_name - no service manager available and no direct daemon handler (container environment)"
+    is-active)
+      pidof nginx >/dev/null 2>&1
+      ;;
+    enable)
+      log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
       return 0
       ;;
+    esac
+    ;;
+  php*-fpm)
+    # Extract PHP version from service name (e.g., php8.4-fpm -> 8.4)
+    local php_version
+    php_version=$(echo "$service_name" | sed -n 's/php\([0-9.]*\)-fpm/\1/p')
+
+    case "$action" in
+    start)
+      if pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+        log verbose "PHP-FPM ${php_version} is already running"
+        return 0
+      fi
+      log verbose "Starting php-fpm${php_version} directly..."
+      if "php-fpm${php_version}"; then
+        log verbose "PHP-FPM ${php_version} started successfully"
+        return 0
+      else
+        log error "Failed to start PHP-FPM ${php_version}"
+        return 1
+      fi
+      ;;
+    stop)
+      if ! pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+        log verbose "PHP-FPM ${php_version} is not running"
+        return 0
+      fi
+      log verbose "Stopping php-fpm${php_version} directly..."
+      if pkill -QUIT "php-fpm${php_version}"; then
+        log verbose "PHP-FPM ${php_version} stopped successfully"
+        return 0
+      else
+        log error "Failed to stop PHP-FPM ${php_version}"
+        return 1
+      fi
+      ;;
+    reload | restart)
+      if ! pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+        log verbose "PHP-FPM ${php_version} is not running, starting..."
+        if "php-fpm${php_version}"; then
+          log verbose "PHP-FPM ${php_version} started successfully"
+          return 0
+        else
+          log error "Failed to start PHP-FPM ${php_version}"
+          return 1
+        fi
+      else
+        log verbose "Reloading php-fpm${php_version} directly..."
+        # Use SIGUSR2 for reload, or just restart in containers
+        if pkill -SIGUSR2 "php-fpm${php_version}" 2>/dev/null || pkill -QUIT "php-fpm${php_version}"; then
+          sleep 1
+          "php-fpm${php_version}"
+          log verbose "PHP-FPM ${php_version} reloaded successfully"
+          return 0
+        else
+          log error "Failed to reload PHP-FPM ${php_version}"
+          return 1
+        fi
+      fi
+      ;;
+    is-active)
+      pidof "php-fpm${php_version}" >/dev/null 2>&1
+      ;;
+    enable)
+      log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
+      return 0
+      ;;
+    esac
+    ;;
+  mariadb | mysql)
+    case "$action" in
+    start)
+      if pidof mariadbd >/dev/null 2>&1 || pidof mysqld >/dev/null 2>&1; then
+        log verbose "MariaDB/MySQL is already running"
+        return 0
+      fi
+      log verbose "Starting MariaDB/MySQL directly..."
+      if command -v mariadbd >/dev/null 2>&1; then
+        mariadbd --user=mysql --datadir=/var/lib/mysql &
+        log verbose "Waiting for MariaDB to be ready..."
+        # shellcheck disable=SC2034
+        for i in {1..30}; do
+          if mysqladmin ping >/dev/null 2>&1; then
+            log verbose "MariaDB is ready"
+            return 0
+          fi
+          sleep 1
+        done
+        log error "MariaDB started but failed to become ready within 30 seconds"
+        return 1
+      elif command -v mysqld >/dev/null 2>&1; then
+        mysqld --user=mysql --datadir=/var/lib/mysql &
+        log verbose "Waiting for MySQL to be ready..."
+        # shellcheck disable=SC2034
+        for i in {1..30}; do
+          if mysqladmin ping >/dev/null 2>&1; then
+            log verbose "MySQL is ready"
+            return 0
+          fi
+          sleep 1
+        done
+        log error "MySQL started but failed to become ready within 30 seconds"
+        return 1
+      else
+        log error "Neither mariadbd nor mysqld found"
+        return 1
+      fi
+      ;;
+    stop)
+      if ! pidof mariadbd >/dev/null 2>&1 && ! pidof mysqld >/dev/null 2>&1; then
+        log verbose "MariaDB/MySQL is not running"
+        return 0
+      fi
+      log verbose "Stopping MariaDB/MySQL directly..."
+      if mysqladmin shutdown; then
+        log verbose "MariaDB/MySQL stopped successfully"
+        return 0
+      else
+        log error "Failed to stop MariaDB/MySQL"
+        return 1
+      fi
+      ;;
+    restart)
+      service_manage "$service_name" stop
+      service_manage "$service_name" start
+      ;;
+    is-active)
+      pidof mariadbd >/dev/null 2>&1 || pidof mysqld >/dev/null 2>&1
+      ;;
+    enable)
+      log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
+      return 0
+      ;;
+    *)
+      log verbose "Unsupported action '$action' for $service_name"
+      return 1
+      ;;
+    esac
+    ;;
+  *)
+    log verbose "Cannot manage service $service_name - no service manager available and no direct daemon handler"
+    return 0
+    ;;
   esac
 }
 
@@ -733,7 +769,7 @@ function acme_cert_provider() {
 function get_cert_path() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local domain=""
-  local cert_type="cert"  # "cert" or "key"
+  local cert_type="cert" # "cert" or "key"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1430,55 +1466,55 @@ function moodle_validate_php_version() {
 
   # Moodle/PHP compatibility matrix (October 2025)
   # Reference: https://docs.moodle.org/en/PHP
-  # Version format: 500=5.0.0, 501=5.1.0, 5003=5.0.3 (patch releases use 4 digits)
+  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5003=5.0.3 (patch releases use 4 digits)
   case "$moodle_version" in
-    "500" | "501" | "502" | "5003")
-      # Moodle 5.0+ requires PHP 8.2+ (supports 8.2, 8.3, 8.4)
-      # Moodle 5.1.0 (tag: MOODLE_501) released October 2025
-      if ! version_compare "$php_major_minor" "8.2"; then
-        log error "Moodle 5.0+ requires PHP 8.2 or higher (supports 8.2, 8.3, 8.4). Current: $php_version"
-        exit 1
-      fi
-      ;;
-    "404" | "405")
-      # Moodle 4.4-4.5 requires PHP 8.1+ (supports 8.1, 8.2, 8.3)
-      if ! version_compare "$php_major_minor" "8.1"; then
-        log error "Moodle 4.4-4.5 requires PHP 8.1 or higher (supports 8.1, 8.2, 8.3). Current: $php_version"
-        exit 1
-      fi
-      ;;
-    "402" | "403")
-      # Moodle 4.2-4.3 requires PHP 8.0+ (supports 8.0, 8.1, 8.2)
-      if ! version_compare "$php_major_minor" "8.0"; then
-        log error "Moodle 4.2-4.3 requires PHP 8.0 or higher (supports 8.0, 8.1, 8.2). Current: $php_version"
-        exit 1
-      fi
-      ;;
-    "401")
-      # Moodle 4.1 requires PHP 7.4+ (supports 7.4, 8.0, 8.1)
-      if ! version_compare "$php_major_minor" "7.4"; then
-        log error "Moodle 4.1 requires PHP 7.4 or higher (supports 7.4, 8.0, 8.1). Current: $php_version"
-        exit 1
-      fi
-      ;;
-    "400")
-      # Moodle 4.0 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
-      if ! version_compare "$php_major_minor" "7.3"; then
-        log error "Moodle 4.0 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
-        exit 1
-      fi
-      ;;
-    "311" | "312")
-      # Moodle 3.11 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
-      if ! version_compare "$php_major_minor" "7.3"; then
-        log error "Moodle 3.11 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
-        exit 1
-      fi
-      ;;
-    *)
-      log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
-      log verbose "Note: Default Moodle versions are 405 (4.5) and 500 (5.0)"
-      ;;
+  "500" | "501" | "502" | "5003")
+    # Moodle 5.0+ requires PHP 8.2+ (supports 8.2, 8.3, 8.4)
+    # Moodle 5.1.0 (tag: MOODLE_501) released October 2025
+    if ! version_compare "$php_major_minor" "8.2"; then
+      log error "Moodle 5.0+ requires PHP 8.2 or higher (supports 8.2, 8.3, 8.4). Current: $php_version"
+      exit 1
+    fi
+    ;;
+  "404" | "405")
+    # Moodle 4.4-4.5 requires PHP 8.1+ (supports 8.1, 8.2, 8.3)
+    if ! version_compare "$php_major_minor" "8.1"; then
+      log error "Moodle 4.4-4.5 requires PHP 8.1 or higher (supports 8.1, 8.2, 8.3). Current: $php_version"
+      exit 1
+    fi
+    ;;
+  "402" | "403")
+    # Moodle 4.2-4.3 requires PHP 8.0+ (supports 8.0, 8.1, 8.2)
+    if ! version_compare "$php_major_minor" "8.0"; then
+      log error "Moodle 4.2-4.3 requires PHP 8.0 or higher (supports 8.0, 8.1, 8.2). Current: $php_version"
+      exit 1
+    fi
+    ;;
+  "401")
+    # Moodle 4.1 requires PHP 7.4+ (supports 7.4, 8.0, 8.1)
+    if ! version_compare "$php_major_minor" "7.4"; then
+      log error "Moodle 4.1 requires PHP 7.4 or higher (supports 7.4, 8.0, 8.1). Current: $php_version"
+      exit 1
+    fi
+    ;;
+  "400")
+    # Moodle 4.0 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
+    if ! version_compare "$php_major_minor" "7.3"; then
+      log error "Moodle 4.0 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
+      exit 1
+    fi
+    ;;
+  "311" | "312")
+    # Moodle 3.11 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
+    if ! version_compare "$php_major_minor" "7.3"; then
+      log error "Moodle 3.11 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
+      exit 1
+    fi
+    ;;
+  *)
+    log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
+    log verbose "Note: Default Moodle versions are 405 (4.5) and 500 (5.0)"
+    ;;
   esac
 
   log verbose "PHP version $php_version is compatible with Moodle $moodle_version"
@@ -1628,7 +1664,7 @@ function nginx_create_optimized_config() {
   fi
 
   # Create optimized nginx.conf
-  cat > /etc/nginx/nginx.conf << 'EOF'
+  cat >/etc/nginx/nginx.conf <<'EOF'
 # Optimized Nginx Configuration
 # Based on best practices for performance and security
 
@@ -1732,7 +1768,7 @@ EOF
   run_command --makes-changes mkdir -p /etc/nginx/global
 
   # Create security configuration for uploads
-  cat > /etc/nginx/global/uploads-protection.conf << 'EOF'
+  cat >/etc/nginx/global/uploads-protection.conf <<'EOF'
 # Deny access to any files with a .php extension in uploads directories
 location ~* /uploads/.*\.php$ {
     deny all;
@@ -1748,14 +1784,15 @@ location ~ /\. {
 EOF
 
   # Create Moodle-specific security rules
-  cat > /etc/nginx/global/moodle-security.conf << 'EOF'
+  # Use unquoted heredoc to allow variable expansion for moodleDataDir
+  cat >/etc/nginx/global/moodle-security.conf <<EOF
 # Moodle Security Configuration
 #
 # X-Sendfile Support:
 # The /dataroot/ location allows Nginx to access and serve files from the moodledata
 # directory (which is stored OUTSIDE the web root for security). This only works when:
-# 1. Moodle's config.php has: $CFG->xsendfile = 'X-Accel-Redirect';
-# 2. And: $CFG->xsendfilealiases = array('/path/to/moodledata/' => '/dataroot/');
+# 1. Moodle's config.php has: \$CFG->xsendfile = 'X-Accel-Redirect';
+# 2. And: \$CFG->xsendfilealiases = array('${moodleDataDir}/' => '/dataroot/');
 #
 # This way, files are secure (outside web root) but can still be efficiently served by Nginx.
 
@@ -1773,7 +1810,7 @@ location ~ (/vendor/|/node_modules/|composer\.json|/readme|/README|readme\.txt|/
 # This location block makes it accessible ONLY via internal redirects from PHP
 location /dataroot/ {
     internal;  # Only accessible via internal redirects, not direct URLs
-    alias ${moodle_data_dir}/;  # Maps to the actual moodledata directory
+    alias ${moodleDataDir}/;  # Maps to the actual moodledata directory
 
     # Ensure proper content type detection
     add_header Content-Disposition 'attachment';
@@ -1789,7 +1826,7 @@ location = /xmlrpc.php {
 EOF
 
   # Create static files caching configuration
-  cat > /etc/nginx/global/static-files.conf << 'EOF'
+  cat >/etc/nginx/global/static-files.conf <<'EOF'
 # Cache static files
 location ~* \.(jpg|jpeg|png|gif|ico|webp|svg|css|js|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|gz|bz2|7z)$ {
     expires 30d;
@@ -1870,7 +1907,7 @@ function nginx_ensure() {
   package_ensure nginx
 
   # Create optimized Nginx configuration
-  nginx_create_optimized_config "${moodleDataDir}"
+  nginx_create_optimized_config
 
   # Should always be true, but just in case
   if $FPM_ENSURE; then
@@ -1903,22 +1940,34 @@ function nginx_create_vhost() {
 
   nginx_verify --exit-on-failure
 
+  # Use nameref to access the associative array
   declare -n config=$1
   local logDir="${NGINX_LOG_DIR:-/var/log/nginx}"
 
   # Check if required configuration options are provided
   local required_options=("site_name" "document_root" "admin_email" "ssl_cert_file" "ssl_key_file")
   for option in "${required_options[@]}"; do
-    if [[ -z "${config[$option]}" ]]; then
+    if [[ -z "${config[$option]:-}" ]]; then
       log error "Missing required configuration option: $option"
       exit 1
     fi
   done
 
-  local vhost_template="
+  # Extract values from config array to local variables
+  # This avoids issues with variable expansion in heredocs
+  local site_name="${config[site_name]}"
+  local document_root="${config[document_root]}"
+  local admin_email="${config[admin_email]}"
+  local ssl_cert_file="${config[ssl_cert_file]}"
+  local ssl_key_file="${config[ssl_key_file]}"
+  local include_file="${config[include_file]:-}"
+
+  # Create vhost configuration with direct variable substitution
+  # Using unquoted heredoc (EOF not 'EOF') to allow variable expansion
+  cat >"/etc/nginx/sites-available/${site_name}.conf" <<EOF
 server {
     listen 80;
-    server_name {{site_name}};
+    server_name ${site_name};
     location / {
         return 301 https://\$host\$request_uri;
     }
@@ -1926,21 +1975,21 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name {{site_name}};
+    server_name ${site_name};
 
-    root {{document_root}};
+    root ${document_root};
     index index.php index.html;
 
     # SSL Configuration
-    ssl_certificate {{ssl_cert_file}};
-    ssl_certificate_key {{ssl_key_file}};
+    ssl_certificate ${ssl_cert_file};
+    ssl_certificate_key ${ssl_key_file};
 
     # Security Headers for HTTPS
-    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # Logging
-    error_log ${logDir}/{{site_name}}.error.log;
-    access_log ${logDir}/{{site_name}}.access.log;
+    error_log ${logDir}/${site_name}.error.log;
+    access_log ${logDir}/${site_name}.access.log;
 
     # Include global security configurations
     include /etc/nginx/global/uploads-protection.conf;
@@ -1953,8 +2002,8 @@ server {
     }
 
     # PHP handling
-    location ~ [^/]\.php(/|$) {
-        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+    location ~ [^/]\.php(/|\$) {
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
         if (!-f \$document_root\$fastcgi_script_name) {
             return 404;
         }
@@ -1964,7 +2013,7 @@ server {
         fastcgi_param PATH_INFO \$fastcgi_path_info;
         fastcgi_param PATH_TRANSLATED \$document_root\$fastcgi_path_info;
 
-        fastcgi_pass unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-{{site_name}}.sock;
+        fastcgi_pass unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${site_name}.sock;
         fastcgi_index index.php;
 
         # Performance optimizations
@@ -1975,23 +2024,13 @@ server {
         fastcgi_read_timeout 300;
     }
 
-    {{include_file}}
+    ${include_file}
 }
-"
+EOF
 
-  local vhost_config
-  vhost_config=$(
-    apply_template "$vhost_template" \
-      "site_name=${config["site_name"]}" \
-      "document_root=${config["document_root"]}" \
-      "admin_email=${config["admin_email"]}" \
-      "ssl_cert_file=${config["ssl_cert_file"]}" \
-      "ssl_key_file=${config["ssl_key_file"]}" \
-      "include_file=${config["include_file"]}"
-  )
+  log verbose "Created nginx vhost configuration: /etc/nginx/sites-available/${site_name}.conf"
 
-  echo "$vhost_config" >"/etc/nginx/sites-available/${config["site_name"]}.conf"
-  run_command --makes-changes ln -s "/etc/nginx/sites-available/${config["site_name"]}.conf" "/etc/nginx/sites-enabled/"
+  run_command --makes-changes ln -sf "/etc/nginx/sites-available/${site_name}.conf" "/etc/nginx/sites-enabled/"
   run_command --makes-changes service_manage nginx reload
 }
 
@@ -2171,7 +2210,7 @@ function php_fpm_create_pool() {
 
   log verbose "Creating PHP-FPM pool configuration for ${pool_name}"
 
-  cat > "${pool_conf}" << EOF
+  cat >"${pool_conf}" <<EOF
 [${pool_name}]
 
 ; Pool user and group
@@ -2312,7 +2351,7 @@ function prometheus_ensure() {
   fi
 
   # Create Prometheus configuration
-  cat > /etc/prometheus/prometheus.yml << 'EOF'
+  cat >/etc/prometheus/prometheus.yml <<'EOF'
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -2342,7 +2381,7 @@ EOF
   run_command --makes-changes chown prometheus:prometheus /etc/prometheus/prometheus.yml
 
   # Create systemd service
-  cat > /etc/systemd/system/prometheus.service << 'EOF'
+  cat >/etc/systemd/system/prometheus.service <<'EOF'
 [Unit]
 Description=Prometheus
 Documentation=https://prometheus.io/docs/introduction/overview/
@@ -2409,7 +2448,7 @@ function prometheus_install_node_exporter() {
   fi
 
   # Create systemd service
-  cat > /etc/systemd/system/node_exporter.service << 'EOF'
+  cat >/etc/systemd/system/node_exporter.service <<'EOF'
 [Unit]
 Description=Node Exporter
 Wants=network-online.target
@@ -2437,7 +2476,7 @@ function prometheus_install_apache_exporter() {
   run_command --makes-changes a2enmod status
 
   # Configure Apache status page
-  cat > /etc/apache2/conf-available/server-status.conf << 'EOF'
+  cat >/etc/apache2/conf-available/server-status.conf <<'EOF'
 <Location "/server-status">
     SetHandler server-status
     Require local
@@ -2462,7 +2501,7 @@ EOF
   fi
 
   # Create systemd service
-  cat > /etc/systemd/system/apache_exporter.service << 'EOF'
+  cat >/etc/systemd/system/apache_exporter.service <<'EOF'
 [Unit]
 Description=Apache Exporter
 Wants=network-online.target
@@ -2487,7 +2526,7 @@ function prometheus_install_nginx_exporter() {
   log verbose "Installing Nginx Exporter"
 
   # Configure Nginx stub_status
-  cat > /etc/nginx/sites-available/stub_status << 'EOF'
+  cat >/etc/nginx/sites-available/stub_status <<'EOF'
 server {
     listen 127.0.0.1:8080;
     server_name localhost;
@@ -2517,7 +2556,7 @@ EOF
   fi
 
   # Create systemd service
-  cat > /etc/systemd/system/nginx_exporter.service << 'EOF'
+  cat >/etc/systemd/system/nginx_exporter.service <<'EOF'
 [Unit]
 Description=Nginx Prometheus Exporter
 Wants=network-online.target
@@ -2547,7 +2586,7 @@ function prometheus_install_phpfpm_exporter() {
   # Add status configuration to www pool
   if [ -f "${fpm_pool_dir}/www.conf" ]; then
     if ! grep -q "pm.status_path" "${fpm_pool_dir}/www.conf"; then
-      cat >> "${fpm_pool_dir}/www.conf" << 'EOF'
+      cat >>"${fpm_pool_dir}/www.conf" <<'EOF'
 
 ; Enable status page
 pm.status_path = /status
@@ -2569,7 +2608,7 @@ EOF
   fi
 
   # Create systemd service
-  cat > /etc/systemd/system/php-fpm_exporter.service << 'EOF'
+  cat >/etc/systemd/system/php-fpm_exporter.service <<'EOF'
 [Unit]
 Description=PHP-FPM Prometheus Exporter
 Wants=network-online.target
@@ -2706,7 +2745,7 @@ function mariadb_ensure() {
       db_password=$(openssl rand -base64 16 | tr -d "=+/")
 
       # Store password in /tmp with restricted permissions
-      echo "$db_password" > "$password_file"
+      echo "$db_password" >"$password_file"
       run_command --makes-changes chmod 600 "$password_file"
       log verbose "Generated new database password and stored in ${password_file}"
     fi
@@ -2728,7 +2767,7 @@ function mariadb_ensure() {
     log verbose "Configuring MySQL/MariaDB for Moodle requirements..."
 
     # Create Moodle-specific configuration file
-    cat > /etc/mysql/mariadb.conf.d/99-moodle.cnf << 'EOF'
+    cat >/etc/mysql/mariadb.conf.d/99-moodle.cnf <<'EOF'
 [mysqld]
 # Moodle requirements
 innodb_file_format = Barracuda
@@ -2849,7 +2888,7 @@ function postgres_ensure() {
 
     # Store password in /tmp with restricted permissions
     local password_file="/tmp/${DB_USER}-db_password"
-    echo "$db_password" > "$password_file"
+    echo "$db_password" >"$password_file"
     run_command --makes-changes chmod 600 "$password_file"
     log verbose "Database password stored in ${password_file}"
 
@@ -2878,10 +2917,10 @@ function postgres_ensure() {
 
       # Update configuration values
       if ! grep -q "^max_connections" "$pg_config"; then
-        echo "max_connections = 200" >> "$pg_config"
+        echo "max_connections = 200" >>"$pg_config"
       fi
       if ! grep -q "^shared_buffers" "$pg_config"; then
-        echo "shared_buffers = 256MB" >> "$pg_config"
+        echo "shared_buffers = 256MB" >>"$pg_config"
       fi
 
       run_command --makes-changes service_manage postgresql restart
@@ -2987,6 +3026,7 @@ function detect_distro_and_codename() {
 }
 
 # Script evaluation starts here
+# Script evaluation starts here
 
 log_init
 
@@ -3040,7 +3080,7 @@ while [[ $# -gt 0 ]]; do
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
       case "$2" in
       mariadb | mysql | mysqli)
-        DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
+        DB_TYPE="mariadb" # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
         MARIADB_ENSURE=true
         POSTGRES_ENSURE=false
         shift # past value
@@ -3059,7 +3099,7 @@ while [[ $# -gt 0 ]]; do
       esac
     else
       # Use the default value for DB_TYPE
-      DB_TYPE="mariadb"  # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
+      DB_TYPE="mariadb" # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
       MARIADB_ENSURE=true
       POSTGRES_ENSURE=false
     fi
