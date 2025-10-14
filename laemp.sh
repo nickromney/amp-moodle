@@ -1974,6 +1974,16 @@ function nginx_ensure() {
   run_command --makes-changes mkdir -p /etc/nginx/sites-available
   run_command --makes-changes mkdir -p /etc/nginx/sites-enabled
 
+  # Remove default nginx site to prevent port conflicts
+  if [ -f /etc/nginx/sites-enabled/default ]; then
+    log verbose "Removing default nginx site"
+    run_command --makes-changes rm -f /etc/nginx/sites-enabled/default
+  fi
+  if [ -f /etc/nginx/conf.d/default.conf ]; then
+    log verbose "Removing default nginx conf"
+    run_command --makes-changes rm -f /etc/nginx/conf.d/default.conf
+  fi
+
   # Create optimized Nginx configuration
   nginx_create_optimized_config
 
@@ -3114,11 +3124,14 @@ function main() {
   # Start PHP-FPM after all PHP packages/extensions are installed
   # This avoids socket conflicts during package installation triggers
   if $FPM_ENSURE; then
-    if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
+    # Use direct process check for reliability in containers
+    if ! pgrep "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
       log info "Starting PHP-FPM after all PHP packages are installed..."
       run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
     else
-      log verbose "PHP-FPM is already running"
+      log verbose "PHP-FPM is already running, sending reload signal..."
+      # Use direct signal instead of service manager to avoid is-active check issues in containers
+      run_command --makes-changes pkill -USR2 "php-fpm${PHP_VERSION_MAJOR_MINOR}"
     fi
   fi
 
