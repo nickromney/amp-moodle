@@ -54,6 +54,11 @@ moodleUser="moodle"
 
 # Site name
 moodleSiteName="moodle.romn.co"
+# Optional port for wwwroot URL (e.g., ":9443" for testing, empty for production)
+moodlePort="${MOODLE_PORT:-}"
+# Nginx listen port (extract numeric port from MOODLE_PORT, default to 443)
+nginxPort="${MOODLE_PORT#:}"  # Remove leading colon
+nginxPort="${nginxPort:-443}"  # Default to 443 if empty
 
 # Directories
 documentRoot="/var/www/html"
@@ -1219,7 +1224,7 @@ function moodle_config_files() {
       replace_file_value "\$CFG->dbuser\s*=\s*'username';" "\$CFG->dbuser = '${DB_USER}';" "$configFile"
       replace_file_value "\$CFG->dbpass\s*=\s*'password';" "\$CFG->dbpass = '${DB_PASS}';" "$configFile"
       replace_file_value "\$CFG->prefix\s*=\s*'mdl_';" "\$CFG->prefix = '${DB_PREFIX}';" "$configFile"
-      replace_file_value "\$CFG->wwwroot.*" "\$CFG->wwwroot   = 'https://${moodleSiteName}';" "$configFile"
+      replace_file_value "\$CFG->wwwroot.*" "\$CFG->wwwroot   = 'https://${moodleSiteName}${moodlePort}';" "$configFile"
       replace_file_value "\$CFG->dataroot.*" "\$CFG->dataroot  = '${moodleDataDir}';" "$configFile"
 
       # Add X-Sendfile configuration for Nginx if using Nginx
@@ -2004,7 +2009,8 @@ function nginx_ensure() {
   fi
 
   # Check nginx status before restart/reload
-  if service_manage nginx is-active >/dev/null 2>&1; then
+  # Use direct process check for reliability in containers
+  if pgrep nginx >/dev/null 2>&1; then
     log verbose "Nginx is running, reloading configuration..."
     run_command --makes-changes service_manage nginx reload
   else
@@ -2055,7 +2061,7 @@ server {
 }
 
 server {
-    listen 443 ssl;
+    listen ${nginxPort} ssl;
     http2 on;
     server_name ${site_name};
 
