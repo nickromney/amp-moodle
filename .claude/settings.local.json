@@ -72,7 +72,9 @@
       "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"dockerfile container layering\")",
       "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"monitoring async testing\")",
       "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle status --short)",
-      "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle diff --stat)"
+      "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle diff --stat)",
+      "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"debugging container\")",
+      "Read(//Users/nickromney/.config/superpowers/skills/skills/debugging/systematic-debugging/**)"
     ],
     "deny": []
   }

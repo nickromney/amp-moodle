@@ -20,9 +20,9 @@
 #   Debian → postgres-db:5432
 
 services:
-  # MySQL 8.4 Database Container for Ubuntu test
+  # MariaDB 10.11 Database Container for Ubuntu test (Moodle requires MariaDB, not MySQL)
   mysql-db:
-    image: mysql:8.4
+    image: mariadb:10.11
     container_name: laemp-mysql
     platform: linux/amd64
 
@@ -36,25 +36,24 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
 
-    # MySQL configuration for Moodle
+    # MariaDB configuration for Moodle with Barracuda file format
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
       --default-storage-engine=InnoDB
       --max-allowed-packet=512M
       --innodb-buffer-pool-size=256M
+      --innodb-file-format=Barracuda
+      --innodb-file-per-table=1
+      --innodb-large-prefix=1
 
     healthcheck:
       test:
         [
           "CMD",
-          "mysqladmin",
-          "ping",
-          "-h",
-          "localhost",
-          "-u",
-          "root",
-          "-prootpassword",
+          "healthcheck.sh",
+          "--connect",
+          "--innodb_initialized",
         ]
       interval: 10s
       timeout: 5s
@@ -126,8 +125,6 @@ services:
       - TZ=UTC
       - LANG=en_US.UTF-8
       - LC_ALL=en_US.UTF-8
-      - LANGUAGE=en_US.UTF-8
-      - LC_CTYPE=en_US.UTF-8
       # Database connection settings
       - DB_HOST=mysql-db
       - DB_TYPE=mariadb
@@ -146,7 +143,7 @@ services:
         sleep 2;
       done;
       echo 'MySQL is ready!' | tee -a /home/testuser/laemp-install.log;
-      if sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
+      if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
         EXIT_CODE=0;
         echo 'SUCCESS' > /home/testuser/install-status;
         echo '========================================' | tee -a /home/testuser/laemp-install.log;
@@ -202,8 +199,6 @@ services:
     depends_on:
       postgres-db:
         condition: service_healthy
-      moodle-test-ubuntu:
-        condition: service_healthy
 
     volumes:
       - ./laemp.sh:/usr/local/bin/laemp.sh:ro
@@ -216,8 +211,6 @@ services:
       - TZ=UTC
       - LANG=en_US.UTF-8
       - LC_ALL=en_US.UTF-8
-      - LANGUAGE=en_US.UTF-8
-      - LC_CTYPE=en_US.UTF-8
       # Database connection settings
       - DB_HOST=postgres-db
       - DB_TYPE=pgsql
@@ -236,7 +229,7 @@ services:
         sleep 2;
       done;
       echo 'PostgreSQL is ready!' | tee -a /home/testuser/laemp-install.log;
-      if sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d pgsql -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
+      if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d pgsql -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
         EXIT_CODE=0;
         echo 'SUCCESS' > /home/testuser/install-status;
         echo '========================================' | tee -a /home/testuser/laemp-install.log;

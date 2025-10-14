@@ -11,10 +11,9 @@
 set -euo pipefail
 
 # Set locale to avoid issues with apt
+# LC_ALL overrides all other LC_* variables, so we only need LANG and LC_ALL
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
-export LANGUAGE=en_US.UTF-8
-export LC_CTYPE=en_US.UTF-8
 
 # Define default options
 # I tend to leave these as false, and set with command line options
@@ -41,12 +40,13 @@ SELF_SIGNED_CERT=false
 SKIP_DB_SERVER=false
 
 # Moodle database
-DB_TYPE="mariadb" # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
-DB_HOST="localhost"
-DB_NAME="moodle"
-DB_USER="moodle"
-DB_PASS="moodle"
-DB_PREFIX="mdl_"
+# Use environment variables if set, otherwise use defaults
+DB_TYPE="${DB_TYPE:-mariadb}" # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
+DB_HOST="${DB_HOST:-localhost}"
+DB_NAME="${DB_NAME:-moodle}"
+DB_USER="${DB_USER:-moodle}"
+DB_PASS="${DB_PASS:-moodle}"
+DB_PREFIX="${DB_PREFIX:-mdl_}"
 
 # Users
 webserverUser="www-data"
@@ -448,7 +448,18 @@ service_manage() {
         log verbose "Reloading php-fpm${php_version} directly..."
         # Use SIGUSR2 for reload, or just restart in containers
         if pkill -SIGUSR2 "php-fpm${php_version}" 2>/dev/null || pkill -QUIT "php-fpm${php_version}"; then
-          sleep 1
+          # Wait for process to actually terminate (max 10 seconds)
+          local wait_count=0
+          while pidof "php-fpm${php_version}" >/dev/null 2>&1 && [ $wait_count -lt 50 ]; do
+            sleep 0.2
+            wait_count=$((wait_count + 1))
+          done
+
+          if pidof "php-fpm${php_version}" >/dev/null 2>&1; then
+            log error "PHP-FPM ${php_version} did not stop after 10 seconds"
+            return 1
+          fi
+
           "php-fpm${php_version}"
           log verbose "PHP-FPM ${php_version} reloaded successfully"
           return 0
@@ -1323,13 +1334,36 @@ function moodle_install_database() {
   local moodleDir="${1}"
 
   # Verify database is accessible before attempting installation
-  log verbose "Verifying database connection..."
-  if ! mysqladmin ping >/dev/null 2>&1; then
-    log error "MariaDB is not responding to ping. Checking service status..."
-    service_manage mariadb status || true
-    log error "Database is not accessible. Cannot proceed with Moodle installation."
-    exit 1
+  log verbose "Verifying database connection to ${DB_HOST}..."
+
+  if [ "${DB_TYPE}" == "pgsql" ]; then
+    # PostgreSQL check
+    if ! tool_exists pg_isready; then
+      log verbose "Installing postgresql-client for database connectivity check..."
+      package_ensure postgresql-client
+    fi
+    if ! pg_isready -h"${DB_HOST}" -U"${DB_USER}" >/dev/null 2>&1; then
+      log error "PostgreSQL at ${DB_HOST} is not responding."
+      log error "DB_HOST=${DB_HOST}, DB_USER=${DB_USER}, DB_NAME=${DB_NAME}"
+      log error "Cannot proceed with Moodle installation."
+      exit 1
+    fi
+  else
+    # MySQL/MariaDB check
+    if ! tool_exists mysqladmin; then
+      log info "Installing mariadb-client for database connectivity check..."
+      package_ensure mariadb-client
+      log info "mariadb-client installation complete"
+    fi
+    log info "Attempting to ping MySQL/MariaDB at ${DB_HOST}..."
+    if ! mysqladmin ping -h"${DB_HOST}" -u"${DB_USER}" -p"${DB_PASS}" >/dev/null 2>&1; then
+      log error "MySQL/MariaDB at ${DB_HOST} is not responding to ping."
+      log error "DB_HOST=${DB_HOST}, DB_USER=${DB_USER}, DB_NAME=${DB_NAME}"
+      log error "Cannot proceed with Moodle installation."
+      exit 1
+    fi
   fi
+
   log verbose "Database is accessible."
 
   # Check if Moodle is already installed by checking database schema
@@ -1606,9 +1640,16 @@ function moodle_ensure() {
     ssl_key_file=""
   fi
 
+  # Moodle 5.1+ uses /public/ subdirectory as web root for security
+  local web_root="/var/www/html/${moodleSiteName}"
+  if [ -d "/var/www/html/${moodleSiteName}/public" ]; then
+    web_root="${web_root}/public"
+    log verbose "Using Moodle 5.1+ public directory as web root: ${web_root}"
+  fi
+
   declare -A vhost_config=(
     ["site_name"]="${moodleSiteName}"
-    ["document_root"]="/var/www/html/${moodleSiteName}"
+    ["document_root"]="${web_root}"
     ["admin_email"]="admin@${moodleSiteName}"
     ["ssl_cert_file"]="${ssl_cert_file}"
     ["ssl_key_file"]="${ssl_key_file}"
@@ -1924,6 +1965,10 @@ function nginx_ensure() {
   # Install Nginx if not already installed
   package_ensure nginx
 
+  # Create Debian-style directory structure for vhosts (nginx.org packages don't create these)
+  run_command --makes-changes mkdir -p /etc/nginx/sites-available
+  run_command --makes-changes mkdir -p /etc/nginx/sites-enabled
+
   # Create optimized Nginx configuration
   nginx_create_optimized_config
 
@@ -1951,13 +1996,11 @@ function nginx_ensure() {
     # Now install PHP-FPM package
     package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
-    # Check if PHP-FPM is running, start if not
-    if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
-      log verbose "PHP-FPM is not running, starting..."
-      run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
-    else
-      log verbose "PHP-FPM is already running"
-    fi
+    # IMPORTANT: Do NOT start PHP-FPM here!
+    # Other PHP extensions may still be installed later (via moodle_ensure),
+    # which triggers package post-install scripts that attempt to restart php-fpm.
+    # Starting it now causes socket conflicts when those triggers run.
+    # PHP-FPM will be started below after nginx is configured.
   fi
 
   # Check nginx status before restart/reload
@@ -1970,6 +2013,7 @@ function nginx_ensure() {
   fi
 
   log verbose "Nginx installation and configuration completed."
+  log verbose "Note: PHP-FPM will be started after all PHP extensions are installed to avoid socket conflicts"
 }
 
 function nginx_create_vhost() {
@@ -2011,7 +2055,8 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name ${site_name};
 
     root ${document_root};
@@ -3058,6 +3103,17 @@ function main() {
   if $MOODLE_ENSURE; then
     log verbose "Ensuring Moodle..."
     moodle_ensure
+  fi
+
+  # Start PHP-FPM after all PHP packages/extensions are installed
+  # This avoids socket conflicts during package installation triggers
+  if $FPM_ENSURE; then
+    if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
+      log info "Starting PHP-FPM after all PHP packages are installed..."
+      run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+    else
+      log verbose "PHP-FPM is already running"
+    fi
   fi
 
   log verbose "checking PROMETHEUS_ENSURE"
