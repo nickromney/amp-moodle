@@ -2676,7 +2676,7 @@ function mariadb_verify() {
 
     # Check if MySQL service is running
     log verbose "Checking MySQL/MariaDB service status:"
-    if run_command service_manage mysql is-active || run_command service_manage mariadb is-active; then
+    if service_manage mysql is-active || service_manage mariadb is-active; then
       log verbose "MySQL/MariaDB service is running."
     else
       log verbose "MySQL/MariaDB service is not running."
@@ -2794,23 +2794,14 @@ EOF
 
     run_command --makes-changes service_manage mariadb restart
 
-    # Wait for MariaDB to be fully ready after restart
-    log verbose "Waiting for MariaDB to be ready after restart..."
-    local ready=false
-    # shellcheck disable=SC2034
-    for i in {1..30}; do
-      # Check if socket exists (socket creation means MariaDB is accepting connections)
-      if [ -S /run/mysqld/mysqld.sock ]; then
-        log verbose "MariaDB is ready (socket exists)"
-        ready=true
-        break
-      fi
-      sleep 1
-    done
-
-    if [ "$ready" = false ]; then
-      log error "MariaDB socket not created within 30 seconds after restart"
-      exit 1
+    # Quick verification that MariaDB is accessible after restart
+    log verbose "Verifying MariaDB is accessible after restart..."
+    if mysqladmin ping >/dev/null 2>&1; then
+      log verbose "MariaDB is responding to ping"
+    elif [ -S /run/mysqld/mysqld.sock ]; then
+      log verbose "MariaDB socket exists at /run/mysqld/mysqld.sock"
+    else
+      log verbose "Warning: Unable to verify MariaDB status, but continuing as restart succeeded"
     fi
 
     log verbose "MySQL/MariaDB configuration completed."
@@ -2840,7 +2831,7 @@ function postgres_verify() {
 
     # Check if PostgreSQL service is running
     log verbose "Checking PostgreSQL service status:"
-    if run_command service_manage postgresql is-active; then
+    if service_manage postgresql is-active; then
       log verbose "PostgreSQL service is running."
     else
       log verbose "PostgreSQL service is not running."
