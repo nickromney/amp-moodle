@@ -1,0 +1,111 @@
+# Ubuntu prerequisite image for laemp.sh
+# Ubuntu 24.04 LTS (Noble Numbat) - Released April 2024, supported until April 2029
+# This image installs all required packages but performs NO configuration.
+# Configuration is done by running: laemp.sh -c -m 501 -S -w nginx -d mariadb
+
+FROM ubuntu:24.04
+
+# Set environment variables to avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# Update and install base dependencies including BATS for testing
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    sudo \
+    tar \
+    unzip \
+    locales \
+    bats \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Generate locale
+RUN locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
+
+# Add Ondrej PHP PPA for Ubuntu
+RUN add-apt-repository -y ppa:ondrej/php
+
+# Add nginx.org official repository
+RUN curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor > /usr/share/keyrings/nginx-archive-keyring.gpg && \
+    echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu $(lsb_release -cs) nginx" > /etc/apt/sources.list.d/nginx.list && \
+    printf "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" > /etc/apt/preferences.d/99nginx
+
+# Install PHP 8.4 with all required extensions, Nginx, and MariaDB
+RUN apt-get update && apt-get install -y \
+    php8.4-cli \
+    php8.4-common \
+    php8.4-fpm \
+    php8.4-curl \
+    php8.4-gd \
+    php8.4-intl \
+    php8.4-mbstring \
+    php8.4-soap \
+    php8.4-xml \
+    php8.4-xmlrpc \
+    php8.4-zip \
+    php8.4-opcache \
+    php8.4-ldap \
+    php8.4-mysqli \
+    nginx \
+    mariadb-server \
+    mariadb-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Moodle runtime dependencies (Ubuntu 24.04 uses libaio1t64)
+RUN apt-get update && apt-get install -y \
+    ghostscript \
+    libaio1t64 \
+    libcurl4 \
+    libgss3 \
+    libmcrypt-dev \
+    libxml2 \
+    libxslt1.1 \
+    libzip-dev \
+    sassc \
+    unzip \
+    zip \
+    libmariadb3 \
+    openssl \
+    cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Composer globally
+RUN curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && \
+    php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && \
+    rm /tmp/composer-setup.php
+
+# Copy the laemp.sh script
+COPY laemp.sh /usr/local/bin/laemp.sh
+RUN chmod +x /usr/local/bin/laemp.sh
+
+# Create a non-root user for testing
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Create tests directory and copy test files
+RUN mkdir -p /home/testuser/tests
+COPY test_*.bats /home/testuser/tests/
+RUN chmod +x /home/testuser/tests/*.bats && \
+    chown -R testuser:testuser /home/testuser/tests
+
+# Set working directory
+WORKDIR /home/testuser
+
+# Switch to non-root user
+USER testuser
+
+# Healthcheck for cloud environments (ECS, Fargate, etc.)
+# Verifies container is functional and laemp.sh is accessible
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD test -x /usr/local/bin/laemp.sh && /bin/bash -c 'exit 0'
+
+# Default command
+CMD ["/bin/bash"]

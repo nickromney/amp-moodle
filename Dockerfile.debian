@@ -1,0 +1,52 @@
+# Debian test environment for laemp.sh
+FROM debian:13
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# Prevent services from auto-starting during package installation
+RUN echo '#!/bin/sh\nexit 101' > /usr/sbin/policy-rc.d && \
+    chmod +x /usr/sbin/policy-rc.d
+
+# Update and install base dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    gnupg \
+    lsb-release \
+    sudo \
+    tar \
+    unzip \
+    locales \
+    bats \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Generate locale
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen en_US.UTF-8 && \
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV LANG=en_US.UTF-8
+
+# Copy the script
+COPY laemp.sh /usr/local/bin/laemp.sh
+RUN chmod +x /usr/local/bin/laemp.sh
+
+# Create a non-root user for testing
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Create tests directory
+RUN mkdir -p /home/testuser/tests
+COPY test_*.bats /home/testuser/tests/
+RUN chmod +x /home/testuser/tests/*.bats && \
+    chown -R testuser:testuser /home/testuser/tests
+
+WORKDIR /home/testuser
+USER testuser
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD test -x /usr/local/bin/laemp.sh && /bin/bash -c 'exit 0'
+
+CMD ["/bin/bash"]

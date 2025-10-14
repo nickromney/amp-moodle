@@ -1,0 +1,296 @@
+# Podman Compose configuration for laemp.sh testing with separate database containers
+# Best practice: One service per container
+#
+# Architecture:
+#   - moodle-test-ubuntu: Ubuntu test environment → connects to mysql-db
+#   - moodle-test-debian: Debian test environment → connects to postgres-db
+#   - mysql-db: Official MySQL 8.4 container
+#   - postgres-db: Official PostgreSQL 16 container
+#
+# Quick Start:
+#   podman-compose up --build               # Build and start all containers
+#   ./monitor-installation.sh               # Monitor progress
+#
+# Access Moodle:
+#   https://moodle.romn.co:9443  # Ubuntu with MySQL
+#   https://moodle.romn.co:8443  # Debian with PostgreSQL
+#
+# Database connections:
+#   Ubuntu → mysql-db:3306
+#   Debian → postgres-db:5432
+
+services:
+  # MariaDB 10.11 Database Container for Ubuntu test (Moodle requires MariaDB, not MySQL)
+  mysql-db:
+    image: mariadb:10.11
+    container_name: laemp-mysql
+    platform: linux/amd64
+
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=moodle
+      - MYSQL_USER=moodle
+      - MYSQL_PASSWORD=moodlepass
+      - TZ=UTC
+
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+    # MariaDB configuration for Moodle with Barracuda file format
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-storage-engine=InnoDB
+      --max-allowed-packet=512M
+      --innodb-buffer-pool-size=256M
+      --innodb-file-format=Barracuda
+      --innodb-file-per-table=1
+      --innodb-large-prefix=1
+
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    networks:
+      - laemp-test-network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL 16 Database Container for Debian test
+  postgres-db:
+    image: postgres:16
+    container_name: laemp-postgres
+    platform: linux/amd64
+
+    environment:
+      - POSTGRES_DB=moodle
+      - POSTGRES_USER=moodle
+      - POSTGRES_PASSWORD=moodlepass
+      - TZ=UTC
+      - PGDATA=/var/lib/postgresql/data/pgdata
+
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moodle"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    networks:
+      - laemp-test-network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Ubuntu 24.04 Test Container with MySQL - COMMENTED OUT (Focusing on Debian)
+  # _moodle-test-ubuntu:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.ubuntu
+  #   image: amp-moodle-ubuntu:24.04
+  #   container_name: laemp-test-ubuntu
+  #   platform: linux/amd64
+
+  #   depends_on:
+  #     mysql-db:
+  #       condition: service_healthy
+
+  #   volumes:
+  #     - ./laemp.sh:/usr/local/bin/laemp.sh:ro
+  #     - ./verify-moodle.sh:/usr/local/bin/verify-moodle.sh:ro
+  #     - ubuntu-logs:/home/testuser/logs
+  #     - ubuntu-moodle:/var/www
+
+  #   environment:
+  #     - DEBIAN_FRONTEND=noninteractive
+  #     - TZ=UTC
+  #     - LC_ALL=en_US.UTF-8
+  #     - LANG=en_US.UTF-8
+  #     # Database connection settings
+  #     - DB_HOST=mysql-db
+  #     - DB_TYPE=mariadb
+  #     - DB_NAME=moodle
+  #     - DB_USER=moodle
+  #     - DB_PASS=moodlepass
+  #     - MOODLE_PORT=:9443
+
+  #   command: >
+  #     /bin/bash -c "
+  #     echo 'STARTING' > /home/testuser/install-status;
+  #     echo 'Starting laemp.sh installation with external MySQL...' | tee /home/testuser/laemp-install.log;
+  #     echo '========================================' | tee -a /home/testuser/laemp-install.log;
+  #     echo 'Waiting for MySQL to be ready...' | tee -a /home/testuser/laemp-install.log;
+  #     until timeout 1 bash -c 'cat < /dev/null > /dev/tcp/mysql-db/3306' 2>/dev/null; do
+  #       echo 'Waiting for MySQL...' | tee -a /home/testuser/laemp-install.log;
+  #       sleep 2;
+  #     done;
+  #     echo 'MySQL is ready!' | tee -a /home/testuser/laemp-install.log;
+  #     if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
+  #       EXIT_CODE=0;
+  #       echo 'SUCCESS' > /home/testuser/install-status;
+  #       echo '========================================' | tee -a /home/testuser/laemp-install.log;
+  #       echo 'laemp.sh completed SUCCESSFULLY' | tee -a /home/testuser/laemp-install.log;
+  #     else
+  #       EXIT_CODE=$$?;
+  #       echo 'FAILED' > /home/testuser/install-status;
+  #       echo '========================================' | tee -a /home/testuser/laemp-install.log;
+  #       echo 'laemp.sh FAILED with exit code:' $$EXIT_CODE | tee -a /home/testuser/laemp-install.log;
+  #     fi;
+  #     echo 'Container will continue running for inspection...' | tee -a /home/testuser/laemp-install.log;
+  #     exec sleep infinity
+  #     "
+
+  #   ports:
+  #     - "8090:80"
+  #     - "9443:9443"
+
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "2.0"
+  #         memory: 4G
+  #       reservations:
+  #         cpus: "1.0"
+  #         memory: 2G
+
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -k https://localhost >/dev/null 2>&1 || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 300s
+
+  #   networks:
+  #     - laemp-test-network
+
+  # Debian 13 Test Container with PostgreSQL
+  moodle-test-debian:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian
+    image: amp-moodle-debian:13
+    container_name: laemp-test-debian
+    platform: linux/amd64
+
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+    volumes:
+      - ./laemp.sh:/usr/local/bin/laemp.sh:ro
+      - ./verify-moodle.sh:/usr/local/bin/verify-moodle.sh:ro
+      - debian-logs:/home/testuser/logs
+      - debian-moodle:/var/www
+
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - TZ=UTC
+      - LC_ALL=en_US.UTF-8
+      - LANG=en_US.UTF-8
+      # Database connection settings
+      - DB_HOST=postgres-db
+      - DB_TYPE=pgsql
+      - DB_NAME=moodle
+      - DB_USER=moodle
+      - DB_PASS=moodlepass
+      - MOODLE_PORT=:8443
+
+    command: >
+      /bin/bash -c "
+      echo 'STARTING' > /home/testuser/install-status;
+      echo 'Starting laemp.sh installation with external PostgreSQL...' | tee /home/testuser/laemp-install.log;
+      echo '========================================' | tee -a /home/testuser/laemp-install.log;
+      echo 'Waiting for PostgreSQL to be ready...' | tee -a /home/testuser/laemp-install.log;
+      until timeout 1 bash -c 'cat < /dev/null > /dev/tcp/postgres-db/5432' 2>/dev/null; do
+        echo 'Waiting for PostgreSQL...' | tee -a /home/testuser/laemp-install.log;
+        sleep 2;
+      done;
+      echo 'PostgreSQL is ready!' | tee -a /home/testuser/laemp-install.log;
+      if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d pgsql -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
+        EXIT_CODE=0;
+        echo 'SUCCESS' > /home/testuser/install-status;
+        echo '========================================' | tee -a /home/testuser/laemp-install.log;
+        echo 'laemp.sh completed SUCCESSFULLY' | tee -a /home/testuser/laemp-install.log;
+        echo '========================================' | tee -a /home/testuser/laemp-install.log;
+        echo 'MOODLE LOGIN CREDENTIALS' | tee -a /home/testuser/laemp-install.log;
+        echo '========================================' | tee -a /home/testuser/laemp-install.log;
+        echo 'URL: https://moodle.romn.co:8443/' | tee -a /home/testuser/laemp-install.log;
+        echo 'Username: admin' | tee -a /home/testuser/laemp-install.log;
+        grep 'Admin password:' /home/testuser/laemp-install.log | tail -1 | tee -a /home/testuser/laemp-install.log;
+        echo '========================================' | tee -a /home/testuser/laemp-install.log;
+      else
+        EXIT_CODE=$$?;
+        echo 'FAILED' > /home/testuser/install-status;
+        echo '========================================' | tee -a /home/testuser/laemp-install.log;
+        echo 'laemp.sh FAILED with exit code:' $$EXIT_CODE | tee -a /home/testuser/laemp-install.log;
+      fi;
+      echo 'Container will continue running for inspection...' | tee -a /home/testuser/laemp-install.log;
+      exec sleep infinity
+      "
+
+    ports:
+      - "8080:80"
+      - "8443:8443"
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -k https://localhost >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+    networks:
+      - laemp-test-network
+
+volumes:
+  mysql-data:
+    name: laemp-mysql-data
+  postgres-data:
+    name: laemp-postgres-data
+  ubuntu-logs:
+    name: laemp-ubuntu-logs
+  ubuntu-moodle:
+    name: laemp-ubuntu-moodle
+  debian-logs:
+    name: laemp-debian-logs
+  debian-moodle:
+    name: laemp-debian-moodle
+
+networks:
+  laemp-test-network:
+    name: laemp-test-net
+    driver: bridge

@@ -1,0 +1,24 @@
+{
+  "name": "amp-moodle-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for AMP Moodle stack using Playwright",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report"
+  },
+  "keywords": [
+    "moodle",
+    "testing",
+    "playwright",
+    "e2e"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,66 @@
+# Gitleaks configuration for Azure Terraform/Terragrunt repository
+# Custom rules focused on Azure credentials
+
+# Azure Subscription ID pattern
+[[rules]]
+id = "azure-subscription-id"
+description = "Azure Subscription ID"
+regex = '''subscription_id\s*=\s*"([0-9a-f-]+)"'''
+secretGroup = 1
+tags = ["azure", "subscription"]
+
+# Azure tenant ID
+[[rules]]
+id = "azure-tenant-id"
+description = "Azure Tenant ID"
+regex = '''tenant_id\s*=\s*"([0-9a-f-]+)"'''
+secretGroup = 1
+tags = ["azure", "tenant"]
+
+# Azure client ID
+[[rules]]
+id = "azure-client-id"
+description = "Azure Client ID"
+regex = '''client_id\s*=\s*"([0-9a-f-]+)"'''
+secretGroup = 1
+tags = ["azure", "client"]
+
+# Azure client secret (ARM_CLIENT_SECRET pattern)
+[[rules]]
+id = "azure-client-secret"
+description = "Azure Service Principal Client Secret"
+regex = '''client_secret\s*=\s*"([a-zA-Z0-9~_.-]{30,})"'''
+secretGroup = 1
+tags = ["azure", "secret", "critical"]
+
+# Generic API keys and secrets (common patterns)
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?'''
+secretGroup = 2
+tags = ["key", "api"]
+
+# AWS Access Keys
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key ID"
+regex = '''(?i)(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+tags = ["aws", "key"]
+
+# Global allowlist for all rules
+[allowlist]
+description = "Allowlisted files and patterns"
+paths = [
+  '''.git/''',
+  '''go.sum''',
+  '''.terraform/''',
+  '''.terragrunt-cache/''',
+  '''.*\.tfvars\.example$''',
+  '''.*\.lock\.hcl$''',
+  '''.*README.*''',
+  '''.*\.md$''',
+]
+regexes = [
+  '''var\.(subscription_id|tenant_id|client_id)''',  # Allow variable references
+]
