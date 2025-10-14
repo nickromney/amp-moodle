@@ -534,7 +534,7 @@
   run ./laemp.sh -p -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  # Should use default PHP version (8.3)
+  # Should use default PHP version (8.4)
   [[ "$output" =~ "Ensure PHP version 8.4" ]]
 }
 

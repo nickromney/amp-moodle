@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2289
 # This shebang line uses the env command to locate the bash interpreter in the user's PATH
 #  environment variable. This means that the script will be executed with the bash interpreter
 #  that is found first in the user's PATH. This approach is more flexible and portable because
@@ -494,8 +493,7 @@ service_manage() {
       if command -v mariadbd >/dev/null 2>&1; then
         mariadbd --user=mysql --datadir=/var/lib/mysql &
         log verbose "Waiting for MariaDB to be ready..."
-        # shellcheck disable=SC2034
-        for i in {1..30}; do
+        for _ in {1..30}; do
           # Check if socket exists (socket creation means MariaDB is accepting connections)
           if [ -S /run/mysqld/mysqld.sock ]; then
             log verbose "MariaDB is ready (socket exists)"
@@ -508,8 +506,7 @@ service_manage() {
       elif command -v mysqld >/dev/null 2>&1; then
         mysqld --user=mysql --datadir=/var/lib/mysql &
         log verbose "Waiting for MySQL to be ready..."
-        # shellcheck disable=SC2034
-        for i in {1..30}; do
+        for _ in {1..30}; do
           # Check if socket exists (socket creation means MySQL is accepting connections)
           if [ -S /run/mysqld/mysqld.sock ]; then
             log verbose "MySQL is ready (socket exists)"
@@ -1614,9 +1611,7 @@ function moodle_ensure() {
   moodle_download_extract "${moodleDir}" "${webserverUser}" "${MOODLE_VERSION}"
   moodle_dependencies
   moodle_composer_install "${moodleDir}"
-  log info "DEBUG: DB_PASS before moodle_config_files: ${DB_PASS}"
   moodle_config_files "${moodleDir}"
-  log info "DEBUG: DB_PASS after moodle_config_files: ${DB_PASS}"
   moodle_install_database "${moodleDir}"
   setup_moodle_cron "${moodleDir}"
 
@@ -3106,7 +3101,6 @@ function main() {
   if $MARIADB_ENSURE && ! $SKIP_DB_SERVER; then
     log verbose "Ensuring MySQL/MariaDB..."
     mariadb_ensure
-    log info "DEBUG: DB_PASS after mariadb_ensure: ${DB_PASS}"
   fi
 
   log verbose "checking POSTGRES_ENSURE"
