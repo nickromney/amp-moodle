@@ -12,12 +12,14 @@ This document describes the prerequisite images implementation and explains when
 ## Quick Start
 
 **For full bootstrap testing (tests package installation):**
+
 ```bash
 podman run -it amp-moodle-ubuntu:24.04
 sudo laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
 ```
 
 **For last mile testing (tests configuration only):**
+
 ```bash
 podman run -it amp-moodle-prereqs-ubuntu
 sudo laemp.sh -c -m 501 -S -w nginx -d mariadb  # Note: no -p flag needed
@@ -35,12 +37,14 @@ sudo laemp.sh -c -m 501 -S -w nginx -d mariadb  # Note: no -p flag needed
 ### Two Independent Image Sets
 
 **Stock Images (Full Bootstrap):**
+
 ```
 ubuntu:24.04 → + base tools only → amp-moodle-ubuntu:24.04
 debian:13 → + base tools only → amp-moodle-debian:13
 ```
 
 **Prerequisite Images (Last Mile):**
+
 ```
 ubuntu:24.04 → + base tools + PHP + Nginx + MariaDB → amp-moodle-prereqs-ubuntu
 debian:13 → + base tools + PHP + Nginx + MariaDB → amp-moodle-prereqs-debian
@@ -57,10 +61,12 @@ Based on laemp.sh analysis (lines 2052-2106, 1822-1898, 2649-2764), the prereq i
 ### 1. PHP 8.4 Packages
 
 **Repository Setup:**
+
 - Ubuntu: Ondrej PPA (`ppa:ondrej/php`)
 - Debian: Sury repository (`deb https://packages.sury.org/php/ $CODENAME main`)
 
 **Packages:**
+
 - Core: `php8.4-cli`, `php8.4-common`, `php8.4-fpm`
 - Extensions (from `moodle_ensure()` lines 1495-1513):
   - `php8.4-curl` - HTTP requests
@@ -78,17 +84,20 @@ Based on laemp.sh analysis (lines 2052-2106, 1822-1898, 2649-2764), the prereq i
 ### 2. Nginx
 
 **Repository Setup:**
+
 - Both distros: nginx.org official repository
 - GPG key: `https://nginx.org/keys/nginx_signing.key`
 - Repository: `http://nginx.org/packages/mainline/{ubuntu|debian} $CODENAME nginx`
 - APT pinning: Priority 900 for nginx.org packages
 
 **Package:**
+
 - `nginx` (mainline branch from official repository)
 
 ### 3. MariaDB
 
 **Packages:**
+
 - `mariadb-server`
 - `mariadb-client`
 
@@ -97,6 +106,7 @@ Based on laemp.sh analysis (lines 2052-2106, 1822-1898, 2649-2764), the prereq i
 ### 4. Additional Dependencies
 
 **From `moodle_dependencies()` (lines 1066-1102):**
+
 - `ghostscript` - PDF generation
 - `libaio1` or `libaio1t64` (Debian 13+) - Async I/O
 - `libcurl4` - HTTP client library
@@ -110,6 +120,7 @@ Based on laemp.sh analysis (lines 2052-2106, 1822-1898, 2649-2764), the prereq i
 - `libmariadb3` - MariaDB client library
 
 **Tools:**
+
 - `composer` - PHP dependency manager (installed via install script in `moodle_composer_install()`)
 - `openssl` - SSL/TLS toolkit
 - `cron` - Scheduled task daemon
@@ -307,6 +318,7 @@ podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian:13
 This project maintains **two distinct sets of Docker images** for different testing scenarios:
 
 ### 1. Stock Images (Full Bootstrap Testing)
+
 - **Files**: `Dockerfile.ubuntu`, `Dockerfile.debian`
 - **Base**: `ubuntu:24.04`, `debian:13`
 - **Contents**: Only base tools (wget, curl, git, bats, sudo, etc.)
@@ -314,6 +326,7 @@ This project maintains **two distinct sets of Docker images** for different test
 - **Images**: `amp-moodle-ubuntu:24.04`, `amp-moodle-debian:13`
 
 ### 2. Prerequisite Images (Last Mile Testing)
+
 - **Files**: `Dockerfile.prereqs.ubuntu`, `Dockerfile.prereqs.debian`
 - **Base**: `ubuntu:24.04`, `debian:13`
 - **Contents**: PHP 8.4, Nginx, MariaDB, Composer, all dependencies pre-installed
@@ -321,6 +334,7 @@ This project maintains **two distinct sets of Docker images** for different test
 - **Images**: `amp-moodle-prereqs-ubuntu`, `amp-moodle-prereqs-debian`
 
 **Why maintain both?**
+
 - Stock images verify laemp.sh can install all packages correctly
 - Prereqs images enable fast iteration when testing configuration changes
 - Both are needed for comprehensive testing of laemp.sh functionality
@@ -342,6 +356,7 @@ sudo laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
 ```
 
 **What this tests:**
+
 - ✅ Repository addition (Ondrej/Sury for PHP, nginx.org for Nginx)
 - ✅ Package installation (PHP 8.4, Nginx, MariaDB, all extensions)
 - ✅ Service initialization
@@ -384,6 +399,7 @@ sudo laemp.sh -c -m 501 -S -w nginx -d mariadb
 ```
 
 **What this tests:**
+
 - ✅ Package detection (skips reinstallation)
 - ✅ Configuration generation (Nginx, PHP-FPM, MariaDB)
 - ✅ Moodle installation

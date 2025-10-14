@@ -38,6 +38,7 @@ APACHE_NAME="apache2" # Change to "httpd" for CentOS
 ACME_CERT=false
 ACME_PROVIDER="staging"
 SELF_SIGNED_CERT=false
+SKIP_DB_SERVER=false
 
 # Moodle database
 DB_TYPE="mariadb" # Moodle uses 'mariadb' driver for MariaDB (not 'mysqli' or 'mysql')
@@ -701,10 +702,6 @@ function replace_file_value() {
 }
 
 function run_command() {
-  if [[ ! -t 0 ]]; then
-    cat
-  fi
-
   local makes_changes=false # Default to false
 
   if [[ "$1" == "--makes-changes" ]]; then
@@ -1000,7 +997,26 @@ function apache_ensure() {
     run_command --makes-changes a2enmod expires
 
     if $FPM_ENSURE; then
-      log verbose "Installing PHP FPM for non-macOS systems..."
+      log verbose "Installing PHP FPM for Apache..."
+
+      # CRITICAL: Clean up before package installation to prevent socket conflicts
+      # Stop any existing PHP-FPM processes (from failed previous runs)
+      if pidof "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
+        log verbose "Stopping existing PHP-FPM processes before package installation"
+        pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
+        sleep 1
+      fi
+
+      # Remove any stale socket files that might exist
+      log verbose "Cleaning up any stale PHP-FPM socket files"
+      run_command --makes-changes rm -f "/run/php/php${PHP_VERSION_MAJOR_MINOR}-fpm.sock" 2>/dev/null || true
+      run_command --makes-changes rm -f "/run/php/php${PHP_VERSION_MAJOR_MINOR}-*.sock" 2>/dev/null || true
+
+      # Ensure socket directory exists with correct permissions
+      run_command --makes-changes mkdir -p "/run/php"
+      run_command --makes-changes chmod 755 "/run/php"
+
+      # Now install PHP-FPM packages
       package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
       package_ensure "libapache2-mod-fcgid"
 
@@ -1914,10 +1930,26 @@ function nginx_ensure() {
   # Should always be true, but just in case
   if $FPM_ENSURE; then
     log verbose "Installing PHP FPM for Nginx..."
-    package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
-    # Ensure socket directory exists
+    # CRITICAL: Clean up before package installation to prevent socket conflicts
+    # Stop any existing PHP-FPM processes (from failed previous runs)
+    if pidof "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
+      log verbose "Stopping existing PHP-FPM processes before package installation"
+      pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
+      sleep 1
+    fi
+
+    # Remove any stale socket files that might exist
+    log verbose "Cleaning up any stale PHP-FPM socket files"
+    run_command --makes-changes rm -f "/run/php/php${PHP_VERSION_MAJOR_MINOR}-fpm.sock" 2>/dev/null || true
+    run_command --makes-changes rm -f "/run/php/php${PHP_VERSION_MAJOR_MINOR}-*.sock" 2>/dev/null || true
+
+    # Ensure socket directory exists with correct permissions
     run_command --makes-changes mkdir -p "/run/php"
+    run_command --makes-changes chmod 755 "/run/php"
+
+    # Now install PHP-FPM package
+    package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
     # Check if PHP-FPM is running, start if not
     if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
@@ -2209,6 +2241,34 @@ function php_fpm_create_pool() {
   local pool_group="${3:-www-data}"
   local listen_user="${4:-www-data}"
   local listen_group="${5:-www-data}"
+
+  # Ensure PHP-FPM is completely stopped before reconfiguring
+  if pidof "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
+    log verbose "Stopping existing PHP-FPM processes before reconfiguring"
+    pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
+    sleep 1
+  fi
+
+  # Clean up any stale socket files from package installation
+  local socket_file="/run/php/php${PHP_VERSION_MAJOR_MINOR}-fpm.sock"
+  if [ -S "$socket_file" ] || [ -e "$socket_file" ]; then
+    log verbose "Removing stale socket file: ${socket_file}"
+    run_command --makes-changes rm -f "$socket_file"
+  fi
+
+  # Also clean up the custom pool socket if it exists
+  local custom_socket="/run/php/php${PHP_VERSION_MAJOR_MINOR}-${pool_name}.sock"
+  if [ -S "$custom_socket" ] || [ -e "$custom_socket" ]; then
+    log verbose "Removing stale custom socket: ${custom_socket}"
+    run_command --makes-changes rm -f "$custom_socket"
+  fi
+
+  # Disable default www pool to avoid conflicts
+  local default_pool="/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d/www.conf"
+  if [ -f "$default_pool" ]; then
+    log verbose "Disabling default www pool to avoid socket conflicts"
+    run_command --makes-changes mv "$default_pool" "${default_pool}.disabled"
+  fi
 
   # Create the pool configuration file
   local pool_conf="/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d/${pool_name}.conf"
@@ -2982,14 +3042,14 @@ function main() {
   fi
 
   log verbose "checking MARIADB_ENSURE"
-  if $MARIADB_ENSURE; then
+  if $MARIADB_ENSURE && ! $SKIP_DB_SERVER; then
     log verbose "Ensuring MySQL/MariaDB..."
     mariadb_ensure
     log info "DEBUG: DB_PASS after mariadb_ensure: ${DB_PASS}"
   fi
 
   log verbose "checking POSTGRES_ENSURE"
-  if $POSTGRES_ENSURE; then
+  if $POSTGRES_ENSURE && ! $SKIP_DB_SERVER; then
     log verbose "Ensuring PostgreSQL..."
     postgres_ensure
   fi
@@ -3182,6 +3242,11 @@ while [[ $# -gt 0 ]]; do
 
   -r | --prometheus)
     PROMETHEUS_ENSURE=true
+    shift
+    ;;
+
+  --skip-db-server)
+    SKIP_DB_SERVER=true
     shift
     ;;
 

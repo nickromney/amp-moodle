@@ -1,14 +1,14 @@
 # Debian test environment for laemp.sh
-# Debian 13 (Trixie) - Released August 2025, supported until August 2028 (LTS until June 2030)
-# This is a STOCK image for FULL bootstrap testing of laemp.sh
 FROM debian:13
 
-# Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
-# Update and install base dependencies including BATS for testing
-# Note: software-properties-common is Ubuntu-specific, not needed in Debian
+# Prevent services from auto-starting during package installation
+RUN echo '#!/bin/sh\nexit 101' > /usr/sbin/policy-rc.d && \
+    chmod +x /usr/sbin/policy-rc.d
+
+# Update and install base dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -18,13 +18,12 @@ RUN apt-get update && apt-get install -y \
     tar \
     unzip \
     locales \
-    ca-certificates \
     bats \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 # Generate locale
-RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
@@ -37,22 +36,16 @@ RUN chmod +x /usr/local/bin/laemp.sh
 RUN useradd -m -s /bin/bash testuser && \
     echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Create tests directory and copy test files
+# Create tests directory
 RUN mkdir -p /home/testuser/tests
 COPY test_*.bats /home/testuser/tests/
 RUN chmod +x /home/testuser/tests/*.bats && \
     chown -R testuser:testuser /home/testuser/tests
 
-# Set working directory
 WORKDIR /home/testuser
-
-# Switch to non-root user
 USER testuser
 
-# Healthcheck for cloud environments (ECS, Fargate, etc.)
-# Verifies container is functional and laemp.sh is accessible
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
     CMD test -x /usr/local/bin/laemp.sh && /bin/bash -c 'exit 0'
 
-# Default command
 CMD ["/bin/bash"]

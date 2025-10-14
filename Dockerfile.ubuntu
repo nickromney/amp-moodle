@@ -1,13 +1,14 @@
 # Ubuntu test environment for laemp.sh
-# Ubuntu 24.04 LTS (Noble Numbat) - Released April 2024, supported until April 2029
-# This is a STOCK image for FULL bootstrap testing of laemp.sh
 FROM ubuntu:24.04
 
-# Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
-# Update and install base dependencies including BATS for testing
+# Prevent services from auto-starting during package installation (critical for containers)
+RUN echo '#!/bin/sh\nexit 101' > /usr/sbin/policy-rc.d && \
+    chmod +x /usr/sbin/policy-rc.d
+
+# Update and install base dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -42,16 +43,10 @@ COPY test_*.bats /home/testuser/tests/
 RUN chmod +x /home/testuser/tests/*.bats && \
     chown -R testuser:testuser /home/testuser/tests
 
-# Set working directory
 WORKDIR /home/testuser
-
-# Switch to non-root user
 USER testuser
 
-# Healthcheck for cloud environments (ECS, Fargate, etc.)
-# Verifies container is functional and laemp.sh is accessible
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
     CMD test -x /usr/local/bin/laemp.sh && /bin/bash -c 'exit 0'
 
-# Default command
 CMD ["/bin/bash"]

@@ -77,6 +77,7 @@ sudo laemp.sh -c -m 501 -S -w nginx -d mariadb  # Note: no -p flag
 ```
 
 **When to use each:**
+
 - **Stock images**: Verify package installation, test repository setup, production scenarios
 - **Prereqs images**: Fast iteration on configuration, CI/CD pipelines, development workflow
 
