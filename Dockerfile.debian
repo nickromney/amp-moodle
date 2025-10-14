@@ -1,5 +1,6 @@
 # Debian test environment for laemp.sh
 # Debian 13 (Trixie) - Released August 2025, supported until August 2028 (LTS until June 2030)
+# This is a STOCK image for FULL bootstrap testing of laemp.sh
 FROM debian:13
 
 # Set environment variables to avoid interactive prompts

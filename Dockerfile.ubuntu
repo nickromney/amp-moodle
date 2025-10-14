@@ -1,5 +1,6 @@
 # Ubuntu test environment for laemp.sh
 # Ubuntu 24.04 LTS (Noble Numbat) - Released April 2024, supported until April 2029
+# This is a STOCK image for FULL bootstrap testing of laemp.sh
 FROM ubuntu:24.04
 
 # Set environment variables to avoid interactive prompts

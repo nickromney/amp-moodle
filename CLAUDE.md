@@ -42,22 +42,45 @@ make gitleaks-protect  # Check staged files only
 brew install podman podman-compose
 podman machine init
 podman machine start
-
-# Build test containers (Ubuntu 24.04 LTS Noble Numbat, Debian 13 Trixie)
-podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu .
-podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian .
-
-# Using compose.yml (see docs/container-testing.md for details)
-podman-compose up -d ubuntu
-podman-compose exec ubuntu bash
-
-# Or run tests directly in container
-podman run --platform linux/amd64 -it amp-moodle-ubuntu
-# Inside container:
-sudo laemp.sh -h      # Show help
-sudo laemp.sh -n -v   # Dry run with verbose output
-sudo laemp.sh -p -w nginx -m  # Install PHP, Nginx, and Moodle
 ```
+
+#### Two Testing Scenarios
+
+This project provides **two types of Docker images** for different testing scenarios:
+
+**1. Stock Images (Full Bootstrap Testing)**
+Tests laemp.sh's ability to bootstrap a system from bare Ubuntu/Debian:
+
+```bash
+# Build stock images
+podman build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 .
+podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian:13 .
+
+# Test full bootstrap (installs all packages + configuration)
+podman run -it amp-moodle-ubuntu:24.04
+sudo laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
+# Duration: ~5-10 minutes
+```
+
+**2. Prerequisite Images (Last Mile Testing)**
+Tests laemp.sh's configuration logic with packages pre-installed:
+
+```bash
+# Build prereqs images (PHP 8.4, Nginx, MariaDB pre-installed)
+podman build --platform linux/amd64 -f Dockerfile.prereqs.ubuntu -t amp-moodle-prereqs-ubuntu .
+podman build --platform linux/amd64 -f Dockerfile.prereqs.debian -t amp-moodle-prereqs-debian .
+
+# Test last mile configuration only (skips package installation)
+podman run -it amp-moodle-prereqs-ubuntu
+sudo laemp.sh -c -m 501 -S -w nginx -d mariadb  # Note: no -p flag
+# Duration: ~2-3 minutes
+```
+
+**When to use each:**
+- **Stock images**: Verify package installation, test repository setup, production scenarios
+- **Prereqs images**: Fast iteration on configuration, CI/CD pipelines, development workflow
+
+See `docs/dockerfile-prereqs.md` for detailed explanation of both scenarios.
 
 ### Makefile Targets
 

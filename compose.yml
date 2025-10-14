@@ -1,20 +1,31 @@
-# Podman Compose configuration for laemp.sh testing
+# Podman Compose configuration for hands-off laemp.sh testing
 # Works with both podman-compose and docker compose
 #
 # Services:
-#   - moodle-test-ubuntu: Ubuntu 24.04 LTS test environment
-#   - moodle-test-debian: Debian 13 (Trixie) test environment
+#   - moodle-test-ubuntu: Ubuntu 24.04 LTS test environment (port 9443)
+#   - moodle-test-debian: Debian 13 (Trixie) test environment (port 8443)
 #
-# Usage:
-#   podman-compose up -d                    # Start both containers
-#   podman-compose up -d moodle-test-ubuntu # Start only Ubuntu
-#   podman-compose exec moodle-test-ubuntu bash # Access Ubuntu shell
+# Hands-Off Usage:
+#   podman-compose up --build               # Build and start both, runs laemp.sh automatically
+#   podman-compose logs -f moodle-test-ubuntu  # Follow Ubuntu installation logs
+#   podman-compose logs -f moodle-test-debian  # Follow Debian installation logs
+#
+# After installation completes (~5-10 minutes), access Moodle at:
+#   https://moodle.romn.co:9443  # Ubuntu container
+#   https://moodle.romn.co:8443  # Debian container
+#   (Requires "moodle.romn.co" → 127.0.0.1 in /etc/hosts)
+#
+# View installation logs inside containers:
+#   podman exec laemp-test-ubuntu cat /home/testuser/laemp-install.log
+#   podman exec laemp-test-debian cat /home/testuser/laemp-install.log
+#
+# Access container shell (even if laemp.sh failed):
+#   podman exec -it laemp-test-ubuntu bash
+#   podman exec -it laemp-test-debian bash
+#
+# Clean up:
 #   podman-compose down                     # Stop and remove containers
-#
-# Testing:
-#   podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -h
-#   podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -n -v -p -w nginx
-#   podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -p -w nginx -d mysql -m 501 -S
+#   podman-compose down -v                  # Also remove volumes
 #
 # See docs/container-testing.md for comprehensive testing guide
 
@@ -36,11 +47,11 @@ services:
       - /run
       - /run/lock
 
-    # Volume for systemd
+    # Volume for systemd and laemp.sh logs
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
       - ./laemp.sh:/usr/local/bin/laemp.sh:ro
-      - ubuntu-logs:/var/log
+      - ubuntu-logs:/home/testuser/logs
       - ubuntu-moodle:/var/www
 
     # Environment variables
@@ -50,8 +61,13 @@ services:
       - LANG=en_US.UTF-8
       - LC_ALL=en_US.UTF-8
 
-    # Keep container running
-    command: /bin/bash -c "sleep infinity"
+    # Run laemp.sh on startup, then keep container running
+    command: >
+      /bin/bash -c "
+      sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S 2>&1 | tee /home/testuser/laemp-install.log;
+      echo 'laemp.sh completed with exit code:' $$?;
+      exec sleep infinity
+      "
 
     # Port mappings for web access to Moodle (different from Debian)
     ports:
@@ -88,11 +104,11 @@ services:
       - /run
       - /run/lock
 
-    # Volume for systemd
+    # Volume for systemd and laemp.sh logs
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
       - ./laemp.sh:/usr/local/bin/laemp.sh:ro
-      - debian-logs:/var/log
+      - debian-logs:/home/testuser/logs
       - debian-moodle:/var/www
 
     # Environment variables
@@ -102,8 +118,13 @@ services:
       - LANG=en_US.UTF-8
       - LC_ALL=en_US.UTF-8
 
-    # Keep container running
-    command: /bin/bash -c "sleep infinity"
+    # Run laemp.sh on startup, then keep container running
+    command: >
+      /bin/bash -c "
+      sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S 2>&1 | tee /home/testuser/laemp-install.log;
+      echo 'laemp.sh completed with exit code:' $$?;
+      exec sleep infinity
+      "
 
     # Port mappings for web access to Moodle
     ports:
