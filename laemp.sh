@@ -479,26 +479,28 @@ service_manage() {
         log verbose "Waiting for MariaDB to be ready..."
         # shellcheck disable=SC2034
         for i in {1..30}; do
-          if mysqladmin ping >/dev/null 2>&1; then
-            log verbose "MariaDB is ready"
+          # Check if socket exists (socket creation means MariaDB is accepting connections)
+          if [ -S /run/mysqld/mysqld.sock ]; then
+            log verbose "MariaDB is ready (socket exists)"
             return 0
           fi
           sleep 1
         done
-        log error "MariaDB started but failed to become ready within 30 seconds"
+        log error "MariaDB socket not created within 30 seconds"
         return 1
       elif command -v mysqld >/dev/null 2>&1; then
         mysqld --user=mysql --datadir=/var/lib/mysql &
         log verbose "Waiting for MySQL to be ready..."
         # shellcheck disable=SC2034
         for i in {1..30}; do
-          if mysqladmin ping >/dev/null 2>&1; then
-            log verbose "MySQL is ready"
+          # Check if socket exists (socket creation means MySQL is accepting connections)
+          if [ -S /run/mysqld/mysqld.sock ]; then
+            log verbose "MySQL is ready (socket exists)"
             return 0
           fi
           sleep 1
         done
-        log error "MySQL started but failed to become ready within 30 seconds"
+        log error "MySQL socket not created within 30 seconds"
         return 1
       else
         log error "Neither mariadbd nor mysqld found"
@@ -1914,6 +1916,9 @@ function nginx_ensure() {
     log verbose "Installing PHP FPM for Nginx..."
     package_ensure "php${PHP_VERSION_MAJOR_MINOR}-fpm"
 
+    # Ensure socket directory exists
+    run_command --makes-changes mkdir -p "/run/php"
+
     # Check if PHP-FPM is running, start if not
     if ! service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" is-active >/dev/null 2>&1; then
       log verbose "PHP-FPM is not running, starting..."
@@ -2254,6 +2259,7 @@ php_admin_value[opcache.revalidate_freq] = 60
 EOF
 
   # Create necessary directories
+  run_command --makes-changes mkdir -p "/run/php" # Ensure /run/php exists
   run_command --makes-changes mkdir -p "/var/log/php"
   run_command --makes-changes mkdir -p "/var/lib/php/sessions/${pool_name}"
   run_command --makes-changes chown -R "${pool_user}:${pool_group}" "/var/lib/php/sessions/${pool_name}"
@@ -2699,6 +2705,10 @@ function mariadb_ensure() {
     # Install MariaDB server and client
     package_ensure mariadb-server mariadb-client
 
+    # Ensure /run/mysqld directory exists (required for socket file in containers)
+    run_command --makes-changes mkdir -p /run/mysqld
+    run_command --makes-changes chown mysql:mysql /run/mysqld
+
     # Check if MariaDB service is running, start if not
     if ! service_manage mariadb is-active >/dev/null 2>&1 && ! service_manage mysql is-active >/dev/null 2>&1; then
       log verbose "MariaDB is not running, starting..."
@@ -2789,8 +2799,9 @@ EOF
     local ready=false
     # shellcheck disable=SC2034
     for i in {1..30}; do
-      if mysqladmin ping >/dev/null 2>&1; then
-        log verbose "MariaDB is ready"
+      # Check if socket exists (socket creation means MariaDB is accepting connections)
+      if [ -S /run/mysqld/mysqld.sock ]; then
+        log verbose "MariaDB is ready (socket exists)"
         ready=true
         break
       fi
@@ -2798,7 +2809,7 @@ EOF
     done
 
     if [ "$ready" = false ]; then
-      log error "MariaDB failed to become ready within 30 seconds after restart"
+      log error "MariaDB socket not created within 30 seconds after restart"
       exit 1
     fi
 
