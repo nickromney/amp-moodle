@@ -1,0 +1,16 @@
+[Unit]
+Description=Run laemp.sh installer on container boot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/environment
+Environment=MOODLE_PORT=:8443
+Environment=LAEMP_FORCE_HOST_MODE=true
+Environment=HOME=/root
+ExecStart=/usr/local/bin/entrypoint-laemp.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -224,6 +224,10 @@ tool_exists() {
 
 # Container detection helper
 is_container() {
+  if [[ "${LAEMP_FORCE_HOST_MODE:-false}" == "true" ]]; then
+    log verbose "Host mode forced via LAEMP_FORCE_HOST_MODE"
+    return 1
+  fi
   # Check multiple indicators for container environment
   [[ -f /.dockerenv ]] ||
     [[ -f /run/.containerenv ]] ||
@@ -239,10 +243,13 @@ service_manage() {
   local action="$2"
 
   log debug "Managing service $service_name with action $action"
+  log info "LAEMP_FORCE_HOST_MODE=${LAEMP_FORCE_HOST_MODE:-unset}"
 
   # Detect container mode
   local container_mode=false
-  if is_container; then
+  if [[ "${LAEMP_FORCE_HOST_MODE:-false}" == "true" ]]; then
+    container_mode=false
+  elif is_container; then
     log debug "Container environment detected"
     container_mode=true
   fi
@@ -340,7 +347,7 @@ service_manage() {
   fi
 
   # Final fallback: Direct daemon management for container environments
-  log debug "Attempting direct daemon management for $service_name"
+  log info "Direct daemon management fallback for $service_name action $action (container_mode=$container_mode)"
 
   case "$service_name" in
   nginx)

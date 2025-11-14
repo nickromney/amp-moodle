@@ -1,0 +1,12 @@
+---
+roles:
+  - name: geoffreyvanwyk.moodle
+  - name: geerlingguy.php
+  - name: geerlingguy.nginx
+  - name: geerlingguy.mysql
+  - name: geerlingguy.postgresql
+  - name: geerlingguy.certbot
+
+collections:
+  - name: containers.podman
+  - name: community.general

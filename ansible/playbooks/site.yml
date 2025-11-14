@@ -1,0 +1,59 @@
+---
+- name: Converge laemp containers with Ansible
+  hosts: laemp
+  become: true
+  gather_facts: true
+
+  vars:
+    php_fpm_service_name: "{{ php_fpm_service_override | default('php8.4-fpm') }}"
+    nginx_service_name: nginx
+    moodle_web_root: "{{ moodle_deploy_destination | default('/var/www/html/moodle.romn.co') }}"
+
+  tasks:
+    - name: Ensure system packages required by Ansible workflows are present
+      ansible.builtin.package:
+        name:
+          - python3
+          - curl
+        state: present
+
+    - name: Ensure nginx service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ nginx_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Ensure PHP-FPM service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ php_fpm_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Ensure Moodle directory permissions align with www-data
+      ansible.builtin.file:
+        path: "{{ moodle_web_root }}"
+        state: directory
+        recurse: true
+        owner: www-data
+        group: www-data
+        mode: "0755"
+      when: moodle_web_root is defined
+
+    - name: Wait for HTTPS listener to respond
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ moodle_https_port | default(8443) }}"
+        timeout: 60
+        state: started
+        delay: 1
+      register: https_wait
+      changed_when: false
+      failed_when: false
+
+    - name: Hit Moodle home page to ensure application responds
+      ansible.builtin.uri:
+        url: "https://localhost:{{ moodle_https_port | default(8443) }}"
+        validate_certs: false
+        status_code: [200, 302]
+      register: converge_check
+      failed_when: false

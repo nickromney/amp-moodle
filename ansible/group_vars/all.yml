@@ -1,0 +1,27 @@
+---
+# Moodle deployment defaults shared across containers
+moodle_version: "5.1"
+moodle_deploy_repository: https://github.com/moodle/moodle
+moodle_deploy_version: MOODLE_501_STABLE
+moodle_deploy_update: true
+
+moodle_web_protocol: https
+moodle_web_domain: "{{ moodle_domain }}"
+moodle_web_path: ""
+moodle_web_letsencrypt: false
+moodle_web_root: /var/www/html
+moodle_https_port: 8443
+moodle_cfg_wwwroot: "https://{{ moodle_domain }}"
+moodle_cfg_dataroot: /home/moodle/moodledata
+
+# Database connection used inside Podman tests (matches compose.yml)
+moodle_cfg_dbtype: pgsql
+moodle_cfg_dbhost: postgres-db
+moodle_cfg_dbname: moodle
+moodle_cfg_dbuser: moodle
+moodle_cfg_dbpass: moodlepass
+
+# Admin bootstrap credentials – keep env overrides or vault later
+moodle_admin_username: admin
+moodle_admin_password: "ChangeMe123!"
+moodle_admin_email: admin@example.com
