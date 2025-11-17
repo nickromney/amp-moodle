@@ -1,0 +1,86 @@
+---
+- name: Snapshot laemp.sh container state
+  hosts: laemp
+  become: true
+  gather_facts: true
+
+  vars:
+    verify_report_name: "{{ inventory_hostname }}-{{ ansible_date_time.iso8601_basic_short }}.json"
+    verify_report_path: "{{ verify_output_dir }}/{{ verify_report_name }}"
+    moodle_root: "{{ moodle_deploy_destination | default('/var/www/html/moodle.romn.co') }}"
+    verify_output_dir: "{{ lookup('env', 'VERIFY_OUTPUT_DIR') | default((playbook_dir | dirname) ~ '/.artifacts', true) }}"
+    moodle_https_port_effective: "{{ moodle_https_port | default(443) }}"
+
+  pre_tasks:
+    - name: Ensure local artifact directory exists
+        # Store results on the control host for comparison
+      ansible.builtin.file:
+        path: "{{ verify_output_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+  tasks:
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Check Moodle config.php
+      ansible.builtin.stat:
+        path: "{{ moodle_root }}/config.php"
+      register: moodle_config
+
+    - name: Check Moodle data directory
+      ansible.builtin.stat:
+        path: "{{ moodle_cfg_dataroot }}"
+      register: moodledata_dir
+
+    - name: Run bundled verify script
+      ansible.builtin.command: /usr/local/bin/verify-moodle.sh
+      register: verify_script
+      changed_when: false
+      failed_when: false
+
+    - name: Hit Moodle home page over HTTPS
+      ansible.builtin.uri:
+        url: "https://localhost:{{ moodle_https_port_effective }}"
+        validate_certs: false
+        return_content: true
+      register: moodle_home
+      failed_when: false
+      changed_when: false
+
+    - name: Assemble snapshot payload
+      ansible.builtin.set_fact:
+        laemp_snapshot:
+          host: "{{ inventory_hostname }}"
+          verify_script_rc: "{{ verify_script.rc }}"
+          verify_script_stdout: "{{ verify_script.stdout }}"
+          config_present: "{{ moodle_config.stat.exists }}"
+          config_checksum: "{{ moodle_config.stat.checksum if moodle_config.stat.exists else '' }}"
+          moodledata_present: "{{ moodledata_dir.stat.exists }}"
+          moodledata_uid: "{{ moodledata_dir.stat.pw_name | default(moodledata_dir.stat.uid | default('unknown')) if moodledata_dir.stat.exists else 'unknown' }}"
+          moodledata_gid: "{{ moodledata_dir.stat.gr_name | default(moodledata_dir.stat.gid | default('unknown')) if moodledata_dir.stat.exists else 'unknown' }}"
+          nginx_enabled: "{{ (ansible_facts.services.get('nginx.service', {}).state | default('')) == 'running' }}"
+          php_fpm_enabled: "{{ (ansible_facts.services | dict2items | selectattr('key','search','php.*fpm') | list | length) > 0 }}"
+          packages: "{{ ansible_facts.packages | dict2items | map(attribute='key') | list }}"
+          moodle_home_status: "{{ moodle_home.status | default(-1) }}"
+          moodle_home_contains_keyword: "{{ 'Moodle' in (moodle_home.content | default('')) }}"
+
+    - name: Persist snapshot locally
+      ansible.builtin.copy:
+        content: "{{ laemp_snapshot | to_nice_json }}"
+        dest: "{{ verify_report_path }}"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+      run_once: false
+
+    - name: Display snapshot path
+      ansible.builtin.debug:
+        msg: "Snapshot written to {{ verify_report_path }}"

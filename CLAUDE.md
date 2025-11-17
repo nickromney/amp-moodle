@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a bash automation script (`laemp.sh`) that installs LAMP/LEMP stack on Ubuntu/Debian systems with optional Moodle LMS deployment. The script supports multiple PHP versions (default: 8.4), both Apache and Nginx web servers, SSL certificates, database configurations, and Prometheus monitoring.
 
+**Current Status**: The bash script is production-ready. An Ansible rewrite is in progress (`ansible/` directory) to provide an IaC alternative with the same functionality.
+
 ## Development Commands
 
 ### Running Tests
@@ -83,13 +85,41 @@ sudo laemp.sh -c -m 501 -S -w nginx -d mariadb  # Note: no -p flag
 
 See `docs/dockerfile-prereqs.md` for detailed explanation of both scenarios.
 
+### Container Testing with compose.yml
+
+The project includes a `compose.yml` (Podman Compose) that orchestrates multi-container testing:
+
+```bash
+# Start persistent Debian container (idempotent - won't destroy existing)
+make debian
+# Then run: podman-compose exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
+
+# Start persistent Ubuntu container
+make ubuntu
+# Then run: podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
+
+# Destroy and recreate for clean slate testing
+make debian-clean  # or make ubuntu-clean
+```
+
+The compose setup includes:
+- Separate PostgreSQL database container (`postgres-db`) with health checks
+- Systemd-enabled Debian/Ubuntu containers for realistic service management
+- Port mappings: 8443 (Debian), 9443 (Ubuntu) for HTTPS access
+- Volume mounts for persistent testing
+
 ### Makefile Targets
 
 The Makefile is designed for a polyglot repository but includes useful targets for this bash project:
 
 - `make help` - Show all available targets
+- `make test` - Run BATS test suite
 - `make precommit` - Run all pre-commit hooks on all files
+- `make precommit-install` - Install pre-commit hooks
+- `make lint` - Run shellcheck on bash scripts
 - `make security-setup` - Install security tooling (macOS only)
+- `make debian` / `make ubuntu` - Start Podman test containers (idempotent)
+- `make debian-clean` / `make ubuntu-clean` - Destroy and recreate containers
 
 ## Script Architecture
 
@@ -432,6 +462,47 @@ sudo laemp.sh -n -v -p 8.4 -w nginx -d mysql -m 501 -S
 
 Shows all commands that would be executed without making changes.
 
+## Ansible Infrastructure as Code (In Progress)
+
+The `ansible/` directory contains an Ansible rewrite of the bash script functionality. This provides declarative infrastructure management with the same capabilities.
+
+### Ansible Directory Structure
+
+- `ansible.cfg` - Points Ansible at local inventory, enables callbacks
+- `requirements.yml` - Roles and collections (Moodle role + Podman connection plugin)
+- `inventory/containers.ini` - Static inventory for Podman containers from `compose.yml`
+- `group_vars/all.yml` - Shared defaults between Ansible and laemp.sh (domains, paths, DB credentials)
+- `playbooks/container-verify.yml` - Verification playbook that collects service/package/file data for diffing
+- `playbooks/site.yml` - Main Ansible playbook (currently a shim, being expanded to full role stack)
+
+### Ansible Usage
+
+```bash
+# Install Ansible dependencies
+ansible-galaxy install -r ansible/requirements.yml
+
+# Verify container state (produces JSON snapshot in ansible/.artifacts/)
+cd ansible
+ansible-playbook playbooks/container-verify.yml
+
+# Run Ansible converge (install/configure Moodle)
+ansible-playbook playbooks/site.yml
+
+# Compare laemp.sh vs Ansible results
+diff -u .artifacts/laemp-test-debian-*.json
+```
+
+### Ansible Testing Strategy
+
+The project uses the same Podman containers (`compose.yml`) for both bash and Ansible testing to ensure parity:
+
+1. Start container with `make debian` or `make ubuntu`
+2. Run laemp.sh inside container and capture verification snapshot
+3. Run Ansible playbook and capture second snapshot
+4. Diff snapshots to identify any divergence
+
+See `ansible/README.md` and `next-steps.md` for current Ansible work status.
+
 ## Project Documentation
 
 Additional documentation in `docs/` directory:
@@ -439,21 +510,22 @@ Additional documentation in `docs/` directory:
 - **`docs/plan.md`** (485 lines): Complete 36-hour implementation plan with code examples
 - **`docs/ansible-rewrite.md`** (1,089 lines): Ansible migration guide with role patterns and playbook examples
 - **`docs/IMPLEMENTATION_SUMMARY.md`** (571 lines): Project completion status, success criteria, and file changes
+- **`docs/container-testing.md`**: Comprehensive guide to Podman testing workflows
 
-## Recent Changes (Project Completion)
+## Project Status and Recent Work
 
-The script has been enhanced from 2,242 to 2,731 lines (+489 lines) with the following improvements:
+### Bash Script (laemp.sh) - Production Ready
 
-### Critical Fixes
+The bash script has been completed and enhanced from 2,242 to 2,731 lines (+489 lines). Key improvements:
 
+**Critical Fixes:**
 1. **Database Installation**: Was missing entirely, now fully functional for MySQL and PostgreSQL
 2. **SSL Certificates**: Fixed certbot command flags and certificate path handling
 3. **Moodle Installation**: Now completes full installation including database schema and admin user
 4. **Memcached Integration**: Now properly configured in Moodle's config.php
 5. **Nginx Repository**: Replaced third-party repositories (Ondrej PPA for Ubuntu, Sury for Debian) with official nginx.org repository for both distros (lines 1414-1447)
 
-### New Functions Added
-
+**New Functions Added:**
 - `mysql_verify()`, `mysql_ensure()` (lines 2130-2235)
 - `postgres_verify()`, `postgres_ensure()` (lines 2236-2358)
 - `get_cert_path()`, `validate_certificates()` (lines 419-504)
@@ -461,18 +533,26 @@ The script has been enhanced from 2,242 to 2,731 lines (+489 lines) with the fol
 - `moodle_install_database()` (line 905)
 - `setup_moodle_cron()` (line 951)
 
-### Platform and Version Support
+**Platform Support:**
+- Moodle 5.1.0 Support (version 501)
+- Ubuntu 24.04 LTS (Noble Numbat)
+- Debian 13 (Trixie)
 
-- **Moodle 5.1.0 Support**: Added version 501 for latest Moodle release
-- **Ubuntu 24.04 LTS (Noble Numbat)**: Updated container testing to latest LTS
-- **Debian 13 (Trixie)**: Updated container testing to latest stable release
-- **Container Testing**: Added `compose.yml` and `docs/container-testing.md` for comprehensive testing workflows
-
-### Testing Improvements
-
+**Testing:**
 - Expanded from 8 to 70 total tests across 3 test suites
-- Added integration tests with Podman containers (Ubuntu 24.04/Debian 13)
-- Added smoke tests for fast validation
-- Added compose.yml for orchestrated multi-container testing
+- Integration tests with Podman containers
+- Smoke tests for fast validation
+- Multi-container orchestration with compose.yml
 
-**Status**: The script is now production-ready and fully functional for single-server Moodle deployments.
+**Status**: Production-ready and fully functional for single-server Moodle deployments.
+
+### Ansible Rewrite - In Progress
+
+An Ansible rewrite is underway to provide Infrastructure as Code capabilities with the same functionality as the bash script. Current status:
+
+- Scaffolding complete (`ansible/` directory with roles, inventory, playbooks)
+- Verification playbook working (captures system state for comparison)
+- Shim playbook runs but needs expansion to full role stack
+- Testing strategy uses same Podman containers as bash script for parity validation
+
+See `ansible/README.md` and `next-steps.md` for current work items.

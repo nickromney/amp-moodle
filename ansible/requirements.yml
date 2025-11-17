@@ -1,0 +1,22 @@
+---
+roles:
+  - name: geoffreyvanwyk.moodle
+    version: ">=1.0.0,<2.0.0"
+  - name: geerlingguy.php
+    version: ">=4.0.0,<5.0.0"
+  - name: geerlingguy.nginx
+    version: ">=3.0.0,<4.0.0"
+  - name: geerlingguy.mysql
+    version: ">=4.0.0,<5.0.0"
+  - name: geerlingguy.postgresql
+    version: ">=4.0.0,<5.0.0"
+  - name: geerlingguy.certbot
+    version: ">=5.0.0,<6.0.0"
+
+collections:
+  - name: containers.podman
+    version: ">=1.10.0,<2.0.0"
+  - name: community.general
+    version: ">=8.0.0,<9.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0,<2.0.0"

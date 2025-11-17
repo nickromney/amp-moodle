@@ -182,14 +182,19 @@ services:
   #   networks:
   #     - laemp-test-network
 
-  # Debian 13 Test Container with PostgreSQL
+  # Debian 13 Test Container with PostgreSQL (systemd-enabled)
   moodle-test-debian:
     build:
       context: .
       dockerfile: Dockerfile.debian
-    image: amp-moodle-debian:13
-    container_name: laemp-test-debian
     platform: linux/amd64
+    image: amp-moodle-debian-systemd:13
+    container_name: laemp-test-debian
+    privileged: true
+    command: /lib/systemd/systemd
+    tmpfs:
+      - /run
+      - /tmp
 
     depends_on:
       postgres-db:
@@ -198,8 +203,9 @@ services:
     volumes:
       - ./laemp.sh:/usr/local/bin/laemp.sh:ro
       - ./verify-moodle.sh:/usr/local/bin/verify-moodle.sh:ro
-      - debian-logs:/home/testuser/logs
+      - ./logs:/usr/local/bin/logs
       - debian-moodle:/var/www
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
 
     environment:
       - DEBIAN_FRONTEND=noninteractive
@@ -213,39 +219,7 @@ services:
       - DB_USER=moodle
       - DB_PASS=moodlepass
       - MOODLE_PORT=:8443
-
-    command: >
-      /bin/bash -c "
-      echo 'STARTING' > /home/testuser/install-status;
-      echo 'Starting laemp.sh installation with external PostgreSQL...' | tee /home/testuser/laemp-install.log;
-      echo '========================================' | tee -a /home/testuser/laemp-install.log;
-      echo 'Waiting for PostgreSQL to be ready...' | tee -a /home/testuser/laemp-install.log;
-      until timeout 1 bash -c 'cat < /dev/null > /dev/tcp/postgres-db/5432' 2>/dev/null; do
-        echo 'Waiting for PostgreSQL...' | tee -a /home/testuser/laemp-install.log;
-        sleep 2;
-      done;
-      echo 'PostgreSQL is ready!' | tee -a /home/testuser/laemp-install.log;
-      if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d pgsql -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
-        EXIT_CODE=0;
-        echo 'SUCCESS' > /home/testuser/install-status;
-        echo '========================================' | tee -a /home/testuser/laemp-install.log;
-        echo 'laemp.sh completed SUCCESSFULLY' | tee -a /home/testuser/laemp-install.log;
-        echo '========================================' | tee -a /home/testuser/laemp-install.log;
-        echo 'MOODLE LOGIN CREDENTIALS' | tee -a /home/testuser/laemp-install.log;
-        echo '========================================' | tee -a /home/testuser/laemp-install.log;
-        echo 'URL: https://moodle.romn.co:8443/' | tee -a /home/testuser/laemp-install.log;
-        echo 'Username: admin' | tee -a /home/testuser/laemp-install.log;
-        grep 'Admin password:' /home/testuser/laemp-install.log | tail -1 | tee -a /home/testuser/laemp-install.log;
-        echo '========================================' | tee -a /home/testuser/laemp-install.log;
-      else
-        EXIT_CODE=$$?;
-        echo 'FAILED' > /home/testuser/install-status;
-        echo '========================================' | tee -a /home/testuser/laemp-install.log;
-        echo 'laemp.sh FAILED with exit code:' $$EXIT_CODE | tee -a /home/testuser/laemp-install.log;
-      fi;
-      echo 'Container will continue running for inspection...' | tee -a /home/testuser/laemp-install.log;
-      exec sleep infinity
-      "
+      - LAEMP_FORCE_HOST_MODE=true
 
     ports:
       - "8080:80"
@@ -281,12 +255,6 @@ volumes:
     name: laemp-mysql-data
   postgres-data:
     name: laemp-postgres-data
-  ubuntu-logs:
-    name: laemp-ubuntu-logs
-  ubuntu-moodle:
-    name: laemp-ubuntu-moodle
-  debian-logs:
-    name: laemp-debian-logs
   debian-moodle:
     name: laemp-debian-moodle
 
