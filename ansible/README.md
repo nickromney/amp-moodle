@@ -10,7 +10,7 @@ This directory keeps the minimum files required to aim Ansible at the same Podma
 | `requirements.yml` | Roles and collections (Moodle role + Podman connection plugin). |
 | `inventory/containers.ini` | Static inventory entries for the Podman containers created by `compose.yml`. |
 | `group_vars/all.yml` | Shared defaults so Ansible and laemp agree on domains, paths, DB creds. |
-| `playbooks/container-verify.yml` | Collects service/package/file data + runs `verify-moodle.sh`, writing JSON snapshots for diffing. |
+| `playbooks/container-verify.yml` | Collects service/package/file data + runs `verify-moodle.sh`, writing JSON snapshots for comparison. |
 | `.artifacts/` | Auto-created directory where snapshots live. |
 
 ## Usage

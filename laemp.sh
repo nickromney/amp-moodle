@@ -243,7 +243,7 @@ service_manage() {
   local action="$2"
 
   log debug "Managing service $service_name with action $action"
-  log info "LAEMP_FORCE_HOST_MODE=${LAEMP_FORCE_HOST_MODE:-unset}"
+  log debug "LAEMP_FORCE_HOST_MODE=${LAEMP_FORCE_HOST_MODE:-unset}"
 
   # Detect container mode
   local container_mode=false
@@ -347,7 +347,7 @@ service_manage() {
   fi
 
   # Final fallback: Direct daemon management for container environments
-  log info "Direct daemon management fallback for $service_name action $action (container_mode=$container_mode)"
+  log debug "Direct daemon management fallback for $service_name action $action (container_mode=$container_mode)"
 
   case "$service_name" in
   nginx)

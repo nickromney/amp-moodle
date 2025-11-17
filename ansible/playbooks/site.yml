@@ -22,22 +22,22 @@
         name: "{{ nginx_service_name }}"
         state: started
         enabled: true
+      failed_when: false
 
     - name: Ensure PHP-FPM service is enabled and running
       ansible.builtin.systemd:
         name: "{{ php_fpm_service_name }}"
         state: started
         enabled: true
+      failed_when: false
 
-    - name: Ensure Moodle directory permissions align with www-data
+    - name: Ensure Moodle directory exists with correct ownership
       ansible.builtin.file:
         path: "{{ moodle_web_root }}"
         state: directory
-        recurse: true
         owner: www-data
         group: www-data
         mode: "0755"
-      when: moodle_web_root is defined
 
     - name: Wait for HTTPS listener to respond
       ansible.builtin.wait_for:

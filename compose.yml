@@ -187,6 +187,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.debian
+    platform: linux/amd64
     image: amp-moodle-debian-systemd:13
     container_name: laemp-test-debian
     privileged: true
@@ -254,8 +255,6 @@ volumes:
     name: laemp-mysql-data
   postgres-data:
     name: laemp-postgres-data
-  ubuntu-moodle:
-    name: laemp-ubuntu-moodle
   debian-moodle:
     name: laemp-debian-moodle
 

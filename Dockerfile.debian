@@ -39,7 +39,7 @@ COPY entrypoint-laemp.sh /usr/local/bin/entrypoint-laemp.sh
 RUN chmod +x /usr/local/bin/entrypoint-laemp.sh
 
 COPY systemd/laemp-installer.service /etc/systemd/system/laemp-installer.service
-RUN ln -s /etc/systemd/system/laemp-installer.service /etc/systemd/system/multi-user.target.wants/laemp-installer.service
+RUN systemctl enable laemp-installer.service
 
 # Create a non-root user for testing
 RUN useradd -m -s /bin/bash testuser && \
@@ -51,7 +51,6 @@ COPY test_*.bats /home/testuser/tests/
 RUN chmod +x /home/testuser/tests/*.bats && \
     chown -R testuser:testuser /home/testuser/tests
 
-VOLUME ["/sys/fs/cgroup"]
 STOPSIGNAL SIGRTMIN+3
 
 CMD ["/lib/systemd/systemd"]

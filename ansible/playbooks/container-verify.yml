@@ -13,7 +13,7 @@
 
   pre_tasks:
     - name: Ensure local artifact directory exists
-        # Store results on the control host for diffing
+        # Store results on the control host for comparison
       ansible.builtin.file:
         path: "{{ verify_output_dir }}"
         state: directory
@@ -62,10 +62,10 @@
           verify_script_rc: "{{ verify_script.rc }}"
           verify_script_stdout: "{{ verify_script.stdout }}"
           config_present: "{{ moodle_config.stat.exists }}"
-          config_checksum: "{{ moodle_config.stat.checksum | default('') }}"
+          config_checksum: "{{ moodle_config.stat.checksum if moodle_config.stat.exists else '' }}"
           moodledata_present: "{{ moodledata_dir.stat.exists }}"
-          moodledata_uid: "{{ moodledata_dir.stat.pw_name | default(moodledata_dir.stat.uid) }}"
-          moodledata_gid: "{{ moodledata_dir.stat.gr_name | default(moodledata_dir.stat.gid) }}"
+          moodledata_uid: "{{ moodledata_dir.stat.pw_name | default(moodledata_dir.stat.uid | default('unknown')) if moodledata_dir.stat.exists else 'unknown' }}"
+          moodledata_gid: "{{ moodledata_dir.stat.gr_name | default(moodledata_dir.stat.gid | default('unknown')) if moodledata_dir.stat.exists else 'unknown' }}"
           nginx_enabled: "{{ (ansible_facts.services.get('nginx.service', {}).state | default('')) == 'running' }}"
           php_fpm_enabled: "{{ (ansible_facts.services | dict2items | selectattr('key','search','php.*fpm') | list | length) > 0 }}"
           packages: "{{ ansible_facts.packages | dict2items | map(attribute='key') | list }}"

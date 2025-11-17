@@ -21,7 +21,10 @@ moodle_cfg_dbname: moodle
 moodle_cfg_dbuser: moodle
 moodle_cfg_dbpass: moodlepass
 
-# Admin bootstrap credentials – keep env overrides or vault later
+# Admin bootstrap credentials
+# WARNING: This is a placeholder password for development/testing only.
+#          You MUST override this value before production use!
+#          Use Ansible Vault or environment variables to manage secrets securely.
 moodle_admin_username: admin
-moodle_admin_password: "ChangeMe123!"
+moodle_admin_password: "u7!Qz9@w4#Lr8^s2Vb6$Xp1&Jk3*Tf5Z"
 moodle_admin_email: admin@example.com
