@@ -26,8 +26,8 @@ PHP_ENSURE=false
 PROMETHEUS_ENSURE=false
 MARIADB_ENSURE=false
 POSTGRES_ENSURE=false
-# Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5003 for 5.0.3, etc.
-DEFAULT_MOODLE_VERSION="501"
+# Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5013 for 5.1.3, 5003 for 5.0.3, etc.
+DEFAULT_MOODLE_VERSION="5013"
 DEFAULT_PHP_VERSION_MAJOR_MINOR="8.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
@@ -36,7 +36,20 @@ APACHE_NAME="apache2" # Change to "httpd" for CentOS
 ACME_CERT=false
 ACME_PROVIDER="staging"
 SELF_SIGNED_CERT=false
+MKCERT_CERT=false
+LAEMP_CERT_MODE="${LAEMP_CERT_MODE:-}"
+MKCERT_CERT_DIR="${LAEMP_MKCERT_DIR:-/etc/ssl/mkcert}"
 SKIP_DB_SERVER=false
+
+# Image flavor settings (default: standard)
+LAEMP_IMAGE_FLAVOR="${LAEMP_IMAGE_FLAVOR:-standard}"
+SKIP_PACKAGE_INSTALLS="${LAEMP_SKIP_PACKAGE_INSTALLS:-false}"
+if [[ "${LAEMP_IMAGE_FLAVOR}" == "serversideup" ]]; then
+  SKIP_PACKAGE_INSTALLS=true
+fi
+LAEMP_FASTCGI_PASS="${LAEMP_FASTCGI_PASS:-}"
+LAEMP_HTTP_PORT="${LAEMP_HTTP_PORT:-}"
+LAEMP_HTTPS_PORT="${LAEMP_HTTPS_PORT:-}"
 
 # Moodle database
 # Use environment variables if set, otherwise use defaults
@@ -46,18 +59,25 @@ DB_NAME="${DB_NAME:-moodle}"
 DB_USER="${DB_USER:-moodle}"
 DB_PASS="${DB_PASS:-moodle}"
 DB_PREFIX="${DB_PREFIX:-mdl_}"
+LAEMP_MYSQL_SSL_OPTION="${LAEMP_MYSQL_SSL_OPTION:-}"
+MYSQL_SSL_FLAGS=()
+if [[ -n "${LAEMP_MYSQL_SSL_OPTION}" ]]; then
+  MYSQL_SSL_FLAGS+=("${LAEMP_MYSQL_SSL_OPTION}")
+fi
 
 # Users
 webserverUser="www-data"
 moodleUser="moodle"
 
 # Site name
-moodleSiteName="moodle.romn.co"
+moodleSiteName="moodle.127.0.0.1.sslip.io"
 # Optional port for wwwroot URL (e.g., ":9443" for testing, empty for production)
 moodlePort="${MOODLE_PORT:-}"
 # Nginx listen port (extract numeric port from MOODLE_PORT, default to 443)
-nginxPort="${MOODLE_PORT#:}"  # Remove leading colon
+nginxPort="${moodlePort#:}"  # Remove leading colon
 nginxPort="${nginxPort:-443}"  # Default to 443 if empty
+nginxPort="${LAEMP_HTTPS_PORT:-${nginxPort}}"
+nginxHttpPort="${LAEMP_HTTP_PORT:-80}"
 
 # Directories
 documentRoot="/var/www/html"
@@ -88,7 +108,7 @@ function echo_usage() {
   log info "  -d, --database      Database type (default: mariadb, supported: [mariadb, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
   log info "  -h, --help          Display this help message"
-  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0)"
+  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 5013 for 5.1.3)"
   log info "  -M, --memcached     Ensure Memcached is installed"
   log info "  -n, --nop           Dry run (show commands without executing)"
   log info "  -p, --php           Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
@@ -96,6 +116,7 @@ function echo_usage() {
   log info "  -r, --prometheus    Install Prometheus monitoring with exporters for web server and PHP"
   log info "  -s, --sudo          Use sudo for running commands (default: false)"
   log info "  -S, --self-signed   Create a self-signed certificate for the specified domain"
+  log info "      --mkcert        Use mkcert for a locally trusted certificate"
   log info "  -v, --verbose       Enable verbose output"
   log info "  -w, --web           Web server type (default: nginx, supported: [apache, nginx])"
   log info "  Note:               Options -d, -m, -p, -w require an argument but have defaults."
@@ -222,6 +243,24 @@ tool_exists() {
   return 0
 }
 
+download_file() {
+  local url="$1"
+  local destination="$2"
+
+  if tool_exists wget; then
+    run_command --makes-changes wget -O "${destination}" "${url}"
+    return
+  fi
+
+  if tool_exists curl; then
+    run_command --makes-changes curl -L -o "${destination}" "${url}"
+    return
+  fi
+
+  log error "Neither wget nor curl is installed. Please install one to download files."
+  exit 1
+}
+
 # Container detection helper
 is_container() {
   if [[ "${LAEMP_FORCE_HOST_MODE:-false}" == "true" ]]; then
@@ -251,6 +290,9 @@ service_manage() {
     container_mode=false
   elif is_container; then
     log debug "Container environment detected"
+    container_mode=true
+  fi
+  if [[ "${LAEMP_IMAGE_FLAVOR:-}" == "serversideup" ]]; then
     container_mode=true
   fi
 
@@ -353,15 +395,15 @@ service_manage() {
   nginx)
     case "$action" in
     start)
-      if pidof nginx >/dev/null 2>&1; then
+      if pgrep -f "/usr/sbin/nginx" >/dev/null 2>&1; then
         log verbose "Nginx is already running"
         return 0
       fi
       log verbose "Starting nginx directly..."
       if nginx; then
         # Wait for nginx to be responsive
-        for i in {1..10}; do
-          if nginx -t >/dev/null 2>&1 && pidof nginx >/dev/null 2>&1; then
+        for _ in {1..10}; do
+          if nginx -t >/dev/null 2>&1 && pgrep -f "/usr/sbin/nginx" >/dev/null 2>&1; then
             log verbose "Nginx started and responding"
             return 0
           fi
@@ -375,7 +417,7 @@ service_manage() {
       fi
       ;;
     stop)
-      if ! pidof nginx >/dev/null 2>&1; then
+      if ! pgrep -f "/usr/sbin/nginx" >/dev/null 2>&1; then
         log verbose "Nginx is not running"
         return 0
       fi
@@ -389,7 +431,7 @@ service_manage() {
       fi
       ;;
     reload)
-      if ! pidof nginx >/dev/null 2>&1; then
+      if ! pgrep -f "/usr/sbin/nginx" >/dev/null 2>&1; then
         log verbose "Nginx is not running, cannot reload"
         return 1
       fi
@@ -403,7 +445,7 @@ service_manage() {
       fi
       ;;
     is-active)
-      pidof nginx >/dev/null 2>&1
+      pgrep -f "/usr/sbin/nginx" >/dev/null 2>&1
       ;;
     enable)
       log verbose "Skipping 'enable' for $service_name (direct daemon mode)"
@@ -534,7 +576,7 @@ service_manage() {
         return 0
       fi
       log verbose "Stopping MariaDB/MySQL directly..."
-      if mysqladmin shutdown; then
+      if mysqladmin "${MYSQL_SSL_FLAGS[@]}" shutdown; then
         log verbose "MariaDB/MySQL stopped successfully"
         return 0
       else
@@ -815,7 +857,13 @@ function get_cert_path() {
   fi
 
   # Return certificate paths based on which flags are set
-  if $ACME_CERT; then
+  if $MKCERT_CERT; then
+    if [ "$cert_type" = "key" ]; then
+      echo "${MKCERT_CERT_DIR}/${domain}-key.pem"
+    else
+      echo "${MKCERT_CERT_DIR}/${domain}.pem"
+    fi
+  elif $ACME_CERT; then
     if [ "$cert_type" = "key" ]; then
       echo "/etc/letsencrypt/live/${domain}/privkey.pem"
     else
@@ -828,7 +876,7 @@ function get_cert_path() {
       echo "/etc/ssl/${domain}.cert"
     fi
   else
-    log error "Neither ACME_CERT nor SELF_SIGNED_CERT is enabled. Cannot determine certificate path."
+    log error "No certificate mode is enabled. Cannot determine certificate path."
     exit 1
   fi
 }
@@ -949,7 +997,7 @@ function apache_verify() {
   local exit_on_failure=false # Default to false
 
   # Check if the first argument is the flag for exit on failure
-  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  # Because we have 'set -o nounset' set, we need to check if the first argument is set
   if [[ "${1:-}" == "--exit-on-failure" ]]; then
     exit_on_failure=true
   fi
@@ -977,6 +1025,13 @@ function apache_verify() {
 # Function to ensure Apache web server is installed and configured
 function apache_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
+
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    log verbose "Skipping Apache installation due to SKIP_PACKAGE_INSTALLS"
+    php_verify --exit-on-failure
+    apache_verify --exit-on-failure
+    return 0
+  fi
 
   # Check if PHP is installed
   # and exit if not
@@ -1142,6 +1197,11 @@ function moodle_dependencies() {
   # Ran into issues with libicu, and it's not listed in https://docs.moodle.org/403/en/PHP#Required_extensions
   log verbose "Entered function ${FUNCNAME[0]}"
 
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    log verbose "Skipping Moodle runtime package installation due to SKIP_PACKAGE_INSTALLS"
+    return 0
+  fi
+
   # Determine libaio package name (Debian 13+ uses libaio1t64, earlier versions use libaio1)
   local libaio_package="libaio1"
   if apt-cache search libaio1t64 | grep -q "libaio1t64"; then
@@ -1196,11 +1256,22 @@ function moodle_composer_install() {
   log info "Composer dependencies installed successfully"
 }
 
+function validate_db_prefix() {
+  local prefix="$1"
+
+  if [[ ${#prefix} -gt 10 ]]; then
+    log error "Database prefix length must be 10 characters or fewer. Current: ${prefix}"
+    exit 1
+  fi
+}
+
 function moodle_config_files() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local configDir="${1}"
   local configDist="${configDir}/config-dist.php"
   configFile="${configDir}/config.php"
+
+  validate_db_prefix "${DB_PREFIX}"
 
   # Check if Moodle is installed
   if [ ! -f "${configDist}" ]; then
@@ -1292,12 +1363,51 @@ function moodle_configure_directories() {
   run_command --makes-changes chmod -R 0755 "${moodleDir}"
 }
 
+function moodle_version_stable() {
+  local version="$1"
+
+  if [[ ${#version} -ge 4 ]]; then
+    echo "${version:0:3}"
+  else
+    echo "${version}"
+  fi
+}
+
+function moodle_version_semver() {
+  local version="$1"
+
+  if [[ ${#version} -lt 3 ]]; then
+    return 1
+  fi
+
+  local major="${version:0:1}"
+  local minor_raw="${version:1:2}"
+  local minor=$((10#$minor_raw))
+  local patch="0"
+
+  if [[ ${#version} -ge 4 ]]; then
+    patch="${version:3:1}"
+  fi
+
+  echo "${major}.${minor}.${patch}"
+}
+
 function moodle_download_extract() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
   local webserverUser="${2}"
   local moodleVersion="${3}"
-  local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleVersion}/moodle-latest-${moodleVersion}.tgz"
+  local moodleStableVersion
+  moodleStableVersion=$(moodle_version_stable "${moodleVersion}")
+  local moodleArchiveFile="moodle-latest-${moodleStableVersion}.tgz"
+
+  if [[ ${#moodleVersion} -ge 4 ]]; then
+    local moodleSemver
+    moodleSemver=$(moodle_version_semver "${moodleVersion}")
+    moodleArchiveFile="moodle-${moodleSemver}.tgz"
+  fi
+
+  local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleStableVersion}/${moodleArchiveFile}"
 
   # Check if Moodle is already installed (check for config-dist.php which is in every Moodle installation)
   if [ -f "${moodleDir}/config-dist.php" ]; then
@@ -1306,13 +1416,13 @@ function moodle_download_extract() {
   fi
 
   # Check if local download already exists
-  if [ -f "moodle-latest-${moodleVersion}.tgz" ]; then
-    log verbose "Local Moodle archive moodle-latest-${moodleVersion}.tgz already exists. Skipping download."
+  if [ -f "${moodleArchiveFile}" ]; then
+    log verbose "Local Moodle archive ${moodleArchiveFile} already exists. Skipping download."
   else
     # Download Moodle
     log verbose "Downloading ${moodleArchive}"
     # Use -O to not overwrite existing file
-    run_command --makes-changes wget -O "moodle-latest-${moodleVersion}.tgz" "${moodleArchive}"
+    download_file "${moodleArchive}" "${moodleArchiveFile}"
 
   fi
 
@@ -1323,7 +1433,7 @@ function moodle_download_extract() {
     # Extract Moodle
     log verbose "Extracting ${moodleArchive}"
     run_command --makes-changes mkdir -p "${moodleDir}"
-    run_command --makes-changes tar zx -C "${moodleDir}" --strip-components 1 -f "moodle-latest-${moodleVersion}.tgz"
+  run_command --makes-changes tar zx -C "${moodleDir}" --strip-components 1 -f "${moodleArchiveFile}"
     run_command --makes-changes chown -R root:"${webserverUser}" "${moodleDir}"
     run_command --makes-changes chmod -R 0755 "${moodleDir}"
   fi
@@ -1365,7 +1475,7 @@ function moodle_install_database() {
       log info "mariadb-client installation complete"
     fi
     log info "Attempting to ping MySQL/MariaDB at ${DB_HOST}..."
-    if ! mysqladmin ping -h"${DB_HOST}" -u"${DB_USER}" -p"${DB_PASS}" >/dev/null 2>&1; then
+    if ! mysqladmin "${MYSQL_SSL_FLAGS[@]}" ping -h"${DB_HOST}" -u"${DB_USER}" -p"${DB_PASS}" >/dev/null 2>&1; then
       log error "MySQL/MariaDB at ${DB_HOST} is not responding to ping."
       log error "DB_HOST=${DB_HOST}, DB_USER=${DB_USER}, DB_NAME=${DB_NAME}"
       log error "Cannot proceed with Moodle installation."
@@ -1406,14 +1516,23 @@ function moodle_install_database() {
   log verbose "  Short name: ${moodleSiteName}"
 
   # Run Moodle CLI installer
-  run_command --makes-changes php "${moodleDir}/admin/cli/install_database.php" \
+  local install_output
+  if ! install_output=$(run_command --makes-changes php "${moodleDir}/admin/cli/install_database.php" \
     --lang=en \
     --adminuser=admin \
     --adminpass="${admin_password}" \
     --adminemail="admin@${moodleSiteName}" \
     --fullname="${moodleSiteName}" \
     --shortname="${moodleSiteName}" \
-    --agree-license
+    --agree-license 2>&1); then
+    if echo "${install_output}" | grep -qi "Database tables already present"; then
+      log info "Database tables already present. Skipping Moodle database installation."
+      return 0
+    fi
+    log error "Moodle CLI installer failed."
+    echo "${install_output}"
+    exit 1
+  fi
 
   # Log the admin password
   log info "Moodle installation completed successfully!"
@@ -1525,13 +1644,18 @@ function moodle_validate_php_version() {
   local php_major_minor
   php_major_minor=$(echo "$php_version" | cut -d. -f1-2)
 
-  # Moodle/PHP compatibility matrix (October 2025)
+  # Moodle/PHP compatibility matrix (February 2026)
   # Reference: https://docs.moodle.org/en/PHP
-  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5003=5.0.3 (patch releases use 4 digits)
-  case "$moodle_version" in
-  "500" | "501" | "502" | "5003")
+  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5013=5.1.3, 5003=5.0.3
+  local moodle_family="$moodle_version"
+  if [[ ${#moodle_family} -ge 4 ]]; then
+    moodle_family="${moodle_family:0:3}"
+  fi
+
+  case "$moodle_family" in
+  "500" | "501" | "502")
     # Moodle 5.0+ requires PHP 8.2+ (supports 8.2, 8.3, 8.4)
-    # Moodle 5.1.0 (tag: MOODLE_501) released October 2025
+    # Moodle 5.1.3 (tag: MOODLE_5013) released February 2026
     if ! version_compare "$php_major_minor" "8.2"; then
       log error "Moodle 5.0+ requires PHP 8.2 or higher (supports 8.2, 8.3, 8.4). Current: $php_version"
       exit 1
@@ -1574,7 +1698,7 @@ function moodle_validate_php_version() {
     ;;
   *)
     log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
-    log verbose "Note: Default Moodle versions are 405 (4.5) and 500 (5.0)"
+    log verbose "Note: Default Moodle versions are 405 (4.5) and 5013 (5.1.3)"
     ;;
   esac
 
@@ -1601,15 +1725,36 @@ function moodle_ensure() {
     "php${PHP_VERSION_MAJOR_MINOR}-zip"
     "php${PHP_VERSION_MAJOR_MINOR}-opcache"
     "php${PHP_VERSION_MAJOR_MINOR}-ldap"
+    "php${PHP_VERSION_MAJOR_MINOR}-sodium"
+  )
+
+  declare -a moodle_php_extension_names=(
+    "curl"
+    "gd"
+    "intl"
+    "mbstring"
+    "soap"
+    "xml"
+    "xmlrpc"
+    "zip"
+    "opcache"
+    "ldap"
+    "sodium"
   )
 
   if [ "${DB_TYPE}" == "pgsql" ]; then
     moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-pgsql")
+    moodle_php_extension_names+=("pgsql")
   else
     moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-mysqli")
+    moodle_php_extension_names+=("mysqli")
   fi
 
-  php_extensions_ensure "${moodle_php_extensions[@]}"
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    php_extensions_verify "${moodle_php_extension_names[@]}"
+  else
+    php_extensions_ensure "${moodle_php_extensions[@]}"
+  fi
 
   # Configure PHP for Moodle requirements
   php_configure_for_moodle
@@ -1622,11 +1767,11 @@ function moodle_ensure() {
   moodle_install_database "${moodleDir}"
   setup_moodle_cron "${moodleDir}"
 
-  # Get dynamic certificate paths based on ACME_CERT or SELF_SIGNED_CERT flags
+  # Get dynamic certificate paths based on ACME_CERT, SELF_SIGNED_CERT, or MKCERT_CERT flags
   local ssl_cert_file=""
   local ssl_key_file=""
 
-  if $ACME_CERT || $SELF_SIGNED_CERT; then
+  if $ACME_CERT || $SELF_SIGNED_CERT || $MKCERT_CERT; then
     # Validate certificates exist before creating vhost
     if ! validate_certificates --domain "${moodleSiteName}"; then
       log error "Certificate validation failed. Please ensure certificates are created before configuring vhost."
@@ -1641,7 +1786,7 @@ function moodle_ensure() {
     log verbose "  Certificate: ${ssl_cert_file}"
     log verbose "  Key: ${ssl_key_file}"
   else
-    log info "No SSL certificate flags set (ACME_CERT or SELF_SIGNED_CERT). Virtual host will be created without SSL."
+    log info "No SSL certificate flags set (ACME_CERT, SELF_SIGNED_CERT, or MKCERT_CERT). Virtual host will be created without SSL."
     # Use empty paths for non-SSL configurations
     ssl_cert_file=""
     ssl_key_file=""
@@ -1666,7 +1811,7 @@ function moodle_ensure() {
   if $APACHE_ENSURE; then
     apache_verify --exit-on-failure
     # Create PHP-FPM pool for Moodle when using FPM
-    if $FPM_ENSURE; then
+    if $FPM_ENSURE && [[ "${SKIP_PACKAGE_INSTALLS}" != "true" ]]; then
       php_fpm_create_pool "${moodleSiteName}" "${webserverUser}"
     fi
     apache_create_vhost vhost_config
@@ -1675,7 +1820,7 @@ function moodle_ensure() {
   if $NGINX_ENSURE; then
     nginx_verify --exit-on-failure
     # Create PHP-FPM pool for Moodle
-    if $FPM_ENSURE; then
+    if $FPM_ENSURE && [[ "${SKIP_PACKAGE_INSTALLS}" != "true" ]]; then
       php_fpm_create_pool "${moodleSiteName}" "${webserverUser}"
     fi
     nginx_create_vhost vhost_config
@@ -1688,7 +1833,7 @@ function nginx_verify() {
   local exit_on_failure=false # Default to false
 
   # Check if the first argument is the flag for exit on failure
-  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  # Because we have 'set -o nounset' set, we need to check if the first argument is set
   if [[ "${1:-}" == "--exit-on-failure" ]]; then
     exit_on_failure=true
   fi
@@ -1926,6 +2071,12 @@ EOF
 function nginx_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    log verbose "Skipping Nginx installation due to SKIP_PACKAGE_INSTALLS"
+    nginx_verify --exit-on-failure
+    return 0
+  fi
+
   nginx_verify
 
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
@@ -2034,11 +2185,86 @@ function nginx_ensure() {
   log verbose "Note: PHP-FPM will be started after all PHP extensions are installed to avoid socket conflicts"
 }
 
+function detect_php_fpm_listen() {
+  local config_paths=(
+    "/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d/${moodleSiteName}.conf"
+    "/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d/www.conf"
+    "/usr/local/etc/php-fpm.d/zz-docker.conf"
+    "/usr/local/etc/php-fpm.d/www.conf"
+  )
+
+  for config_path in "${config_paths[@]}"; do
+    if [[ -f "${config_path}" ]]; then
+      local listen
+      listen=$(grep -E '^\s*listen\s*=' "${config_path}" | head -n 1 | awk -F= '{print $2}' | xargs)
+      if [[ -n "${listen}" ]]; then
+        echo "${listen}"
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
+function detect_nginx_listen_port() {
+  local config_path="$1"
+
+  if [[ ! -f "${config_path}" ]]; then
+    return 1
+  fi
+
+  local listen_value
+  listen_value=$(grep -E '^\s*listen\s' "${config_path}" | head -n 1 | awk '{print $2}' | tr -d ';')
+  if [[ -z "${listen_value}" ]]; then
+    return 1
+  fi
+
+  local port="${listen_value##*:}"
+  port="${port#[}"
+  port="${port%]}"
+
+  if [[ "${port}" =~ ^[0-9]+$ ]]; then
+    echo "${port}"
+    return 0
+  fi
+
+  return 1
+}
+
+function normalize_fastcgi_pass() {
+  local listen="$1"
+
+  if [[ "${listen}" == /* ]]; then
+    echo "unix:${listen}"
+  elif [[ "${listen}" =~ ^[0-9]+$ ]]; then
+    echo "127.0.0.1:${listen}"
+  else
+    echo "${listen}"
+  fi
+}
+
+function get_fastcgi_pass() {
+  local site_name="$1"
+
+  if [[ -n "${LAEMP_FASTCGI_PASS}" ]]; then
+    echo "${LAEMP_FASTCGI_PASS}"
+    return 0
+  fi
+
+  local listen
+  listen=$(detect_php_fpm_listen || true)
+  if [[ -n "${listen}" ]]; then
+    normalize_fastcgi_pass "${listen}"
+    return 0
+  fi
+
+  echo "unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${site_name}.sock"
+}
+
 function nginx_create_vhost() {
   log verbose "Entered function ${FUNCNAME[0]}"
-
   nginx_verify --exit-on-failure
-
   # Use nameref to access the associative array
   declare -n config=$1
   local logDir="${NGINX_LOG_DIR:-/var/log/nginx}"
@@ -2061,11 +2287,64 @@ function nginx_create_vhost() {
   local ssl_key_file="${config[ssl_key_file]}"
   local include_file="${config[include_file]:-}"
 
+  local vhost_dir="/etc/nginx/sites-available"
+  local enabled_dir="/etc/nginx/sites-enabled"
+  if [[ -d "/etc/nginx/conf.d" && ( ! -d "${vhost_dir}" || ! -d "${enabled_dir}" ) ]]; then
+    vhost_dir="/etc/nginx/conf.d"
+    enabled_dir=""
+  fi
+  local vhost_path="${vhost_dir}/${site_name}.conf"
+  local fastcgi_pass_target
+  fastcgi_pass_target=$(get_fastcgi_pass "${site_name}")
+
+  local http_port="${nginxHttpPort}"
+  if [[ -z "${LAEMP_HTTP_PORT}" ]]; then
+    local detected_http_port
+    detected_http_port=$(detect_nginx_listen_port "/etc/nginx/site-opts.d/http.conf" || true)
+    if [[ -n "${detected_http_port}" ]]; then
+      http_port="${detected_http_port}"
+    fi
+  fi
+
+  local https_port="${nginxPort}"
+  if [[ -z "${LAEMP_HTTPS_PORT}" ]]; then
+    local detected_https_port
+    detected_https_port=$(detect_nginx_listen_port "/etc/nginx/site-opts.d/https.conf" || true)
+    if [[ -n "${detected_https_port}" ]]; then
+      https_port="${detected_https_port}"
+    fi
+  fi
+
+  local fastcgi_server_port="${https_port}"
+  if [[ -n "${moodlePort}" ]]; then
+    fastcgi_server_port="${moodlePort#:}"
+  fi
+  local error_log_path="${logDir}/${site_name}.error.log"
+  local access_log_path="${logDir}/${site_name}.access.log"
+  if [[ "${LAEMP_IMAGE_FLAVOR:-}" == "serversideup" ]]; then
+    error_log_path="/dev/stderr"
+    access_log_path="/dev/stdout"
+  fi
+  local security_includes=""
+  local uploads_include="/etc/nginx/global/uploads-protection.conf"
+  local moodle_include="/etc/nginx/global/moodle-security.conf"
+  local static_include="/etc/nginx/global/static-files.conf"
+
+  if [[ -f "${uploads_include}" ]]; then
+    security_includes+=$'    include /etc/nginx/global/uploads-protection.conf;\n'
+  fi
+  if [[ -f "${moodle_include}" ]]; then
+    security_includes+=$'    include /etc/nginx/global/moodle-security.conf;\n'
+  fi
+  if [[ -f "${static_include}" ]]; then
+    security_includes+=$'    include /etc/nginx/global/static-files.conf;\n'
+  fi
   # Create vhost configuration with direct variable substitution
   # Using unquoted heredoc (EOF not 'EOF') to allow variable expansion
-  cat >"/etc/nginx/sites-available/${site_name}.conf" <<EOF
+  cat >"${vhost_path}" <<EOF
 server {
-    listen 80;
+    listen ${http_port};
+    listen [::]:${http_port};
     server_name ${site_name};
     location / {
         return 301 https://\$host\$request_uri;
@@ -2073,7 +2352,8 @@ server {
 }
 
 server {
-    listen ${nginxPort} ssl;
+    listen ${https_port} ssl;
+    listen [::]:${https_port} ssl;
     http2 on;
     server_name ${site_name};
 
@@ -2088,13 +2368,11 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # Logging
-    error_log ${logDir}/${site_name}.error.log;
-    access_log ${logDir}/${site_name}.access.log;
+    error_log ${error_log_path};
+    access_log ${access_log_path};
 
-    # Include global security configurations
-    include /etc/nginx/global/uploads-protection.conf;
-    include /etc/nginx/global/moodle-security.conf;
-    include /etc/nginx/global/static-files.conf;
+    # Include global security configurations when present
+${security_includes}
 
     # Main location block
     location / {
@@ -2109,11 +2387,13 @@ server {
         }
 
         include fastcgi_params;
+        fastcgi_param HTTP_HOST \$http_host;
+        fastcgi_param SERVER_PORT ${fastcgi_server_port};
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         fastcgi_param PATH_INFO \$fastcgi_path_info;
         fastcgi_param PATH_TRANSLATED \$document_root\$fastcgi_path_info;
 
-        fastcgi_pass unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${site_name}.sock;
+        fastcgi_pass ${fastcgi_pass_target};
         fastcgi_index index.php;
 
         # Performance optimizations
@@ -2128,9 +2408,11 @@ server {
 }
 EOF
 
-  log verbose "Created nginx vhost configuration: /etc/nginx/sites-available/${site_name}.conf"
+  log verbose "Created nginx vhost configuration: ${vhost_path}"
 
-  run_command --makes-changes ln -sf "/etc/nginx/sites-available/${site_name}.conf" "/etc/nginx/sites-enabled/"
+  if [[ -n "${enabled_dir}" && -d "${enabled_dir}" ]]; then
+    run_command --makes-changes ln -sf "${vhost_path}" "${enabled_dir}/"
+  fi
   run_command --makes-changes service_manage nginx reload
 }
 
@@ -2142,7 +2424,7 @@ php_verify() {
   local exit_on_failure=false # Default to false
 
   # Check if the first argument is the flag for exit on failure
-  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  # Because we have 'set -o nounset' set, we need to check if the first argument is set
   if [[ "${1:-}" == "--exit-on-failure" ]]; then
     exit_on_failure=true
   fi
@@ -2191,6 +2473,12 @@ php_verify() {
 
 php_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
+
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    log verbose "Skipping PHP installation due to SKIP_PACKAGE_INSTALLS"
+    php_verify --exit-on-failure
+    return 0
+  fi
 
   log verbose "Checking PHP installation..."
   php_verify
@@ -2247,16 +2535,136 @@ php_ensure() {
 
 function php_extensions_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
-
   php_verify --exit-on-failure
   local extensions=("$@")
-
   if [ ${#extensions[@]} -eq 0 ]; then
     log error "No PHP extensions provided. Aborting."
     exit 1
   fi
-
   package_ensure "${extensions[@]}"
+}
+function php_fpm_restart_for_extensions() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  if [[ "${FPM_ENSURE:-false}" != "true" ]]; then
+    log verbose "PHP-FPM not enabled; skipping restart"
+    return 0
+  fi
+  local s6_svc=""
+  local candidate
+  for candidate in /command/s6-svc /package/admin/s6-*/command/s6-svc; do
+    if [[ -x "${candidate}" ]]; then
+      s6_svc="${candidate}"
+      break
+    fi
+  done
+  if [[ -n "${s6_svc}" && -d /run/service/php-fpm ]]; then
+    log info "Restarting PHP-FPM via s6-svc to load new extensions"
+    run_command --makes-changes "${s6_svc}" -r /run/service/php-fpm
+    return 0
+  fi
+  if command -v php-fpm >/dev/null 2>&1 && ! command -v "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
+    run_command --makes-changes service_manage "php-fpm" restart
+  else
+    run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+  fi
+}
+
+function php_extensions_verify() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  php_verify --exit-on-failure
+  local extensions=("$@")
+  local extensions_installed="false"
+  local optional_extensions=()
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]] && version_compare "${PHP_VERSION_MAJOR_MINOR}" "8.4"; then
+    optional_extensions+=("xmlrpc")
+  fi
+  if [ ${#extensions[@]} -eq 0 ]; then
+    log error "No PHP extensions provided for verification. Aborting."
+    exit 1
+  fi
+  local available_extensions
+  available_extensions=$(php -m | tr '[:upper:]' '[:lower:]')
+  local missing=()
+  for extension in "${extensions[@]}"; do
+    local ext_lower
+    ext_lower=$(echo "${extension}" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "${ext_lower}" == "opcache" ]]; then
+      if ! echo "${available_extensions}" | grep -q "opcache"; then
+        missing+=("${extension}")
+      fi
+      continue
+    fi
+
+    if ! echo "${available_extensions}" | grep -q "^${ext_lower}$"; then
+      missing+=("${extension}")
+    fi
+  done
+  if [ ${#optional_extensions[@]} -gt 0 ] && [ ${#missing[@]} -gt 0 ]; then
+    local filtered_missing=()
+    for extension in "${missing[@]}"; do
+      local is_optional="false"
+      for optional in "${optional_extensions[@]}"; do
+        if [[ "${extension}" == "${optional}" ]]; then
+          is_optional="true"
+          log info "Skipping optional PHP extension: ${extension}"
+          break
+        fi
+      done
+      if [[ "${is_optional}" == "false" ]]; then
+        filtered_missing+=("${extension}")
+      fi
+    done
+    missing=("${filtered_missing[@]}")
+  fi
+  if [ ${#missing[@]} -gt 0 ]; then
+    if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]] && tool_exists install-php-extensions; then
+      log info "Installing missing PHP extensions: ${missing[*]}"
+      run_command --makes-changes install-php-extensions "${missing[@]}"
+      extensions_installed="true"
+      available_extensions=$(php -m | tr '[:upper:]' '[:lower:]')
+      missing=()
+      for extension in "${extensions[@]}"; do
+        local ext_lower
+        ext_lower=$(echo "${extension}" | tr '[:upper:]' '[:lower:]')
+
+        if [[ "${ext_lower}" == "opcache" ]]; then
+          if ! echo "${available_extensions}" | grep -q "opcache"; then
+            missing+=("${extension}")
+          fi
+          continue
+        fi
+
+        if ! echo "${available_extensions}" | grep -q "^${ext_lower}$"; then
+          missing+=("${extension}")
+        fi
+      done
+      if [ ${#optional_extensions[@]} -gt 0 ] && [ ${#missing[@]} -gt 0 ]; then
+        local filtered_missing=()
+        for extension in "${missing[@]}"; do
+          local is_optional="false"
+          for optional in "${optional_extensions[@]}"; do
+            if [[ "${extension}" == "${optional}" ]]; then
+              is_optional="true"
+              log info "Skipping optional PHP extension: ${extension}"
+              break
+            fi
+          done
+          if [[ "${is_optional}" == "false" ]]; then
+            filtered_missing+=("${extension}")
+          fi
+        done
+        missing=("${filtered_missing[@]}")
+      fi
+    fi
+  fi
+  if [[ "${extensions_installed}" == "true" ]]; then
+    php_fpm_restart_for_extensions
+  fi
+  if [ ${#missing[@]} -gt 0 ]; then
+    log error "Missing required PHP extensions: ${missing[*]}"
+    exit 1
+  fi
 }
 
 function php_configure_for_moodle() {
@@ -2269,6 +2677,13 @@ function php_configure_for_moodle() {
     "/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/php.ini"
   )
 
+  local php_ini_loaded
+  php_ini_loaded=$(php --ini 2>/dev/null | awk -F': ' '/Loaded Configuration/ {print $2}')
+  if [[ -n "${php_ini_loaded}" && "${php_ini_loaded}" != "(none)" ]]; then
+    php_ini_paths+=("${php_ini_loaded}")
+  fi
+
+  local ini_updated=false
   for php_ini in "${php_ini_paths[@]}"; do
     if [ -f "$php_ini" ]; then
       log verbose "Configuring $php_ini for Moodle requirements"
@@ -2287,12 +2702,36 @@ function php_configure_for_moodle() {
       run_command --makes-changes sed -i 's/^upload_max_filesize.*/upload_max_filesize = 100M/' "$php_ini"
 
       log verbose "PHP configuration updated in $php_ini"
+      ini_updated=true
     fi
   done
 
+  if [[ "${ini_updated:-false}" == "false" ]]; then
+    local scan_dir="${PHP_INI_SCAN_DIR:-}"
+    if [[ -z "${scan_dir}" ]]; then
+      scan_dir=$(php --ini 2>/dev/null | awk -F': ' '/Scan for additional/ {print $2}')
+    fi
+    if [[ -n "${scan_dir}" && "${scan_dir}" != "(none)" ]]; then
+      local first_scan_dir="${scan_dir%%:*}"
+      if [[ -d "${first_scan_dir}" ]]; then
+        local moodle_ini="${first_scan_dir}/zz-moodle.ini"
+        log verbose "Writing Moodle PHP overrides to ${moodle_ini}"
+        run_command --makes-changes bash -c "cat > '${moodle_ini}' <<'EOF'
+max_input_vars = 5000
+max_execution_time = 300
+memory_limit = 256M
+post_max_size = 100M
+upload_max_filesize = 100M
+EOF"
+      fi
+    fi
+  fi
+
   # Restart PHP-FPM to apply configuration changes
-  if $FPM_ENSURE; then
+  if $FPM_ENSURE && [[ "${SKIP_PACKAGE_INSTALLS}" != "true" ]]; then
     run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" restart
+  elif $FPM_ENSURE; then
+    log verbose "Skipping PHP-FPM restart due to SKIP_PACKAGE_INSTALLS"
   fi
 }
 
@@ -2416,16 +2855,13 @@ function self_signed_cert_request() {
     log error "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com"
     exit 1
   fi
-
   if ! tool_exists openssl; then
     log info "openssl is not installed."
     package_ensure openssl
   fi
-
   # Define certificate paths in /etc/ssl/
   local cert_file="/etc/ssl/${domain}.cert"
   local key_file="/etc/ssl/${domain}.key"
-
   # Check if certificate already exists
   if [[ -f "${cert_file}" ]]; then
     log info "Certificate already exists: ${cert_file}"
@@ -2445,6 +2881,61 @@ function self_signed_cert_request() {
       -addext "extendedKeyUsage = serverAuth"
 
     log info "Self-signed certificate created successfully"
+  fi
+  if [[ "${LAEMP_IMAGE_FLAVOR:-}" == "serversideup" ]]; then
+    local cert_group="${webserverUser:-www-data}"
+    if run_command --makes-changes chown root:"${cert_group}" "${key_file}"; then
+      run_command --makes-changes chmod 640 "${key_file}"
+    else
+      log verbose "Skipping self-signed key permission update (unable to modify permissions): ${key_file}"
+    fi
+  fi
+}
+
+function mkcert_cert_request() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+  local domain=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --domain)
+      shift
+      domain="$1"
+      shift
+      ;;
+    *)
+      log error "Invalid option: $1"
+      exit 1
+      ;;
+    esac
+  done
+
+  if [ -z "$domain" ]; then
+    log error "Missing or incomplete parameters. Usage: ${FUNCNAME[0]} --domain example.com"
+    exit 1
+  fi
+  local cert_dir="${MKCERT_CERT_DIR}"
+  local cert_file="${cert_dir}/${domain}.pem"
+  local key_file="${cert_dir}/${domain}-key.pem"
+  run_command --makes-changes mkdir -p "${cert_dir}"
+  if [[ -f "${cert_file}" && -f "${key_file}" ]]; then
+    log info "mkcert certificate already exists: ${cert_file}"
+  else
+    if ! tool_exists mkcert; then
+      log error "mkcert is not installed. Install mkcert or provide certificates at ${cert_dir}."
+      exit 1
+    fi
+    log info "Creating mkcert certificate for ${domain}"
+    log verbose "  Certificate: ${cert_file}"
+    log verbose "  Key: ${key_file}"
+    run_command --makes-changes mkcert -cert-file "${cert_file}" -key-file "${key_file}" "${domain}"
+  fi
+  if [[ "${LAEMP_IMAGE_FLAVOR:-}" == "serversideup" ]]; then
+    local cert_group="${webserverUser:-www-data}"
+    if run_command --makes-changes chown root:"${cert_group}" "${key_file}"; then
+      run_command --makes-changes chmod 640 "${key_file}"
+    else
+      log verbose "Skipping mkcert key permission update (unable to modify permissions): ${key_file}"
+    fi
   fi
 }
 
@@ -2468,7 +2959,7 @@ function prometheus_ensure() {
 
   if [ ! -f "/usr/local/bin/prometheus" ]; then
     log verbose "Downloading Prometheus ${prometheus_version}"
-    run_command --makes-changes wget -O /tmp/prometheus.tar.gz "${prometheus_url}"
+    download_file "${prometheus_url}" "/tmp/prometheus.tar.gz"
     run_command --makes-changes tar -xzf /tmp/prometheus.tar.gz -C /tmp
     run_command --makes-changes cp /tmp/prometheus-${prometheus_version}.${prometheus_arch}/prometheus /usr/local/bin/
     run_command --makes-changes cp /tmp/prometheus-${prometheus_version}.${prometheus_arch}/promtool /usr/local/bin/
@@ -2568,7 +3059,7 @@ function prometheus_install_node_exporter() {
   local node_exporter_url="https://github.com/prometheus/node_exporter/releases/download/v${node_exporter_version}/node_exporter-${node_exporter_version}.${node_exporter_arch}.tar.gz"
 
   if [ ! -f "/usr/local/bin/node_exporter" ]; then
-    run_command --makes-changes wget -O /tmp/node_exporter.tar.gz "${node_exporter_url}"
+    download_file "${node_exporter_url}" "/tmp/node_exporter.tar.gz"
     run_command --makes-changes tar -xzf /tmp/node_exporter.tar.gz -C /tmp
     run_command --makes-changes cp /tmp/node_exporter-${node_exporter_version}.${node_exporter_arch}/node_exporter /usr/local/bin/
     run_command --makes-changes chown prometheus:prometheus /usr/local/bin/node_exporter
@@ -2621,7 +3112,7 @@ EOF
   local apache_exporter_url="https://github.com/Lusitaniae/apache_exporter/releases/download/v${apache_exporter_version}/apache_exporter-${apache_exporter_version}.linux-amd64.tar.gz"
 
   if [ ! -f "/usr/local/bin/apache_exporter" ]; then
-    run_command --makes-changes wget -O /tmp/apache_exporter.tar.gz "${apache_exporter_url}"
+    download_file "${apache_exporter_url}" "/tmp/apache_exporter.tar.gz"
     run_command --makes-changes tar -xzf /tmp/apache_exporter.tar.gz -C /tmp
     run_command --makes-changes cp /tmp/apache_exporter-${apache_exporter_version}.linux-amd64/apache_exporter /usr/local/bin/
     run_command --makes-changes chown prometheus:prometheus /usr/local/bin/apache_exporter
@@ -2676,7 +3167,7 @@ EOF
   local nginx_exporter_url="https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v${nginx_exporter_version}/nginx-prometheus-exporter_${nginx_exporter_version}_linux_amd64.tar.gz"
 
   if [ ! -f "/usr/local/bin/nginx-prometheus-exporter" ]; then
-    run_command --makes-changes wget -O /tmp/nginx_exporter.tar.gz "${nginx_exporter_url}"
+    download_file "${nginx_exporter_url}" "/tmp/nginx_exporter.tar.gz"
     run_command --makes-changes tar -xzf /tmp/nginx_exporter.tar.gz -C /tmp
     run_command --makes-changes cp /tmp/nginx-prometheus-exporter /usr/local/bin/
     run_command --makes-changes chown prometheus:prometheus /usr/local/bin/nginx-prometheus-exporter
@@ -2731,7 +3222,7 @@ EOF
   local phpfpm_exporter_url="https://github.com/hipages/php-fpm_exporter/releases/download/v${phpfpm_exporter_version}/php-fpm_exporter_${phpfpm_exporter_version}_linux_amd64"
 
   if [ ! -f "/usr/local/bin/php-fpm_exporter" ]; then
-    run_command --makes-changes wget -O /usr/local/bin/php-fpm_exporter "${phpfpm_exporter_url}"
+    download_file "${phpfpm_exporter_url}" "/usr/local/bin/php-fpm_exporter"
     run_command --makes-changes chown prometheus:prometheus /usr/local/bin/php-fpm_exporter
     run_command --makes-changes chmod +x /usr/local/bin/php-fpm_exporter
   fi
@@ -2787,7 +3278,7 @@ function mariadb_verify() {
   local exit_on_failure=false # Default to false
 
   # Check if the first argument is the flag for exit on failure
-  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  # Because we have 'set -o nounset' set, we need to check if the first argument is set
   if [[ "${1:-}" == "--exit-on-failure" ]]; then
     exit_on_failure=true
   fi
@@ -2818,6 +3309,11 @@ function mariadb_verify() {
 function mariadb_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    log verbose "Skipping MariaDB installation due to SKIP_PACKAGE_INSTALLS"
+    return 0
+  fi
+
   mariadb_verify
 
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
@@ -2846,8 +3342,8 @@ function mariadb_ensure() {
     # Check if database and user already exist
     local db_exists
     local user_exists
-    db_exists=$(mysql -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}';" 2>/dev/null | tail -n1 || echo "0")
-    user_exists=$(mysql -e "SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='${DB_HOST}';" 2>/dev/null | tail -n1 || echo "0")
+    db_exists=$(mysql "${MYSQL_SSL_FLAGS[@]}" -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}';" 2>/dev/null | tail -n1 || echo "0")
+    user_exists=$(mysql "${MYSQL_SSL_FLAGS[@]}" -e "SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='${DB_HOST}';" 2>/dev/null | tail -n1 || echo "0")
 
     # Determine password to use
     local db_password
@@ -2888,13 +3384,13 @@ function mariadb_ensure() {
 
     # Create database with UTF-8 encoding (idempotent with IF NOT EXISTS)
     log verbose "Creating database ${DB_NAME}..."
-    run_command --makes-changes mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
     # Create database user and grant privileges (idempotent with IF NOT EXISTS)
     log verbose "Creating database user ${DB_USER}..."
-    run_command --makes-changes mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
-    run_command --makes-changes mysql -e "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'${DB_HOST}';"
-    run_command --makes-changes mysql -e "FLUSH PRIVILEGES;"
+    run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
+    run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'${DB_HOST}';"
+    run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "FLUSH PRIVILEGES;"
 
     # Configure MySQL/MariaDB for Moodle
     log verbose "Configuring MySQL/MariaDB for Moodle requirements..."
@@ -2919,7 +3415,7 @@ EOF
 
     # Quick verification that MariaDB is accessible after restart
     log verbose "Verifying MariaDB is accessible after restart..."
-    if mysqladmin ping >/dev/null 2>&1; then
+    if mysqladmin "${MYSQL_SSL_FLAGS[@]}" ping >/dev/null 2>&1; then
       log verbose "MariaDB is responding to ping"
     elif [ -S /run/mysqld/mysqld.sock ]; then
       log verbose "MariaDB socket exists at /run/mysqld/mysqld.sock"
@@ -2942,7 +3438,7 @@ function postgres_verify() {
   local exit_on_failure=false # Default to false
 
   # Check if the first argument is the flag for exit on failure
-  # Because we have `set -o nounset` set, we need to check if the first argument is set
+  # Because we have 'set -o nounset' set, we need to check if the first argument is set
   if [[ "${1:-}" == "--exit-on-failure" ]]; then
     exit_on_failure=true
   fi
@@ -2973,6 +3469,11 @@ function postgres_verify() {
 function postgres_ensure() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
+  if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+    log verbose "Skipping PostgreSQL installation due to SKIP_PACKAGE_INSTALLS"
+    return 0
+  fi
+
   postgres_verify
 
   if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
@@ -2986,7 +3487,7 @@ function postgres_ensure() {
     # Download PostgreSQL signing key
     if [ ! -f "/etc/apt/keyrings/postgresql.asc" ]; then
       log verbose "Downloading PostgreSQL signing key..."
-      run_command --makes-changes wget -O /etc/apt/keyrings/postgresql.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+      download_file "https://www.postgresql.org/media/keys/ACCC4CF8.asc" "/etc/apt/keyrings/postgresql.asc"
     fi
 
     # Add PostgreSQL APT repository
@@ -3074,6 +3575,12 @@ function main() {
     acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
   fi
 
+  log verbose "checking MKCERT_CERT"
+  if $MKCERT_CERT; then
+    log verbose "Creating mkcert certificate..."
+    mkcert_cert_request --domain "${moodleSiteName}"
+  fi
+
   log verbose "checking SELF_SIGNED_CERT"
   if $SELF_SIGNED_CERT; then
     log verbose "Creating self-signed certificate..."
@@ -3125,14 +3632,22 @@ function main() {
   # Start PHP-FPM after all PHP packages/extensions are installed
   # This avoids socket conflicts during package installation triggers
   if $FPM_ENSURE; then
-    # Use direct process check for reliability in containers
-    if ! pgrep "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
-      log info "Starting PHP-FPM after all PHP packages are installed..."
-      run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+    if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+      if pgrep -f "php-fpm" >/dev/null 2>&1; then
+        log verbose "PHP-FPM is already running in SKIP_PACKAGE_INSTALLS mode"
+      else
+        log info "Skipping PHP-FPM start in SKIP_PACKAGE_INSTALLS mode; ensure php-fpm is running"
+      fi
     else
-      log verbose "PHP-FPM is already running, sending reload signal..."
-      # Use direct signal instead of service manager to avoid is-active check issues in containers
-      run_command --makes-changes pkill -USR2 "php-fpm${PHP_VERSION_MAJOR_MINOR}"
+      # Use direct process check for reliability in containers
+      if ! pgrep "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
+        log info "Starting PHP-FPM after all PHP packages are installed..."
+        run_command --makes-changes service_manage "php${PHP_VERSION_MAJOR_MINOR}-fpm" start
+      else
+        log verbose "PHP-FPM is already running, sending reload signal..."
+        # Use direct signal instead of service manager to avoid is-active check issues in containers
+        run_command --makes-changes pkill -USR2 "php-fpm${PHP_VERSION_MAJOR_MINOR}"
+      fi
     fi
   fi
 
@@ -3184,8 +3699,8 @@ if ! tool_exists "unzip"; then
   log error "unzip command not found. Please install unzip."
   exit 1
 fi
-if ! tool_exists "wget"; then
-  log error "wget command not found. Please install wget."
+if ! tool_exists "wget" && ! tool_exists "curl"; then
+  log error "Neither wget nor curl is installed. Please install one."
   exit 1
 fi
 
@@ -3336,6 +3851,11 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
 
+  --mkcert)
+    MKCERT_CERT=true
+    shift
+    ;;
+
   -w | --web)
     if [[ -n "${2:-}" ]] && [[ "${2:-}" != "-"* ]]; then
       case "$2" in
@@ -3370,6 +3890,30 @@ while [[ $# -gt 0 ]]; do
     ;;
   esac
 done
+
+if [[ -n "${LAEMP_CERT_MODE}" ]]; then
+  case "${LAEMP_CERT_MODE}" in
+  mkcert)
+    MKCERT_CERT=true
+    ACME_CERT=false
+    SELF_SIGNED_CERT=false
+    ;;
+  self-signed | selfsigned)
+    SELF_SIGNED_CERT=true
+    ACME_CERT=false
+    MKCERT_CERT=false
+    ;;
+  acme)
+    ACME_CERT=true
+    SELF_SIGNED_CERT=false
+    MKCERT_CERT=false
+    ;;
+  *)
+    log error "Invalid LAEMP_CERT_MODE: ${LAEMP_CERT_MODE}. Use mkcert, self-signed, or acme."
+    exit 1
+    ;;
+  esac
+fi
 
 check_log_level
 # check_log_level includes an verbose log message with the log level
@@ -3445,7 +3989,7 @@ main
 # Add option to install mariadb locally
 # Add option to install moodle with git rather than download
 
-# [2023-08-13T09:07:03+0000]: VERBOSE: Preparing to execute: sudo certbot --apache -d moodle.romn.co -m admin@example.com --agree-tos --http-challenge --server https://acme-staging-v02.api.letsencrypt.org/directory
+# [2023-08-13T09:07:03+0000]: VERBOSE: Preparing to execute: sudo certbot --apache -d moodle.127.0.0.1.sslip.io -m admin@example.com --agree-tos --http-challenge --server https://acme-staging-v02.api.letsencrypt.org/directory
 # usage:
 #   certbot [SUBCOMMAND] [options] [-d DOMAIN] [-d DOMAIN] ...
 

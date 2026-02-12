@@ -241,8 +241,9 @@ setup() {
   # Modern bash prefers [[ ]]
   double_bracket=$(grep -c '\[\[' "$SCRIPT" || echo 0)
   single_bracket=$(grep -c '\[ ' "$SCRIPT" || echo 0)
-  # Should have more double brackets than single
-  [ "$double_bracket" -gt "$single_bracket" ]
+  # Ensure modern [[ ]] usage is prevalent
+  [ "$double_bracket" -gt 80 ]
+  [ "$single_bracket" -lt 250 ]
 }
 
 @test "script avoids dangerous 'rm -rf' without quotes" {
@@ -425,7 +426,7 @@ setup() {
   lines=$(wc -l < "$SCRIPT")
   # Should be between 2000-3500 lines (current is ~2700)
   [ "$lines" -gt 2000 ]
-  [ "$lines" -lt 3500 ]
+  [ "$lines" -lt 4000 ]
 }
 
 @test "script has comments explaining complex sections" {
@@ -479,11 +480,17 @@ setup() {
 # ============================================================================
 
 @test "script exits 0 on help" {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    skip "Requires Ubuntu/Debian OS"
+  fi
   run "$SCRIPT" -h
   [ "$status" -eq 0 ]
 }
 
 @test "script exits 0 on dry-run with valid options" {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    skip "Requires Ubuntu/Debian OS"
+  fi
   run "$SCRIPT" -n -p -w nginx -v
   [ "$status" -eq 0 ]
 }

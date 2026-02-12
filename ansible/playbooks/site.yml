@@ -7,7 +7,7 @@
   vars:
     php_fpm_service_name: "{{ php_fpm_service_override | default('php8.4-fpm') }}"
     nginx_service_name: nginx
-    moodle_web_root: "{{ moodle_deploy_destination | default('/var/www/html/moodle.romn.co') }}"
+    moodle_web_root: "{{ moodle_deploy_destination | default('/var/www/html/moodle.127.0.0.1.sslip.io') }}"
 
   tasks:
     - name: Ensure system packages required by Ansible workflows are present

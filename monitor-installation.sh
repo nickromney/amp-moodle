@@ -2,6 +2,7 @@
 # Monitor laemp.sh installation progress in containers
 
 CONTAINERS=("laemp-test-ubuntu" "laemp-test-debian")
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 
 echo "========================================"
 echo "Monitoring laemp.sh installations"
@@ -20,21 +21,21 @@ while true; do
     echo "----------------------------------------"
 
     # Check if container exists and is running
-    if ! podman ps --format "{{.Names}}" | grep -q "^${container}$"; then
+    if ! "${CONTAINER_RUNTIME}" ps --format "{{.Names}}" | grep -q "^${container}$"; then
       echo "  Status: Container not running"
       echo ""
       continue
     fi
 
     # Check installation status file
-    if podman exec "$container" test -f /home/testuser/install-status 2>/dev/null; then
-      status=$(podman exec "$container" cat /home/testuser/install-status 2>/dev/null || echo "UNKNOWN")
+    if "${CONTAINER_RUNTIME}" exec "$container" test -f /home/testuser/install-status 2>/dev/null; then
+      status=$("${CONTAINER_RUNTIME}" exec "$container" cat /home/testuser/install-status 2>/dev/null || echo "UNKNOWN")
       echo "  Status: $status"
 
       # If completed, show verification
       if [[ "$status" == "SUCCESS" ]]; then
         echo "  Verification: Running checks..."
-        if podman exec "$container" /usr/local/bin/verify-moodle.sh >/dev/null 2>&1; then
+        if "${CONTAINER_RUNTIME}" exec "$container" /usr/local/bin/verify-moodle.sh >/dev/null 2>&1; then
           echo "  ✓ All verification checks passed"
         else
           echo "  ✗ Verification checks failed"
@@ -46,7 +47,7 @@ while true; do
 
     # Show last few log lines
     echo "  Last log entries:"
-    podman exec "$container" tail -3 /home/testuser/laemp-install.log 2>/dev/null | sed 's/^/    /'
+    "${CONTAINER_RUNTIME}" exec "$container" tail -3 /home/testuser/laemp-install.log 2>/dev/null | sed 's/^/    /'
     echo ""
   done
 

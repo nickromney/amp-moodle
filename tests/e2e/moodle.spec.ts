@@ -22,10 +22,10 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env.test') });
  * - PHP processing
  */
 
-const MOODLE_URL = process.env.MOODLE_URL || 'https://moodle.romn.co';
+const MOODLE_URL = process.env.MOODLE_URL || 'https://moodle.127.0.0.1.sslip.io';
 const ADMIN_USERNAME = process.env.MOODLE_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.MOODLE_ADMIN_PASSWORD;
-const ADMIN_EMAIL = process.env.MOODLE_ADMIN_EMAIL || 'admin@moodle.romn.co';
+const ADMIN_EMAIL = process.env.MOODLE_ADMIN_EMAIL || 'admin@moodle.127.0.0.1.sslip.io';
 
 // Skip all tests if credentials not configured
 test.skip(!ADMIN_PASSWORD || ADMIN_PASSWORD === 'CHANGE_ME_FROM_INSTALL_OUTPUT',

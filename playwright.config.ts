@@ -35,7 +35,7 @@ export default defineConfig({
   /* Shared settings for all the projects below */
   use: {
     /* Base URL - override in .env.test */
-    baseURL: process.env.MOODLE_URL || 'https://moodle.romn.co',
+    baseURL: process.env.MOODLE_URL || 'https://moodle.127.0.0.1.sslip.io',
 
     /* Collect trace when retrying the failed test */
     trace: 'on-first-retry',
