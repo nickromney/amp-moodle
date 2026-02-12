@@ -7,7 +7,7 @@
   vars:
     verify_report_name: "{{ inventory_hostname }}-{{ ansible_date_time.iso8601_basic_short }}.json"
     verify_report_path: "{{ verify_output_dir }}/{{ verify_report_name }}"
-    moodle_root: "{{ moodle_deploy_destination | default('/var/www/html/moodle.romn.co') }}"
+    moodle_root: "{{ moodle_deploy_destination | default('/var/www/html/moodle.127.0.0.1.sslip.io') }}"
     verify_output_dir: "{{ lookup('env', 'VERIFY_OUTPUT_DIR') | default((playbook_dir | dirname) ~ '/.artifacts', true) }}"
     moodle_https_port_effective: "{{ moodle_https_port | default(443) }}"
 

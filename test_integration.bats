@@ -10,7 +10,8 @@
 # load '/usr/local/lib/bats/load.bash'
 
 # Global test configuration
-export PODMAN_PLATFORM="linux/amd64"
+export CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+export CONTAINER_PLATFORM="${CONTAINER_PLATFORM:-linux/amd64}"
 export TEST_TIMEOUT=600  # 10 minutes for full installations
 export CONTAINER_PREFIX="laemp-test"
 
@@ -26,8 +27,8 @@ setup() {
   TEST_CONTAINERS+=("$TEST_CONTAINER")
 
   # Ensure Podman images are built (Ubuntu 24.04 or Debian 13)
-  if ! podman image exists amp-moodle-ubuntu:24.04; then
-    skip "Ubuntu 24.04 test image not found. Run: podman build -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 ."
+  if ! container_image_exists amp-moodle-ubuntu:24.04; then
+    skip "Ubuntu 24.04 test image not found. Run: ${CONTAINER_RUNTIME} build -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 ."
   fi
 }
 
@@ -35,14 +36,14 @@ setup() {
 teardown() {
   # Clean up test container if it exists
   if [ -n "${TEST_CONTAINER:-}" ]; then
-    podman rm -f "$TEST_CONTAINER" 2>/dev/null || true
+    container_cmd rm -f "$TEST_CONTAINER" 2>/dev/null || true
   fi
 }
 
 # Cleanup all test containers on exit
 cleanup_all_containers() {
   for container in "${TEST_CONTAINERS[@]}"; do
-    podman rm -f "$container" 2>/dev/null || true
+    container_cmd rm -f "$container" 2>/dev/null || true
   done
 }
 trap cleanup_all_containers EXIT
@@ -51,13 +52,26 @@ trap cleanup_all_containers EXIT
 # Helper Functions
 #
 
+container_cmd() {
+  "${CONTAINER_RUNTIME}" "$@"
+}
+
+container_image_exists() {
+  local image="$1"
+  if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
+    container_cmd image exists "${image}"
+  else
+    container_cmd image inspect "${image}" >/dev/null 2>&1
+  fi
+}
+
 # Start a test container and copy script into it
 start_test_container() {
   local image="${1:-amp-moodle-ubuntu:24.04}"
 
   # Start container with systemd support
-  podman run -d \
-    --platform "$PODMAN_PLATFORM" \
+  container_cmd run -d \
+    --platform "$CONTAINER_PLATFORM" \
     --name "$TEST_CONTAINER" \
     --privileged \
     --tmpfs /tmp \
@@ -71,62 +85,62 @@ start_test_container() {
   sleep 2
 
   # Copy laemp.sh script into container
-  podman cp laemp.sh "${TEST_CONTAINER}:/usr/local/bin/laemp.sh"
-  podman exec "$TEST_CONTAINER" chmod +x /usr/local/bin/laemp.sh
+  container_cmd cp laemp.sh "${TEST_CONTAINER}:/usr/local/bin/laemp.sh"
+  container_cmd exec "$TEST_CONTAINER" chmod +x /usr/local/bin/laemp.sh
 }
 
 # Execute laemp.sh in container with given arguments
 # Note: Must run as root for package installation and system configuration
 exec_laemp() {
   local args="$*"
-  podman exec --user root "$TEST_CONTAINER" bash -c "cd /root && /usr/local/bin/laemp.sh $args"
+  container_cmd exec --user root "$TEST_CONTAINER" bash -c "cd /root && /usr/local/bin/laemp.sh $args"
 }
 
 # Check if a service is running in the container
 service_is_active() {
   local service="$1"
-  podman exec --user root "$TEST_CONTAINER" systemctl is-active "$service" >/dev/null 2>&1
+  container_cmd exec --user root "$TEST_CONTAINER" systemctl is-active "$service" >/dev/null 2>&1
 }
 
 # Check if a file exists in the container
 file_exists() {
   local file="$1"
-  podman exec "$TEST_CONTAINER" test -f "$file"
+  container_cmd exec "$TEST_CONTAINER" test -f "$file"
 }
 
 # Check if a directory exists in the container
 dir_exists() {
   local dir="$1"
-  podman exec "$TEST_CONTAINER" test -d "$dir"
+  container_cmd exec "$TEST_CONTAINER" test -d "$dir"
 }
 
 # Get file checksum from container
 get_file_checksum() {
   local file="$1"
-  podman exec "$TEST_CONTAINER" md5sum "$file" 2>/dev/null | awk '{print $1}'
+  container_cmd exec "$TEST_CONTAINER" md5sum "$file" 2>/dev/null | awk '{print $1}'
 }
 
 # Check if command exists in container
 command_exists() {
   local cmd="$1"
-  podman exec "$TEST_CONTAINER" command -v "$cmd" >/dev/null 2>&1
+  container_cmd exec "$TEST_CONTAINER" command -v "$cmd" >/dev/null 2>&1
 }
 
 # Check if systemd unit exists in container
 unit_exists() {
   local unit="$1"
-  podman exec --user root "$TEST_CONTAINER" systemctl list-units --all --no-pager | grep -q "$unit"
+  container_cmd exec --user root "$TEST_CONTAINER" systemctl list-units --all --no-pager | grep -q "$unit"
 }
 
 # Check if postgres database exists in container
 postgres_db_exists() {
   local dbname="$1"
-  podman exec --user root "$TEST_CONTAINER" sudo -u postgres psql -l | grep -q "$dbname"
+  container_cmd exec --user root "$TEST_CONTAINER" sudo -u postgres psql -l | grep -q "$dbname"
 }
 
 # Count log files in container
 count_log_files() {
-  podman exec "$TEST_CONTAINER" bash -c 'ls /usr/local/bin/logs/*.log 2>/dev/null | wc -l'
+  container_cmd exec "$TEST_CONTAINER" bash -c 'ls /usr/local/bin/logs/*.log 2>/dev/null | wc -l'
 }
 
 #
@@ -150,7 +164,7 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify PHP version is 8.4 (default)
-  run podman exec "$TEST_CONTAINER" php -v
+  run container_cmd exec "$TEST_CONTAINER" php -v
   [ "$status" -eq 0 ]
   [[ "$output" =~ "PHP 8.4" ]]
 
@@ -206,7 +220,7 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify PHP 8.2 installed
-  run podman exec "$TEST_CONTAINER" php -v
+  run container_cmd exec "$TEST_CONTAINER" php -v
   [ "$status" -eq 0 ]
   [[ "$output" =~ "PHP 8.2" ]]
 }
@@ -232,7 +246,7 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify MySQL accepts connections
-  run podman exec "$TEST_CONTAINER" mysql -e "SELECT 1"
+  run container_cmd exec "$TEST_CONTAINER" mysql -e "SELECT 1"
   [ "$status" -eq 0 ]
 }
 
@@ -253,7 +267,7 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify PostgreSQL accepts connections
-  run podman exec "$TEST_CONTAINER" sudo -u postgres psql -c "SELECT 1"
+  run container_cmd exec "$TEST_CONTAINER" sudo -u postgres psql -c "SELECT 1"
   [ "$status" -eq 0 ]
 }
 
@@ -270,15 +284,15 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify certificate files created
-  run file_exists "/etc/ssl/moodle.romn.co.crt"
-  [ "$status" -eq 0 ] || file_exists "/etc/ssl/moodle.romn.co.cert"
+  run file_exists "/etc/ssl/moodle.127.0.0.1.sslip.io.crt"
+  [ "$status" -eq 0 ] || file_exists "/etc/ssl/moodle.127.0.0.1.sslip.io.cert"
 
-  run file_exists "/etc/ssl/moodle.romn.co.key"
+  run file_exists "/etc/ssl/moodle.127.0.0.1.sslip.io.key"
   [ "$status" -eq 0 ]
 
   # Verify certificate is valid
-  run podman exec "$TEST_CONTAINER" openssl x509 -in /etc/ssl/moodle.romn.co.crt -noout -text
-  [ "$status" -eq 0 ] || run podman exec "$TEST_CONTAINER" openssl x509 -in /etc/ssl/moodle.romn.co.cert -noout -text
+  run container_cmd exec "$TEST_CONTAINER" openssl x509 -in /etc/ssl/moodle.127.0.0.1.sslip.io.crt -noout -text
+  [ "$status" -eq 0 ] || run container_cmd exec "$TEST_CONTAINER" openssl x509 -in /etc/ssl/moodle.127.0.0.1.sslip.io.cert -noout -text
   [ "$status" -eq 0 ]
 }
 
@@ -289,17 +303,17 @@ count_log_files() {
 @test "full moodle installation with nginx and mysql" {
   start_test_container
 
-  # Run full Moodle installation (Moodle 5.1.0)
-  run exec_laemp -p -w nginx -d mysql -m 501 -S -c
+  # Run full Moodle installation (Moodle 5.1.3)
+  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
 
   # Verify Moodle directory exists
-  run dir_exists "/var/www/html/moodle.romn.co"
+  run dir_exists "/var/www/html/moodle.127.0.0.1.sslip.io"
   [ "$status" -eq 0 ]
 
   # Verify config.php created
-  run file_exists "/var/www/html/moodle.romn.co/config.php"
+  run file_exists "/var/www/html/moodle.127.0.0.1.sslip.io/config.php"
   [ "$status" -eq 0 ]
 
   # Verify moodledata directory exists
@@ -307,12 +321,12 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify moodledata has correct permissions
-  run podman exec "$TEST_CONTAINER" stat -c %U /home/moodle/moodledata
+  run container_cmd exec "$TEST_CONTAINER" stat -c %U /home/moodle/moodledata
   [ "$status" -eq 0 ]
   [[ "$output" =~ "www-data" ]] || [[ "$output" =~ "moodle" ]]
 
   # Verify MySQL database created
-  run podman exec "$TEST_CONTAINER" mysql -e "SHOW DATABASES LIKE 'moodle'"
+  run container_cmd exec "$TEST_CONTAINER" mysql -e "SHOW DATABASES LIKE 'moodle'"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "moodle" ]]
 }
@@ -320,8 +334,8 @@ count_log_files() {
 @test "full moodle installation with apache and postgresql" {
   start_test_container
 
-  # Run full Moodle installation with Apache and PostgreSQL (Moodle 5.1.0)
-  run exec_laemp -p -w apache -f -d pgsql -m 501 -S -c
+  # Run full Moodle installation with Apache and PostgreSQL (Moodle 5.1.3)
+  run exec_laemp -p -w apache -f -d pgsql -m 5013 -S -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
 
@@ -334,27 +348,27 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify Moodle files exist
-  run file_exists "/var/www/html/moodle.romn.co/config.php"
+  run file_exists "/var/www/html/moodle.127.0.0.1.sslip.io/config.php"
   [ "$status" -eq 0 ]
 }
 
 @test "moodle installation creates vhost configuration" {
   start_test_container
 
-  # Run Moodle installation (Moodle 5.1.0)
-  run exec_laemp -p -w nginx -d mysql -m 501 -S -c
+  # Run Moodle installation (Moodle 5.1.3)
+  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
   [ "$status" -eq 0 ]
 
   # Verify Nginx vhost configuration created
-  run file_exists "/etc/nginx/sites-available/moodle.romn.co"
+  run file_exists "/etc/nginx/sites-available/moodle.127.0.0.1.sslip.io"
   [ "$status" -eq 0 ]
 
   # Verify vhost is enabled
-  run file_exists "/etc/nginx/sites-enabled/moodle.romn.co"
+  run file_exists "/etc/nginx/sites-enabled/moodle.127.0.0.1.sslip.io"
   [ "$status" -eq 0 ]
 
   # Verify configuration is valid
-  run podman exec "$TEST_CONTAINER" nginx -t
+  run container_cmd exec "$TEST_CONTAINER" nginx -t
   [ "$status" -eq 0 ]
 }
 
@@ -367,7 +381,7 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify Moodle directory exists
-  run dir_exists "/var/www/html/moodle.romn.co"
+  run dir_exists "/var/www/html/moodle.127.0.0.1.sslip.io"
   [ "$status" -eq 0 ]
 }
 
@@ -444,22 +458,22 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Check for Moodle-specific optimizations
-  run podman exec "$TEST_CONTAINER" grep -q "client_max_body_size" /etc/nginx/nginx.conf
+  run container_cmd exec "$TEST_CONTAINER" grep -q "client_max_body_size" /etc/nginx/nginx.conf
   [ "$status" -eq 0 ]
 }
 
 @test "php configuration is optimized for moodle" {
   start_test_container
 
-  run exec_laemp -p -w nginx -d mysql -m 501 -c
+  run exec_laemp -p -w nginx -d mysql -m 5013 -c
   [ "$status" -eq 0 ]
 
   # Check PHP FPM pool configuration
-  run file_exists "/etc/php/8.4/fpm/pool.d/moodle.romn.co.conf"
+  run file_exists "/etc/php/8.4/fpm/pool.d/moodle.127.0.0.1.sslip.io.conf"
   [ "$status" -eq 0 ]
 
   # Verify Moodle-specific PHP settings
-  run podman exec "$TEST_CONTAINER" grep -q "max_input_vars" /etc/php/8.4/fpm/pool.d/moodle.romn.co.conf
+  run container_cmd exec "$TEST_CONTAINER" grep -q "max_input_vars" /etc/php/8.4/fpm/pool.d/moodle.127.0.0.1.sslip.io.conf
   [ "$status" -eq 0 ]
 }
 
@@ -470,11 +484,11 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Check Apache vhost configuration
-  run file_exists "/etc/apache2/sites-available/moodle.romn.co.conf"
+  run file_exists "/etc/apache2/sites-available/moodle.127.0.0.1.sslip.io.conf"
   [ "$status" -eq 0 ]
 
   # Verify SSL configuration present
-  run podman exec "$TEST_CONTAINER" grep -q "SSLEngine on" /etc/apache2/sites-available/moodle.romn.co.conf
+  run container_cmd exec "$TEST_CONTAINER" grep -q "SSLEngine on" /etc/apache2/sites-available/moodle.127.0.0.1.sslip.io.conf
   [ "$status" -eq 0 ]
 }
 
@@ -492,7 +506,7 @@ count_log_files() {
 
   # Get checksums of key files
   local nginx_conf_1=$(get_file_checksum "/etc/nginx/nginx.conf")
-  local php_version_1=$(podman exec "$TEST_CONTAINER" php -v | head -1)
+  local php_version_1=$(container_cmd exec "$TEST_CONTAINER" php -v | head -1)
 
   # Second run
   run exec_laemp -p -w nginx -d mysql -c
@@ -501,7 +515,7 @@ count_log_files() {
 
   # Verify checksums unchanged
   local nginx_conf_2=$(get_file_checksum "/etc/nginx/nginx.conf")
-  local php_version_2=$(podman exec "$TEST_CONTAINER" php -v | head -1)
+  local php_version_2=$(container_cmd exec "$TEST_CONTAINER" php -v | head -1)
 
   [ "$nginx_conf_1" = "$nginx_conf_2" ]
   [ "$php_version_1" = "$php_version_2" ]
@@ -511,21 +525,21 @@ count_log_files() {
   start_test_container
 
   # First Moodle installation
-  run exec_laemp -p -w nginx -d mysql -m 501 -S -c
+  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
   [ "$status" -eq 0 ]
 
   # Verify config.php exists
-  run file_exists "/var/www/html/moodle.romn.co/config.php"
+  run file_exists "/var/www/html/moodle.127.0.0.1.sslip.io/config.php"
   [ "$status" -eq 0 ]
 
-  local config_checksum_1=$(get_file_checksum "/var/www/html/moodle.romn.co/config.php")
+  local config_checksum_1=$(get_file_checksum "/var/www/html/moodle.127.0.0.1.sslip.io/config.php")
 
   # Second Moodle installation
-  run exec_laemp -p -w nginx -d mysql -m 501 -S -c
+  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
   [ "$status" -eq 0 ]
 
   # Verify config.php still exists and unchanged
-  local config_checksum_2=$(get_file_checksum "/var/www/html/moodle.romn.co/config.php")
+  local config_checksum_2=$(get_file_checksum "/var/www/html/moodle.127.0.0.1.sslip.io/config.php")
   [ "$config_checksum_1" = "$config_checksum_2" ]
 }
 
@@ -619,8 +633,8 @@ count_log_files() {
 
 @test "installation works on debian" {
   # Check if Debian image exists
-  if ! podman image exists amp-moodle-debian:latest; then
-    skip "Debian test image not found. Run: podman build -f Dockerfile.debian -t amp-moodle-debian ."
+  if ! container_image_exists amp-moodle-debian:latest; then
+    skip "Debian test image not found. Run: ${CONTAINER_RUNTIME} build -f Dockerfile.debian -t amp-moodle-debian ."
   fi
 
   start_test_container "amp-moodle-debian"
@@ -646,7 +660,7 @@ count_log_files() {
   start_test_container
 
   # Install complete stack: Nginx, PHP, MySQL, Moodle, SSL, Prometheus, Memcached
-  run exec_laemp -p -w nginx -d mysql -m 501 -S -r -M -c
+  run exec_laemp -p -w nginx -d mysql -m 5013 -S -r -M -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
 
@@ -663,12 +677,12 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify Moodle
-  run file_exists "/var/www/html/moodle.romn.co/config.php"
+  run file_exists "/var/www/html/moodle.127.0.0.1.sslip.io/config.php"
   [ "$status" -eq 0 ]
 
   # Verify SSL certificate
-  run file_exists "/etc/ssl/moodle.romn.co.crt"
-  [ "$status" -eq 0 ] || file_exists "/etc/ssl/moodle.romn.co.cert"
+  run file_exists "/etc/ssl/moodle.127.0.0.1.sslip.io.crt"
+  [ "$status" -eq 0 ] || file_exists "/etc/ssl/moodle.127.0.0.1.sslip.io.cert"
 
   # Verify Prometheus
   run file_exists "/usr/local/bin/prometheus"
@@ -687,7 +701,7 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify PHP 8.4 installed
-  run podman exec "$TEST_CONTAINER" php8.4 -v
+  run container_cmd exec "$TEST_CONTAINER" php8.4 -v
   [ "$status" -eq 0 ]
 
   # Install PHP 8.2 alongside
@@ -695,10 +709,10 @@ count_log_files() {
   [ "$status" -eq 0 ]
 
   # Verify both versions available
-  run podman exec "$TEST_CONTAINER" php8.4 -v
+  run container_cmd exec "$TEST_CONTAINER" php8.4 -v
   [ "$status" -eq 0 ]
 
-  run podman exec "$TEST_CONTAINER" php8.2 -v
+  run container_cmd exec "$TEST_CONTAINER" php8.2 -v
   [ "$status" -eq 0 ]
 }
 

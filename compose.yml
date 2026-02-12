@@ -12,8 +12,8 @@
 #   ./monitor-installation.sh               # Monitor progress
 #
 # Access Moodle:
-#   https://moodle.romn.co:9443  # Ubuntu with MySQL
-#   https://moodle.romn.co:8443  # Debian with PostgreSQL
+#   https://moodle.127.0.0.1.sslip.io:9443  # Ubuntu with MySQL
+#   https://moodle.127.0.0.1.sslip.io:8443  # Debian with PostgreSQL
 #
 # Database connections:
 #   Ubuntu → mysql-db:3306
@@ -95,6 +95,51 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Server Side Up PHP (FPM + Nginx) container for Moodle testing
+  moodle-test-serversideup:
+    image: ${SERVERSIDEUP_PHP_IMAGE:-serversideup/php:8.4-fpm-nginx}
+    container_name: laemp-test-serversideup
+    platform: linux/amd64
+    profiles:
+      - serversideup
+
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
+    volumes:
+      - ./laemp.sh:/usr/local/bin/laemp.sh:ro
+      - ./verify-moodle.sh:/usr/local/bin/verify-moodle.sh:ro
+      - ./logs:/usr/local/bin/logs
+      - ./.certs:/etc/ssl/mkcert:ro
+      - serversideup-moodle:/var/www/html
+
+    environment:
+      - TZ=UTC
+      - LC_ALL=en_US.UTF-8
+      - LANG=en_US.UTF-8
+      - DB_HOST=mysql-db
+      - DB_TYPE=mariadb
+      - DB_NAME=moodle
+      - DB_USER=moodle
+      - DB_PASS=moodlepass
+      - MOODLE_PORT=:9444
+      - LAEMP_IMAGE_FLAVOR=serversideup
+      - LAEMP_FASTCGI_PASS=127.0.0.1:9000
+      - LAEMP_HTTP_PORT=8080
+      - LAEMP_HTTPS_PORT=8443
+      - LAEMP_MYSQL_SSL_OPTION=--ssl=0
+      - PHP_FPM_PM_MAX_CHILDREN=4
+      - LAEMP_CERT_MODE=mkcert
+      - LAEMP_MKCERT_DIR=/etc/ssl/mkcert
+
+    ports:
+      - "9080:8080"
+      - "9444:8443"
+
+    networks:
+      - laemp-test-network
+
   # Ubuntu 24.04 Test Container with MySQL - COMMENTED OUT (Focusing on Debian)
   # _moodle-test-ubuntu:
   #   build:
@@ -138,7 +183,7 @@ services:
   #       sleep 2;
   #     done;
   #     echo 'MySQL is ready!' | tee -a /home/testuser/laemp-install.log;
-  #     if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
+  #     if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
   #       EXIT_CODE=0;
   #       echo 'SUCCESS' > /home/testuser/install-status;
   #       echo '========================================' | tee -a /home/testuser/laemp-install.log;
@@ -257,6 +302,8 @@ volumes:
     name: laemp-postgres-data
   debian-moodle:
     name: laemp-debian-moodle
+  serversideup-moodle:
+    name: laemp-serversideup-moodle
 
 networks:
   laemp-test-network:

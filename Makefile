@@ -6,6 +6,10 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m
 
+# Container runtime (Docker Desktop by default)
+CONTAINER_RUNTIME ?= docker
+COMPOSE_CMD ?= docker compose
+
 # Auto-detect projects
 # Find Python projects (have pyproject.toml)
 PYTHON_PROJECTS := $(shell find . -name "pyproject.toml" \
@@ -274,60 +278,60 @@ typescript-test: ## Run Playwright tests
 	done
 	@echo "$(GREEN)✓ Playwright tests passed$(NC)"
 
-##@ Container Testing (Podman)
+##@ Container Testing
 
 .PHONY: debian
 debian: ## Ensure Debian container is running (idempotent, won't destroy existing)
 	@echo "$(YELLOW)Ensuring Debian container is running...$(NC)"
-	@if ! podman-compose ps moodle-test-debian 2>/dev/null | grep -q "Up"; then \
+	@if ! $(COMPOSE_CMD) ps moodle-test-debian 2>/dev/null | grep -q "Up"; then \
 		echo "$(YELLOW)Starting Debian container...$(NC)"; \
-		podman-compose up -d moodle-test-debian; \
+		$(COMPOSE_CMD) up -d moodle-test-debian; \
 	else \
 		echo "$(GREEN)Debian container already running$(NC)"; \
 	fi
 	@echo ""
 	@echo "$(GREEN)Container ready. Run this command to install:$(NC)"
 	@echo ""
-	@echo "  podman-compose exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S"
+	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
 	@echo ""
 	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
 
 .PHONY: ubuntu
 ubuntu: ## Ensure Ubuntu container is running (idempotent, won't destroy existing)
 	@echo "$(YELLOW)Ensuring Ubuntu container is running...$(NC)"
-	@if ! podman-compose ps moodle-test-ubuntu 2>/dev/null | grep -q "Up"; then \
+	@if ! $(COMPOSE_CMD) ps moodle-test-ubuntu 2>/dev/null | grep -q "Up"; then \
 		echo "$(YELLOW)Starting Ubuntu container...$(NC)"; \
-		podman-compose up -d moodle-test-ubuntu; \
+		$(COMPOSE_CMD) up -d moodle-test-ubuntu; \
 	else \
 		echo "$(GREEN)Ubuntu container already running$(NC)"; \
 	fi
 	@echo ""
 	@echo "$(GREEN)Container ready. Run this command to install:$(NC)"
 	@echo ""
-	@echo "  podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S"
+	@echo "  $(COMPOSE_CMD) exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
 	@echo ""
 	@echo "$(YELLOW)Access Moodle at: https://localhost:9443$(NC)"
 
 .PHONY: debian-clean
 debian-clean: ## Destroy and recreate Debian container (clean slate)
 	@echo "$(YELLOW)Destroying and recreating Debian container...$(NC)"
-	@podman-compose down moodle-test-debian 2>/dev/null || true
-	@podman-compose up -d moodle-test-debian
+	@$(COMPOSE_CMD) down moodle-test-debian 2>/dev/null || true
+	@$(COMPOSE_CMD) up -d moodle-test-debian
 	@echo ""
 	@echo "$(GREEN)Fresh container started. Run this command to install:$(NC)"
 	@echo ""
-	@echo "  podman-compose exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S"
+	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
 	@echo ""
 	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
 
 .PHONY: ubuntu-clean
 ubuntu-clean: ## Destroy and recreate Ubuntu container (clean slate)
 	@echo "$(YELLOW)Destroying and recreating Ubuntu container...$(NC)"
-	@podman-compose down moodle-test-ubuntu 2>/dev/null || true
-	@podman-compose up -d moodle-test-ubuntu
+	@$(COMPOSE_CMD) down moodle-test-ubuntu 2>/dev/null || true
+	@$(COMPOSE_CMD) up -d moodle-test-ubuntu
 	@echo ""
 	@echo "$(GREEN)Fresh container started. Run this command to install:$(NC)"
 	@echo ""
-	@echo "  podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S"
+	@echo "  $(COMPOSE_CMD) exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
 	@echo ""
 	@echo "$(YELLOW)Access Moodle at: https://localhost:9443$(NC)"

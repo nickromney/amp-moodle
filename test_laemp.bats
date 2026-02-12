@@ -4,6 +4,12 @@
 # NOTE: These tests should be run on Ubuntu/Debian systems (or in containers)
 # The script checks OS compatibility before parsing arguments
 
+setup() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    skip "Requires Ubuntu/Debian OS"
+  fi
+}
+
 # ==============================================================================
 # HELP AND USAGE TESTS
 # ==============================================================================
@@ -86,7 +92,7 @@
   run ./laemp.sh -m -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Ensure Moodle version 501" ]]
+  [[ "$output" =~ "Ensure Moodle version 5013" ]]
 }
 
 @test "moodle flag (-m) with version 405 (4.5) in dry-run verbose mode" {
@@ -103,11 +109,11 @@
   [[ "$output" =~ "Ensure Moodle version 500" ]]
 }
 
-@test "moodle flag (-m) with version 501 (5.1.0) in dry-run verbose mode" {
-  run ./laemp.sh -m 501 -n -v
+@test "moodle flag (-m) with version 5013 (5.1.3) in dry-run verbose mode" {
+  run ./laemp.sh -m 5013 -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Ensure Moodle version 501" ]]
+  [[ "$output" =~ "Ensure Moodle version 5013" ]]
 }
 
 @test "moodle flag (--moodle) with specific version in dry-run verbose mode" {
