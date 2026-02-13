@@ -4,7 +4,7 @@
 set -e
 
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
-COMPOSE_CMD=(${COMPOSE_CMD:-docker compose})
+read -r -a COMPOSE_CMD <<< "${COMPOSE_CMD:-docker compose}"
 
 echo "Cleaning up laemp test environment..."
 echo "======================================"
