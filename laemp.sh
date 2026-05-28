@@ -69,8 +69,11 @@ fi
 webserverUser="www-data"
 moodleUser="moodle"
 
-# Site name
-moodleSiteName="moodle.127.0.0.1.sslip.io"
+# Site identity
+moodleSiteDomain="${MOODLE_SITE_DOMAIN:-${LAEMP_SITE_DOMAIN:-moodle.test}}"
+moodleSiteName="${MOODLE_SITE_HOST:-${LAEMP_SITE_HOST:-${moodleSiteDomain}.127.0.0.1.sslip.io}}"
+moodleAdminEmail="${MOODLE_ADMIN_EMAIL:-${LAEMP_ADMIN_EMAIL:-demo@${moodleSiteDomain}}}"
+moodleDisplayName="${MOODLE_DISPLAY_NAME:-${moodleSiteDomain}}"
 # Optional port for wwwroot URL (e.g., ":9443" for testing, empty for production)
 moodlePort="${MOODLE_PORT:-}"
 # Nginx listen port (extract numeric port from MOODLE_PORT, default to 443)
@@ -665,6 +668,51 @@ function package_ensure() {
   fi
 }
 
+function package_available() {
+  local package="$1"
+
+  case "$package_manager" in
+  apt)
+    apt-cache show "$package" >/dev/null 2>&1
+    ;;
+  *)
+    log error "Error: Unsupported package manager."
+    exit 1
+    ;;
+  esac
+}
+
+function normalized_system_arch() {
+  local arch
+
+  if command -v dpkg >/dev/null 2>&1; then
+    arch=$(dpkg --print-architecture)
+  else
+    arch=$(uname -m)
+  fi
+
+  case "$arch" in
+  amd64 | x86_64)
+    echo "amd64"
+    ;;
+  arm64 | aarch64)
+    echo "arm64"
+    ;;
+  *)
+    log error "Unsupported system architecture: ${arch}"
+    exit 1
+    ;;
+  esac
+}
+
+function prometheus_release_arch() {
+  echo "linux-$(normalized_system_arch)"
+}
+
+function exporter_release_arch_underscore() {
+  echo "linux_$(normalized_system_arch)"
+}
+
 function repository_ensure() {
   local repositories=("$@")
   local missing_repositories=()
@@ -1129,6 +1177,12 @@ function apache_create_vhost() {
 
   declare -n config=$1
   local logDir="${APACHE_LOG_DIR:-/var/log/apache2}"
+  local site_name="${config[site_name]}"
+  local document_root="${config[document_root]}"
+  local admin_email="${config[admin_email]}"
+  local ssl_cert_file="${config[ssl_cert_file]}"
+  local ssl_key_file="${config[ssl_key_file]}"
+  local include_file="${config[include_file]}"
 
   local required_options=("site_name" "document_root" "admin_email" "ssl_cert_file" "ssl_key_file")
   for option in "${required_options[@]}"; do
@@ -1171,24 +1225,24 @@ function apache_create_vhost() {
     fpm_config="
     # PHP-FPM Configuration
     <FilesMatch \\.php$>
-        SetHandler \"proxy:unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${config["site_name"]}.sock|fcgi://localhost\"
+        SetHandler \"proxy:unix:/run/php/php${PHP_VERSION_MAJOR_MINOR}-${site_name}.sock|fcgi://localhost\"
     </FilesMatch>"
   fi
 
   local vhost_config
   vhost_config=$(
     apply_template "$vhost_template" \
-      "site_name=${config["site_name"]}" \
-      "document_root=${config["document_root"]}" \
-      "admin_email=${config["admin_email"]}" \
-      "ssl_cert_file=${config["ssl_cert_file"]}" \
-      "ssl_key_file=${config["ssl_key_file"]}" \
+      "site_name=${site_name}" \
+      "document_root=${document_root}" \
+      "admin_email=${admin_email}" \
+      "ssl_cert_file=${ssl_cert_file}" \
+      "ssl_key_file=${ssl_key_file}" \
       "fpm_config=${fpm_config}" \
-      "include_file=${config["include_file"]}"
+      "include_file=${include_file}"
   )
 
-  echo "$vhost_config" >"/etc/apache2/sites-available/${config["site_name"]}.conf"
-  run_command --makes-changes a2ensite "${config["site_name"]}"
+  echo "$vhost_config" >"/etc/apache2/sites-available/${site_name}.conf"
+  run_command --makes-changes a2ensite "${site_name}"
   run_command --makes-changes service_manage "${APACHE_NAME}" reload
 }
 
@@ -1511,9 +1565,9 @@ function moodle_install_database() {
   log verbose "Running Moodle CLI installer with the following settings:"
   log verbose "  Language: en"
   log verbose "  Admin user: admin"
-  log verbose "  Admin email: admin@${moodleSiteName}"
-  log verbose "  Full name: ${moodleSiteName}"
-  log verbose "  Short name: ${moodleSiteName}"
+  log verbose "  Admin email: ${moodleAdminEmail}"
+  log verbose "  Full name: ${moodleDisplayName}"
+  log verbose "  Short name: ${moodleDisplayName}"
 
   # Run Moodle CLI installer
   local install_output
@@ -1521,9 +1575,9 @@ function moodle_install_database() {
     --lang=en \
     --adminuser=admin \
     --adminpass="${admin_password}" \
-    --adminemail="admin@${moodleSiteName}" \
-    --fullname="${moodleSiteName}" \
-    --shortname="${moodleSiteName}" \
+    --adminemail="${moodleAdminEmail}" \
+    --fullname="${moodleDisplayName}" \
+    --shortname="${moodleDisplayName}" \
     --agree-license 2>&1); then
     if echo "${install_output}" | grep -qi "Database tables already present"; then
       log info "Database tables already present. Skipping Moodle database installation."
@@ -1541,7 +1595,7 @@ function moodle_install_database() {
   log info "=========================================="
   log info "Admin username: admin"
   log info "Admin password: ${admin_password}"
-  log info "Admin email: admin@${moodleSiteName}"
+  log info "Admin email: ${moodleAdminEmail}"
   log info "Site URL: https://${moodleSiteName}"
   log info "=========================================="
   log verbose "Admin password has been logged to: ${LOG_FILE}"
@@ -1634,6 +1688,12 @@ version_compare() {
   fi
 }
 
+version_compare_at_most() {
+  # Compare two version numbers (format: X.Y)
+  # Returns 0 if $1 <= $2, returns 1 otherwise
+  version_compare "$2" "$1"
+}
+
 function moodle_validate_php_version() {
   log verbose "Entered function ${FUNCNAME[0]}"
 
@@ -1652,55 +1712,69 @@ function moodle_validate_php_version() {
     moodle_family="${moodle_family:0:3}"
   fi
 
+  local min_php=""
+  local max_php=""
+  local supported_range=""
+  local moodle_label="Moodle ${moodle_version}"
+
   case "$moodle_family" in
-  "500" | "501" | "502")
-    # Moodle 5.0+ requires PHP 8.2+ (supports 8.2, 8.3, 8.4)
-    # Moodle 5.1.3 (tag: MOODLE_5013) released February 2026
-    if ! version_compare "$php_major_minor" "8.2"; then
-      log error "Moodle 5.0+ requires PHP 8.2 or higher (supports 8.2, 8.3, 8.4). Current: $php_version"
-      exit 1
-    fi
+  "500" | "501")
+    # Moodle 5.0-5.1 supports PHP 8.2-8.4
+    min_php="8.2"
+    max_php="8.4"
+    supported_range="8.2, 8.3, 8.4"
+    moodle_label="Moodle ${moodle_family:0:1}.$((10#${moodle_family:1:2}))"
     ;;
   "404" | "405")
-    # Moodle 4.4-4.5 requires PHP 8.1+ (supports 8.1, 8.2, 8.3)
-    if ! version_compare "$php_major_minor" "8.1"; then
-      log error "Moodle 4.4-4.5 requires PHP 8.1 or higher (supports 8.1, 8.2, 8.3). Current: $php_version"
-      exit 1
-    fi
+    # Moodle 4.4-4.5 supports PHP 8.1-8.3
+    min_php="8.1"
+    max_php="8.3"
+    supported_range="8.1, 8.2, 8.3"
+    moodle_label="Moodle ${moodle_family:0:1}.$((10#${moodle_family:1:2}))"
     ;;
   "402" | "403")
-    # Moodle 4.2-4.3 requires PHP 8.0+ (supports 8.0, 8.1, 8.2)
-    if ! version_compare "$php_major_minor" "8.0"; then
-      log error "Moodle 4.2-4.3 requires PHP 8.0 or higher (supports 8.0, 8.1, 8.2). Current: $php_version"
-      exit 1
-    fi
+    # Moodle 4.2-4.3 supports PHP 8.0-8.2
+    min_php="8.0"
+    max_php="8.2"
+    supported_range="8.0, 8.1, 8.2"
+    moodle_label="Moodle ${moodle_family:0:1}.$((10#${moodle_family:1:2}))"
     ;;
   "401")
-    # Moodle 4.1 requires PHP 7.4+ (supports 7.4, 8.0, 8.1)
-    if ! version_compare "$php_major_minor" "7.4"; then
-      log error "Moodle 4.1 requires PHP 7.4 or higher (supports 7.4, 8.0, 8.1). Current: $php_version"
-      exit 1
-    fi
+    # Moodle 4.1 supports PHP 7.4-8.1
+    min_php="7.4"
+    max_php="8.1"
+    supported_range="7.4, 8.0, 8.1"
+    moodle_label="Moodle 4.1"
     ;;
   "400")
-    # Moodle 4.0 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
-    if ! version_compare "$php_major_minor" "7.3"; then
-      log error "Moodle 4.0 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
-      exit 1
-    fi
+    # Moodle 4.0 supports PHP 7.3-8.0
+    min_php="7.3"
+    max_php="8.0"
+    supported_range="7.3, 7.4, 8.0"
+    moodle_label="Moodle 4.0"
     ;;
   "311" | "312")
-    # Moodle 3.11 requires PHP 7.3+ (supports 7.3, 7.4, 8.0)
-    if ! version_compare "$php_major_minor" "7.3"; then
-      log error "Moodle 3.11 requires PHP 7.3 or higher (supports 7.3, 7.4, 8.0). Current: $php_version"
-      exit 1
-    fi
+    # Moodle 3.11 supports PHP 7.3-8.0
+    min_php="7.3"
+    max_php="8.0"
+    supported_range="7.3, 7.4, 8.0"
+    moodle_label="Moodle 3.11"
     ;;
   *)
     log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
     log verbose "Note: Default Moodle versions are 405 (4.5) and 5013 (5.1.3)"
     ;;
   esac
+
+  if [[ -n "$min_php" ]] && ! version_compare "$php_major_minor" "$min_php"; then
+    log error "${moodle_label} requires PHP ${min_php} or higher (supports ${supported_range}). Current: ${php_version}"
+    exit 1
+  fi
+
+  if [[ -n "$max_php" ]] && ! version_compare_at_most "$php_major_minor" "$max_php"; then
+    log error "${moodle_label} supports PHP ${supported_range}. Current: ${php_version}"
+    exit 1
+  fi
 
   log verbose "PHP version $php_version is compatible with Moodle $moodle_version"
 }
@@ -1725,7 +1799,6 @@ function moodle_ensure() {
     "php${PHP_VERSION_MAJOR_MINOR}-zip"
     "php${PHP_VERSION_MAJOR_MINOR}-opcache"
     "php${PHP_VERSION_MAJOR_MINOR}-ldap"
-    "php${PHP_VERSION_MAJOR_MINOR}-sodium"
   )
 
   declare -a moodle_php_extension_names=(
@@ -1741,6 +1814,14 @@ function moodle_ensure() {
     "ldap"
     "sodium"
   )
+
+  if php -m | tr '[:upper:]' '[:lower:]' | grep -qx "sodium"; then
+    log verbose "PHP sodium extension already available; skipping package installation"
+  elif package_available "php${PHP_VERSION_MAJOR_MINOR}-sodium"; then
+    moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-sodium")
+  else
+    log verbose "PHP sodium package php${PHP_VERSION_MAJOR_MINOR}-sodium is unavailable; verifying built-in sodium support later"
+  fi
 
   if [ "${DB_TYPE}" == "pgsql" ]; then
     moodle_php_extensions+=("php${PHP_VERSION_MAJOR_MINOR}-pgsql")
@@ -1802,7 +1883,7 @@ function moodle_ensure() {
   declare -A vhost_config=(
     ["site_name"]="${moodleSiteName}"
     ["document_root"]="${web_root}"
-    ["admin_email"]="admin@${moodleSiteName}"
+    ["admin_email"]="${moodleAdminEmail}"
     ["ssl_cert_file"]="${ssl_cert_file}"
     ["ssl_key_file"]="${ssl_key_file}"
     ["include_file"]=""
@@ -1868,6 +1949,16 @@ function nginx_verify() {
 
 function nginx_create_optimized_config() {
   log verbose "Creating optimized Nginx configuration"
+
+  if [[ "${DRY_RUN_CHANGES}" == "true" ]]; then
+    log verbose "DRY_RUN: Skipping optimized Nginx configuration write"
+    return 0
+  fi
+
+  if [ ! -d "/etc/nginx" ]; then
+    log verbose "Nginx configuration directory does not exist yet; skipping optimized configuration"
+    return 0
+  fi
 
   # Backup original nginx.conf if it exists
   if [ -f "/etc/nginx/nginx.conf" ]; then
@@ -2790,6 +2881,9 @@ listen.owner = ${listen_user}
 listen.group = ${listen_group}
 listen.mode = 0660
 
+; Enable status page for Prometheus scraping
+pm.status_path = /status
+
 ; Process manager configuration
 pm = dynamic
 pm.max_children = 50
@@ -2921,9 +3015,29 @@ function mkcert_cert_request() {
     log info "mkcert certificate already exists: ${cert_file}"
   else
     if ! tool_exists mkcert; then
-      log error "mkcert is not installed. Install mkcert or provide certificates at ${cert_dir}."
-      exit 1
+      if [[ "${SKIP_PACKAGE_INSTALLS}" == "true" ]]; then
+        log error "mkcert is not installed and package installs are disabled. Install mkcert or provide certificates at ${cert_dir}."
+        exit 1
+      fi
+      if [[ "${DRY_RUN_CHANGES}" == "true" ]]; then
+        log verbose "DRY_RUN: Skipping mkcert installation bootstrap"
+      else
+        local mkcert_packages=("ca-certificates" "mkcert")
+        if package_available "libnss3-tools"; then
+          mkcert_packages+=("libnss3-tools")
+        fi
+        log info "Installing mkcert and guest trust-store tooling"
+        package_ensure "${mkcert_packages[@]}"
+      fi
     fi
+
+    if [[ "${DRY_RUN_CHANGES}" == "true" ]]; then
+      log verbose "DRY_RUN: Skipping mkcert local CA installation and certificate generation"
+      return 0
+    fi
+
+    log info "Installing mkcert local CA into the guest trust store"
+    run_command --makes-changes mkcert -install
     log info "Creating mkcert certificate for ${domain}"
     log verbose "  Certificate: ${cert_file}"
     log verbose "  Key: ${key_file}"
@@ -2954,17 +3068,18 @@ function prometheus_ensure() {
 
   # Download and install Prometheus
   local prometheus_version="2.47.2"
-  local prometheus_arch="linux-amd64"
+  local prometheus_arch
+  prometheus_arch=$(prometheus_release_arch)
   local prometheus_url="https://github.com/prometheus/prometheus/releases/download/v${prometheus_version}/prometheus-${prometheus_version}.${prometheus_arch}.tar.gz"
 
   if [ ! -f "/usr/local/bin/prometheus" ]; then
     log verbose "Downloading Prometheus ${prometheus_version}"
     download_file "${prometheus_url}" "/tmp/prometheus.tar.gz"
     run_command --makes-changes tar -xzf /tmp/prometheus.tar.gz -C /tmp
-    run_command --makes-changes cp /tmp/prometheus-${prometheus_version}.${prometheus_arch}/prometheus /usr/local/bin/
-    run_command --makes-changes cp /tmp/prometheus-${prometheus_version}.${prometheus_arch}/promtool /usr/local/bin/
-    run_command --makes-changes cp -r /tmp/prometheus-${prometheus_version}.${prometheus_arch}/consoles /etc/prometheus/
-    run_command --makes-changes cp -r /tmp/prometheus-${prometheus_version}.${prometheus_arch}/console_libraries /etc/prometheus/
+    run_command --makes-changes cp "/tmp/prometheus-${prometheus_version}.${prometheus_arch}/prometheus" /usr/local/bin/
+    run_command --makes-changes cp "/tmp/prometheus-${prometheus_version}.${prometheus_arch}/promtool" /usr/local/bin/
+    run_command --makes-changes cp -r "/tmp/prometheus-${prometheus_version}.${prometheus_arch}/consoles" /etc/prometheus/
+    run_command --makes-changes cp -r "/tmp/prometheus-${prometheus_version}.${prometheus_arch}/console_libraries" /etc/prometheus/
     run_command --makes-changes chown -R prometheus:prometheus /usr/local/bin/prometheus /usr/local/bin/promtool
     run_command --makes-changes chmod +x /usr/local/bin/prometheus /usr/local/bin/promtool
     run_command --makes-changes rm -rf /tmp/prometheus*
@@ -3055,13 +3170,14 @@ function prometheus_install_node_exporter() {
   log verbose "Installing Node Exporter"
 
   local node_exporter_version="1.7.0"
-  local node_exporter_arch="linux-amd64"
+  local node_exporter_arch
+  node_exporter_arch=$(prometheus_release_arch)
   local node_exporter_url="https://github.com/prometheus/node_exporter/releases/download/v${node_exporter_version}/node_exporter-${node_exporter_version}.${node_exporter_arch}.tar.gz"
 
   if [ ! -f "/usr/local/bin/node_exporter" ]; then
     download_file "${node_exporter_url}" "/tmp/node_exporter.tar.gz"
     run_command --makes-changes tar -xzf /tmp/node_exporter.tar.gz -C /tmp
-    run_command --makes-changes cp /tmp/node_exporter-${node_exporter_version}.${node_exporter_arch}/node_exporter /usr/local/bin/
+    run_command --makes-changes cp "/tmp/node_exporter-${node_exporter_version}.${node_exporter_arch}/node_exporter" /usr/local/bin/
     run_command --makes-changes chown prometheus:prometheus /usr/local/bin/node_exporter
     run_command --makes-changes chmod +x /usr/local/bin/node_exporter
     run_command --makes-changes rm -rf /tmp/node_exporter*
@@ -3091,6 +3207,8 @@ EOF
 
 function prometheus_install_apache_exporter() {
   log verbose "Installing Apache Exporter"
+  local system_arch
+  system_arch=$(normalized_system_arch)
 
   # Enable Apache server-status module
   run_command --makes-changes a2enmod status
@@ -3109,12 +3227,13 @@ EOF
 
   # Install apache_exporter
   local apache_exporter_version="1.0.3"
-  local apache_exporter_url="https://github.com/Lusitaniae/apache_exporter/releases/download/v${apache_exporter_version}/apache_exporter-${apache_exporter_version}.linux-amd64.tar.gz"
+  local apache_exporter_arch="linux-${system_arch}"
+  local apache_exporter_url="https://github.com/Lusitaniae/apache_exporter/releases/download/v${apache_exporter_version}/apache_exporter-${apache_exporter_version}.${apache_exporter_arch}.tar.gz"
 
   if [ ! -f "/usr/local/bin/apache_exporter" ]; then
     download_file "${apache_exporter_url}" "/tmp/apache_exporter.tar.gz"
     run_command --makes-changes tar -xzf /tmp/apache_exporter.tar.gz -C /tmp
-    run_command --makes-changes cp /tmp/apache_exporter-${apache_exporter_version}.linux-amd64/apache_exporter /usr/local/bin/
+    run_command --makes-changes cp "/tmp/apache_exporter-${apache_exporter_version}.${apache_exporter_arch}/apache_exporter" /usr/local/bin/
     run_command --makes-changes chown prometheus:prometheus /usr/local/bin/apache_exporter
     run_command --makes-changes chmod +x /usr/local/bin/apache_exporter
     run_command --makes-changes rm -rf /tmp/apache_exporter*
@@ -3144,6 +3263,8 @@ EOF
 
 function prometheus_install_nginx_exporter() {
   log verbose "Installing Nginx Exporter"
+  local nginx_exporter_arch
+  nginx_exporter_arch=$(exporter_release_arch_underscore)
 
   # Configure Nginx stub_status
   cat >/etc/nginx/sites-available/stub_status <<'EOF'
@@ -3164,7 +3285,7 @@ EOF
 
   # Install nginx-prometheus-exporter
   local nginx_exporter_version="0.11.0"
-  local nginx_exporter_url="https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v${nginx_exporter_version}/nginx-prometheus-exporter_${nginx_exporter_version}_linux_amd64.tar.gz"
+  local nginx_exporter_url="https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v${nginx_exporter_version}/nginx-prometheus-exporter_${nginx_exporter_version}_${nginx_exporter_arch}.tar.gz"
 
   if [ ! -f "/usr/local/bin/nginx-prometheus-exporter" ]; then
     download_file "${nginx_exporter_url}" "/tmp/nginx_exporter.tar.gz"
@@ -3199,12 +3320,29 @@ EOF
 
 function prometheus_install_phpfpm_exporter() {
   log verbose "Installing PHP-FPM Exporter"
+  local phpfpm_exporter_arch
+  phpfpm_exporter_arch=$(exporter_release_arch_underscore)
 
   # Enable PHP-FPM status page
   local fpm_pool_dir="/etc/php/${PHP_VERSION_MAJOR_MINOR}/fpm/pool.d"
+  local phpfpm_scrape_uri="tcp://127.0.0.1:9001/status"
 
-  # Add status configuration to www pool
-  if [ -f "${fpm_pool_dir}/www.conf" ]; then
+  if $MOODLE_ENSURE; then
+    local moodle_pool_conf="${fpm_pool_dir}/${moodleSiteName}.conf"
+    if [ -f "${moodle_pool_conf}" ]; then
+      if ! grep -q "pm.status_path" "${moodle_pool_conf}"; then
+        cat >>"${moodle_pool_conf}" <<'EOF'
+
+; Enable status page
+pm.status_path = /status
+EOF
+      fi
+      phpfpm_scrape_uri="unix:///run/php/php${PHP_VERSION_MAJOR_MINOR}-${moodleSiteName}.sock;/status"
+    fi
+  fi
+
+  # Add status configuration to www pool when not using a dedicated Moodle pool
+  if [[ "${phpfpm_scrape_uri}" == "tcp://127.0.0.1:9001/status" ]] && [ -f "${fpm_pool_dir}/www.conf" ]; then
     if ! grep -q "pm.status_path" "${fpm_pool_dir}/www.conf"; then
       cat >>"${fpm_pool_dir}/www.conf" <<'EOF'
 
@@ -3219,7 +3357,7 @@ EOF
 
   # Install php-fpm_exporter
   local phpfpm_exporter_version="2.2.0"
-  local phpfpm_exporter_url="https://github.com/hipages/php-fpm_exporter/releases/download/v${phpfpm_exporter_version}/php-fpm_exporter_${phpfpm_exporter_version}_linux_amd64"
+  local phpfpm_exporter_url="https://github.com/hipages/php-fpm_exporter/releases/download/v${phpfpm_exporter_version}/php-fpm_exporter_${phpfpm_exporter_version}_${phpfpm_exporter_arch}"
 
   if [ ! -f "/usr/local/bin/php-fpm_exporter" ]; then
     download_file "${phpfpm_exporter_url}" "/usr/local/bin/php-fpm_exporter"
@@ -3238,8 +3376,8 @@ After=network-online.target
 Type=simple
 User=prometheus
 Group=prometheus
-Environment="PHP_FPM_SCRAPE_URI=tcp://127.0.0.1:9001/status"
-ExecStart=/usr/local/bin/php-fpm_exporter
+Environment="PHP_FPM_SCRAPE_URI=${phpfpm_scrape_uri}"
+ExecStart=/usr/local/bin/php-fpm_exporter server
 
 [Install]
 WantedBy=multi-user.target
@@ -3492,7 +3630,9 @@ function postgres_ensure() {
 
     # Add PostgreSQL APT repository
     local postgres_version="16"
-    local postgres_repository="deb [arch=amd64 signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main"
+    local postgres_repository_arch
+    postgres_repository_arch=$(normalized_system_arch)
+    local postgres_repository="deb [arch=${postgres_repository_arch} signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main"
 
     if [ "$package_manager" == "apt" ]; then
       log verbose "Adding PostgreSQL repository..."
@@ -3568,11 +3708,16 @@ function main() {
 
   package_manager_ensure
 
+  if $MOODLE_ENSURE; then
+    log verbose "Validating requested PHP ${PHP_VERSION_MAJOR_MINOR} for Moodle ${MOODLE_VERSION} before provisioning"
+    moodle_validate_php_version "${MOODLE_VERSION}" "${PHP_VERSION_MAJOR_MINOR}"
+  fi
+
   log verbose "checking ACME_CERT"
   if $ACME_CERT; then
     log verbose "Creating ACME certificate..."
     provider=$(acme_cert_provider "${ACME_PROVIDER}")
-    acme_cert_request --domain "${moodleSiteName}" --email "admin@example.com" --challenge "http" --provider "${provider}"
+    acme_cert_request --domain "${moodleSiteName}" --email "${moodleAdminEmail}" --challenge "http" --provider "${provider}"
   fi
 
   log verbose "checking MKCERT_CERT"
@@ -3683,6 +3828,19 @@ function detect_distro_and_codename() {
 
 log_init
 
+# Parse command line options
+if [[ $# -eq 0 ]]; then
+  echo_usage
+  exit 1
+fi
+
+for arg in "$@"; do
+  if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+    echo_usage
+    exit 0
+  fi
+done
+
 detect_distro_and_codename
 
 # Check if the necessary dependencies are available before proceeding
@@ -3695,18 +3853,8 @@ if ! tool_exists "tar"; then
   log error "tar command not found. Please install tar."
   exit 1
 fi
-if ! tool_exists "unzip"; then
-  log error "unzip command not found. Please install unzip."
-  exit 1
-fi
 if ! tool_exists "wget" && ! tool_exists "curl"; then
   log error "Neither wget nor curl is installed. Please install one."
-  exit 1
-fi
-
-# Parse command line options
-if [[ $# -eq 0 ]]; then
-  echo_usage
   exit 1
 fi
 

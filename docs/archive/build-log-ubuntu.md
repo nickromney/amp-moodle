@@ -1,4 +1,6 @@
-# Ubuntu 24.04 LTS (Noble Numbat) Container Build Log
+# Archived: Ubuntu 24.04 LTS (Noble Numbat) Container Build Log
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 Build log for amp-moodle-ubuntu:24.04 container image.
 

@@ -1,4 +1,6 @@
-# BuildKit Dockerfiles - Quick Start Guide
+# Archived: BuildKit Dockerfiles - Quick Start Guide
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 **TL;DR:** We now have optimized Dockerfiles that build 50-70% faster using BuildKit features.
 

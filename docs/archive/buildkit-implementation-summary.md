@@ -1,4 +1,6 @@
-# BuildKit Dockerfile Optimization - Implementation Summary
+# Archived: BuildKit Dockerfile Optimization - Implementation Summary
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 **Date:** 2025-10-13
 **Task:** Create optimized Dockerfiles with BuildKit features for laemp.sh testing
