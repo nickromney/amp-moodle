@@ -1,4 +1,6 @@
-# Implementation Plan for Completing laemp.sh Moodle Installer
+# Archived: Implementation Plan for Completing laemp.sh Moodle Installer
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 ## Executive Summary
 

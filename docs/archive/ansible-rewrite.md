@@ -1,4 +1,6 @@
-# Ansible Rewrite: Moodle Deployment with Infrastructure as Code
+# Archived: Ansible Rewrite: Moodle Deployment with Infrastructure as Code
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 ## Executive Summary
 

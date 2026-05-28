@@ -74,7 +74,10 @@
       "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle status --short)",
       "Bash(git -C /Users/nickromney/Developer/personal/amp-moodle diff --stat)",
       "Bash(/Users/nickromney/.config/superpowers/skills/skills/using-skills/find-skills \"debugging container\")",
-      "Read(//Users/nickromney/.config/superpowers/skills/skills/debugging/systematic-debugging/**)"
+      "Read(//Users/nickromney/.config/superpowers/skills/skills/debugging/systematic-debugging/**)",
+      "Bash(slicer-mac up:*)",
+      "Bash(slicer vm:*)",
+      "Bash(ssh:*)"
     ],
     "deny": []
   }

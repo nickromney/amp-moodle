@@ -10,6 +10,9 @@ import { defineConfig, devices } from '@playwright/test';
  * 4. Set MOODLE_URL and MOODLE_ADMIN_PASSWORD in .env.test
  *
  * Run tests: npm test
+ *
+ * For Slicer-backed smoke tests, use:
+ *   tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5013
  */
 export default defineConfig({
   testDir: './tests/e2e',
@@ -35,7 +38,7 @@ export default defineConfig({
   /* Shared settings for all the projects below */
   use: {
     /* Base URL - override in .env.test */
-    baseURL: process.env.MOODLE_URL || 'https://moodle.127.0.0.1.sslip.io',
+    baseURL: process.env.MOODLE_URL || 'https://moodle.test.127.0.0.1.sslip.io',
 
     /* Collect trace when retrying the failed test */
     trace: 'on-first-retry',

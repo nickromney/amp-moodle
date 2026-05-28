@@ -1,4 +1,6 @@
-# Implementation Summary: laemp.sh Completion Project
+# Archived: Implementation Summary: laemp.sh Completion Project
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 ## Project Status: **COMPLETE
 

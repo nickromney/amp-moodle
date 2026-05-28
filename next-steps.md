@@ -1,53 +1,51 @@
-# Next Steps: laemp.sh vs Ansible Container Parity
+# Next Steps
 
-This checklist captures the work still outstanding so we can resume quickly next time.
+The next pass should stay narrow: one Docker baseline that anyone can run, while Slicer remains the VM-faithful confidence path.
 
-## 1. Get the Systemd Container Stable
+## Current Position
 
-1. Rebuild the Debian image after ensuring `systemd/laemp-installer.service` exports `HOME=/root` (Composer needs it), then `podman-compose down` / `podman-compose up -d postgres-db moodle-test-debian`.
-2. Watch `journalctl -u laemp-installer.service -f` inside the container until laemp either succeeds or fails, and capture `/usr/local/bin/logs/install.log`.
-3. If the service still fails, check the last few lines of `install.log` and adjust `entrypoint-laemp.sh` / environment variables accordingly (e.g., confirm DB waits, policy-rc removal, etc.).
+- Slicer is still the trusted path for real Ubuntu and VPS-like behavior.
+- Docker or Podman is the accessible path for quick bootstrap validation.
+- The two paths should complement each other, not pretend to prove the same things.
 
-## 2. Capture a Fresh laemp Snapshot
+## Immediate Goal
 
-1. Once laemp completes successfully, run:
+Keep the Docker path centered on the one container case that has a clear purpose:
 
-   ```bash
-   cd ansible
-   ansible-playbook playbooks/container-verify.yml -l laemp-test-debian
-   ```
+- `php 8.4 + nginx + mariadb + moodle 5013 + self-signed`
 
-2. Note the generated artifact path under `ansible/.artifacts/`—this is the “laemp baseline” for this cycle.
+That case is useful because it tells us whether `laemp.sh` can bootstrap a realistic Debian-based host image in a way that is likely to transfer to a VPS.
 
-## 3. Run the Ansible Converge Play
+## What To Keep Building
 
-1. Execute the shim converge play:
+### 1. A repo-owned Docker baseline runner
 
-   ```bash
-   cd ansible
-   ansible-playbook playbooks/site.yml -l laemp-test-debian
-   ```
+The container path should be runnable without hand-held context:
 
-2. Re-run the verify play to produce a second artifact, then `diff -u ansible/.artifacts/laemp-test-debian-*.json` to see what changed. The only expected drift right now is the diagnostic packages (`iproute2` family); anything else points to laemp vs Ansible differences.
+- build the Debian stock image if needed
+- start an isolated container
+- execute `laemp.sh` with the baseline flags
+- capture logs and verification artifacts
+- return pass or fail clearly
 
-## 4. Expand Beyond the Shim
+### 2. A clear boundary document
 
-1. Replace `playbooks/site.yml` with the real role stack (geoffreyvanwyk.moodle + support roles). Point it at the same Podman inventory so we exercise the actual IaC flow.
-2. Update `group_vars/all.yml` to include git deployment variables, plugin lists, etc., mirroring laemp defaults.
-3. Once the full playbook converges, repeat the verify/diff step to ensure Ansible brings the container to the same state as laemp.
+Keep one short document that states what Docker can prove here and what still needs Slicer.
 
-## 5. Automate the Loop
+## What Not To Force
 
-1. Add a `make ansible-verify` target that performs:
-   - `podman-compose down`
-   - `podman-compose up -d postgres-db moodle-test-debian`
-   - `ansible-playbook playbooks/container-verify.yml`
-   - `ansible-playbook playbooks/site.yml`
-   - Second verify + `diff`
-2. Document the workflow in `README.md` so future runs are “make && inspect diff”.
+- a broad Docker matrix if the cases are not honest in containers
+- a fake Ubuntu compose matrix that does not reflect how contributors will really run it
+- a FrankenPHP path unless `laemp.sh` explicitly grows a `caddy` or `frankenphp` backend
 
-## 6. Optional Follow-ups
+## FrankenPHP Note
 
-- Add a Molecule scenario based on the new Dockerfile to validate laemp + Ansible end-to-end.
-- Start wiring WordPress/Moodle git deployment variables (per the `ansible-role-moodle` instructions) once the baseline loop is stable.
-- Consider shipping the systemd-enabled Debian image to a registry so CI can reuse it.
+The official FrankenPHP image is interesting for a future container-specific path, but it is not a drop-in substrate for the current `laemp.sh` baseline. The script currently targets nginx or Apache with system packages and service management, while FrankenPHP is a separate Caddy-based runtime.
+
+## Exit Criteria
+
+This Docker pass is complete when:
+
+1. the Debian stock baseline is reproducible by another developer
+2. the baseline command and artifacts are documented explicitly
+3. Docker remains a quick validation path, not a pretend substitute for real VM coverage

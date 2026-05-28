@@ -1,4 +1,6 @@
-# Dockerfile Optimization with BuildKit
+# Archived: Dockerfile Optimization with BuildKit
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 This document explains the BuildKit optimizations applied to the laemp.sh test container Dockerfiles for Ubuntu 24.04 and Debian 13.
 

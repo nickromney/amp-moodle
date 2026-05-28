@@ -1,4 +1,6 @@
-# Dockerfile Optimization: Before and After
+# Archived: Dockerfile Optimization: Before and After
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 This document provides a side-by-side comparison of the original and optimized Dockerfiles.
 

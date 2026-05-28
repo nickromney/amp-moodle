@@ -31,3 +31,12 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+# SlicerVM artifacts (managed by ~/slicer-mac/, not this repo)
+*.img
+*-vsock.sock
+slicer.sock
+.sbox-runtime/
+.slicer-configdrive/
+.slicer-power-events/
+slicer-mac.yaml.sample

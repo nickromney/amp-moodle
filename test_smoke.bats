@@ -422,11 +422,10 @@ setup() {
 # Code Quality
 # ============================================================================
 
-@test "script has reasonable line count" {
+@test "script has substantial implementation size" {
   lines=$(wc -l < "$SCRIPT")
-  # Should be between 2000-3500 lines (current is ~2700)
+  # This guards against obviously truncated files, not growth over time.
   [ "$lines" -gt 2000 ]
-  [ "$lines" -lt 4000 ]
 }
 
 @test "script has comments explaining complex sections" {

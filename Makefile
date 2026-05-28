@@ -198,6 +198,22 @@ clean-git: ## Remove nested .git directories (dangerous - prompts first)
 test: python-test typescript-test ## Run all tests (Python + TypeScript)
 	@echo "$(GREEN)✓ All tests passed (Python + TypeScript)$(NC)"
 
+.PHONY: test-smoke-bats
+test-smoke-bats: ## Run fast BATS smoke tests for laemp.sh
+	@bats test_smoke.bats
+
+.PHONY: test-cli-bats
+test-cli-bats: ## Run BATS CLI and dry-run parsing tests
+	@bats test_laemp.bats
+
+.PHONY: test-integration-bats
+test-integration-bats: ## Run full-install BATS integration tests in containers
+	@bats test_integration.bats
+
+.PHONY: test-playwright
+test-playwright: ## Run Playwright browser tests against a running target
+	@npm test
+
 ##@ Python Development
 
 .PHONY: python-test
@@ -297,20 +313,14 @@ debian: ## Ensure Debian container is running (idempotent, won't destroy existin
 	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
 
 .PHONY: ubuntu
-ubuntu: ## Ensure Ubuntu container is running (idempotent, won't destroy existing)
-	@echo "$(YELLOW)Ensuring Ubuntu container is running...$(NC)"
-	@if ! $(COMPOSE_CMD) ps moodle-test-ubuntu 2>/dev/null | grep -q "Up"; then \
-		echo "$(YELLOW)Starting Ubuntu container...$(NC)"; \
-		$(COMPOSE_CMD) up -d moodle-test-ubuntu; \
-	else \
-		echo "$(GREEN)Ubuntu container already running$(NC)"; \
-	fi
+ubuntu: ## Explain the current Ubuntu container path
+	@echo "$(YELLOW)compose.yml does not currently define a moodle-test-ubuntu service.$(NC)"
+	@echo "$(YELLOW)Use the stock Dockerfile path instead:$(NC)"
 	@echo ""
-	@echo "$(GREEN)Container ready. Run this command to install:$(NC)"
+	@echo "  docker build --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 ."
+	@echo "  CONTAINER_RUNTIME=docker bats test_integration.bats"
 	@echo ""
-	@echo "  $(COMPOSE_CMD) exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
-	@echo ""
-	@echo "$(YELLOW)Access Moodle at: https://localhost:9443$(NC)"
+	@exit 1
 
 .PHONY: debian-clean
 debian-clean: ## Destroy and recreate Debian container (clean slate)
@@ -325,13 +335,43 @@ debian-clean: ## Destroy and recreate Debian container (clean slate)
 	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
 
 .PHONY: ubuntu-clean
-ubuntu-clean: ## Destroy and recreate Ubuntu container (clean slate)
-	@echo "$(YELLOW)Destroying and recreating Ubuntu container...$(NC)"
-	@$(COMPOSE_CMD) down moodle-test-ubuntu 2>/dev/null || true
-	@$(COMPOSE_CMD) up -d moodle-test-ubuntu
+ubuntu-clean: ## Explain the current Ubuntu clean-slate container path
+	@echo "$(YELLOW)compose.yml does not currently define a moodle-test-ubuntu service.$(NC)"
+	@echo "$(YELLOW)Rebuild the stock Ubuntu image instead:$(NC)"
 	@echo ""
-	@echo "$(GREEN)Fresh container started. Run this command to install:$(NC)"
+	@echo "  docker build --no-cache --platform linux/amd64 -f Dockerfile.ubuntu -t amp-moodle-ubuntu:24.04 ."
+	@echo "  CONTAINER_RUNTIME=docker bats test_integration.bats"
 	@echo ""
-	@echo "  $(COMPOSE_CMD) exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
-	@echo ""
-	@echo "$(YELLOW)Access Moodle at: https://localhost:9443$(NC)"
+	@exit 1
+
+.PHONY: slicer
+slicer: ## Run LAEMP installation test in a Slicer sandbox via the system ~/slicer-mac daemon
+	@echo "$(YELLOW)Running LAEMP test in sbox-1 VM...$(NC)"
+	@./tests/slicer/run-test.sh
+
+.PHONY: slicer-test-bats
+slicer-test-bats: ## Run BATS tests inside a Slicer sandbox via the system ~/slicer-mac daemon
+	@echo "$(YELLOW)Running BATS tests in sbox-1 VM...$(NC)"
+	@./tests/slicer/test-laemp.sh
+
+.PHONY: slicer-matrix
+slicer-matrix: ## Run the supported Slicer matrix with Playwright smoke checks
+	@echo "$(YELLOW)Running Slicer matrix with Playwright smoke checks...$(NC)"
+	@./tests/slicer/run-matrix.sh
+
+.PHONY: docker-baseline
+docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5013)
+	@echo "$(YELLOW)Running Docker baseline install...$(NC)"
+	@./tests/docker/run-baseline.sh
+
+.PHONY: docker-frankenphp-spike
+docker-frankenphp-spike: ## Run the experimental FrankenPHP + Moodle Docker spike
+	@echo "$(YELLOW)Running FrankenPHP Docker spike...$(NC)"
+	@./tests/docker/run-frankenphp-spike.sh
+
+.PHONY: slicer-clean
+slicer-clean: ## Remove accidental repo-local Slicer artifacts; authoritative runtime stays in ~/slicer-mac
+	@echo "$(YELLOW)Removing accidental repo-local Slicer artifacts...$(NC)"
+	@rm -f *.img *.log *-vsock.sock slicer.sock slicer-mac.yaml.sample
+	@rm -rf .sbox-runtime .slicer-configdrive .slicer-power-events
+	@echo "$(GREEN)✓ Repo-local artifacts removed. System Slicer runtime remains under ~/slicer-mac$(NC)"

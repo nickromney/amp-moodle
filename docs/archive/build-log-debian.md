@@ -1,4 +1,6 @@
-# Debian 13 (Trixie) Container Build Log
+# Archived: Debian 13 (Trixie) Container Build Log
+
+> Historical note: this file was generated during an earlier planning pass and does not reflect the current repo state.
 
 Build log for amp-moodle-debian:13 container image.
 
