@@ -3,7 +3,7 @@
 This repo now has a rerunnable FrankenPHP spike for the narrow Docker baseline:
 
 - PHP `8.4`
-- Moodle `5.1.3`
+- Moodle `5.2.1`
 - MariaDB
 - plain HTTP in Docker
 
@@ -21,7 +21,7 @@ tests/docker/run-frankenphp-spike.sh
 
 ## What Works
 
-The spike builds a `dunglas/frankenphp:php8.4-bookworm` image, installs the missing Moodle PHP extensions, installs Moodle `5.1.3`, provisions a MariaDB sidecar, runs the Moodle CLI installer, and verifies:
+The spike builds a `dunglas/frankenphp:php8.4-bookworm` image, installs the missing Moodle PHP extensions, installs Moodle `5.2.1`, provisions a MariaDB sidecar, runs the Moodle CLI installer, and verifies:
 
 - `HTTP 200` from the running site
 - a live login page

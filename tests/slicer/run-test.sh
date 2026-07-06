@@ -28,7 +28,7 @@ slicer_vm_exec "${VM_NAME}" \
   --env "MOODLE_SITE_DOMAIN=moodle.test" \
   --env "MOODLE_SITE_HOST=${SITE_HOST}" \
   --env "MOODLE_ADMIN_EMAIL=demo@moodle.test" \
-  -- "sudo -E /home/ubuntu/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
+  -- "sudo -E /home/ubuntu/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S"
 
 echo "LAEMP installation complete."
 echo "Access Moodle at: https://${SITE_HOST}"

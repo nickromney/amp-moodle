@@ -57,7 +57,7 @@ if [[ "${LAEMP_CERT_MODE:-}" == "mkcert" ]]; then
   cert_flag="--mkcert"
 fi
 
-if /usr/local/bin/laemp.sh -c -p "${PHP_VERSION:-8.4}" -w nginx -d "${DB_TYPE:-pgsql}" -m "${MOODLE_VERSION:-5013}" "${cert_flag}" --skip-db-server 2>&1 | tee -a "$LOG_FILE"; then
+if /usr/local/bin/laemp.sh -c -p "${PHP_VERSION:-8.4}" -w nginx -d "${DB_TYPE:-pgsql}" -m "${MOODLE_VERSION:-5021}" "${cert_flag}" --skip-db-server 2>&1 | tee -a "$LOG_FILE"; then
   echo "SUCCESS" | tee -a "$LOG_FILE"
   exit 0
 else

@@ -308,7 +308,7 @@ debian: ## Ensure Debian container is running (idempotent, won't destroy existin
 	@echo ""
 	@echo "$(GREEN)Container ready. Run this command to install:$(NC)"
 	@echo ""
-	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
+	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S"
 	@echo ""
 	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
 
@@ -330,7 +330,7 @@ debian-clean: ## Destroy and recreate Debian container (clean slate)
 	@echo ""
 	@echo "$(GREEN)Fresh container started. Run this command to install:$(NC)"
 	@echo ""
-	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S"
+	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S"
 	@echo ""
 	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
 
@@ -360,7 +360,7 @@ slicer-matrix: ## Run the supported Slicer matrix with Playwright smoke checks
 	@./tests/slicer/run-matrix.sh
 
 .PHONY: docker-baseline
-docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5013)
+docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5021)
 	@echo "$(YELLOW)Running Docker baseline install...$(NC)"
 	@./tests/docker/run-baseline.sh
 

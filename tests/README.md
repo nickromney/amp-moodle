@@ -27,7 +27,7 @@ bats test_laemp.bats
 
 ### 3. Docker baseline
 
-The first Docker path to reach for is the Slicer-proven baseline: Debian stock image, PHP 8.4, nginx, MariaDB, Moodle 5.1.3, self-signed TLS.
+The first Docker path to reach for is the Slicer-proven baseline: Debian stock image, PHP 8.4, nginx, MariaDB, Moodle 5.2.1, self-signed TLS.
 
 ```bash
 make docker-baseline
@@ -83,8 +83,8 @@ npm install
 npx playwright install chromium
 
 tests/slicer/run-matrix.sh
-tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5013
-tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5013 --database pgsql --extra-flag -M
+tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5021
+tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5021 --database pgsql --extra-flag -M
 ```
 
 The repo also exposes:

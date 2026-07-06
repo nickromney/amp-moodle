@@ -13,7 +13,7 @@ KEEP_RESOURCES=false
 REBUILD_IMAGE=false
 APP_PORT="${APP_PORT:-18480}"
 
-IMAGE_TAG="amp-moodle-frankenphp:php8.4-moodle5013"
+IMAGE_TAG="amp-moodle-frankenphp:php8.4-moodle5021"
 DB_IMAGE="mariadb:11.8"
 NETWORK_NAME="amp-moodle-frankenphp-net"
 DB_CONTAINER="amp-moodle-frankenphp-db"

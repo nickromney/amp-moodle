@@ -18,16 +18,16 @@ Local defaults now split site identity from browser hostname:
 ./laemp.sh -h
 
 # Dry run
-./laemp.sh -n -v -p 8.4 -w nginx -d mariadb -m 5013 -S
+./laemp.sh -n -v -p 8.4 -w nginx -d mariadb -m 5021 -S
 
 # Full local install on Ubuntu/Debian
-sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S
+sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S
 
 # Full local install with PostgreSQL, memcached, and monitoring
-sudo ./laemp.sh -c -p 8.4 -w nginx -d pgsql -m 5013 -S -M -r
+sudo ./laemp.sh -c -p 8.4 -w nginx -d pgsql -m 5021 -S -M -r
 
 # Locally trusted certificate inside the guest
-sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 --mkcert
+sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 --mkcert
 ```
 
 ## Test Strategy
@@ -68,7 +68,7 @@ Use Slicer when the question is "does this behave like a real Ubuntu host?"
 
 ```bash
 # One supported combo with Playwright smoke
-tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5013
+tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5021
 
 # Full supported Slicer matrix
 make slicer-matrix

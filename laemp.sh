@@ -26,8 +26,8 @@ PHP_ENSURE=false
 PROMETHEUS_ENSURE=false
 MARIADB_ENSURE=false
 POSTGRES_ENSURE=false
-# Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5013 for 5.1.3, 5003 for 5.0.3, etc.
-DEFAULT_MOODLE_VERSION="5013"
+# Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5021 for 5.2.1, 5003 for 5.0.3, etc.
+DEFAULT_MOODLE_VERSION="5021"
 DEFAULT_PHP_VERSION_MAJOR_MINOR="8.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
@@ -111,7 +111,7 @@ function echo_usage() {
   log info "  -d, --database      Database type (default: mariadb, supported: [mariadb, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
   log info "  -h, --help          Display this help message"
-  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 5013 for 5.1.3)"
+  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 5021 for 5.2.1)"
   log info "  -M, --memcached     Ensure Memcached is installed"
   log info "  -n, --nop           Dry run (show commands without executing)"
   log info "  -p, --php           Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
@@ -1706,7 +1706,7 @@ function moodle_validate_php_version() {
 
   # Moodle/PHP compatibility matrix (February 2026)
   # Reference: https://docs.moodle.org/en/PHP
-  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5013=5.1.3, 5003=5.0.3
+  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5021=5.2.1, 5003=5.0.3
   local moodle_family="$moodle_version"
   if [[ ${#moodle_family} -ge 4 ]]; then
     moodle_family="${moodle_family:0:3}"
@@ -1718,6 +1718,16 @@ function moodle_validate_php_version() {
   local moodle_label="Moodle ${moodle_version}"
 
   case "$moodle_family" in
+  "502")
+    # Moodle 5.2.x supports PHP 8.3-8.4.
+    min_php="8.3"
+    max_php="8.4"
+    supported_range="8.3, 8.4"
+    moodle_label="Moodle 5.2"
+    if [[ "$moodle_version" == "5021" ]]; then
+      moodle_label="Moodle 5.2.1"
+    fi
+    ;;
   "500" | "501")
     # Moodle 5.0-5.1 supports PHP 8.2-8.4
     min_php="8.2"
@@ -1762,7 +1772,7 @@ function moodle_validate_php_version() {
     ;;
   *)
     log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
-    log verbose "Note: Default Moodle versions are 405 (4.5) and 5013 (5.1.3)"
+    log verbose "Note: Default Moodle version is 5021 (5.2.1)"
     ;;
   esac
 

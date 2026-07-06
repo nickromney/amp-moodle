@@ -1,8 +1,8 @@
 ---
 # Moodle deployment defaults shared across containers
-moodle_version: "5.1.3"
+moodle_version: "5.2.1"
 moodle_deploy_repository: https://github.com/moodle/moodle
-moodle_deploy_version: v5.1.3
+moodle_deploy_version: v5.2.1
 moodle_deploy_update: true
 
 moodle_web_protocol: https

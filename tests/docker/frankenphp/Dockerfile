@@ -22,7 +22,7 @@ RUN mkdir -p /app/public /app/moodledata
 
 WORKDIR /app/public
 
-RUN curl -fsSL -o /tmp/moodle.tgz https://packaging.moodle.org/stable501/moodle-5.1.3.tgz \
+RUN curl -fsSL -o /tmp/moodle.tgz https://packaging.moodle.org/stable502/moodle-5.2.1.tgz \
     && tar -xzf /tmp/moodle.tgz --strip-components=1 -C /app/public \
     && rm -f /tmp/moodle.tgz
 

@@ -43,7 +43,7 @@ Use Docker or Podman when the question is:
 
 - The current browser host pattern is `moodle.test.<ip>.sslip.io`.
 - The Moodle identity remains `moodle.test`.
-- A 4 GiB guest was sufficient for the green `php 8.4 + nginx + moodle 5013` Slicer run.
+- A 4 GiB guest was sufficient for the green `php 8.4 + nginx + moodle 5021` Slicer run.
 - More headroom may still help heavier combinations such as monitoring plus browser checks.
 
 ## Practical Default

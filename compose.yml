@@ -183,7 +183,7 @@ services:
   #       sleep 2;
   #     done;
   #     echo 'MySQL is ready!' | tee -a /home/testuser/laemp-install.log;
-  #     if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5013 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
+  #     if sudo -E /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S --skip-db-server 2>&1 | tee -a /home/testuser/laemp-install.log; then
   #       EXIT_CODE=0;
   #       echo 'SUCCESS' > /home/testuser/install-status;
   #       echo '========================================' | tee -a /home/testuser/laemp-install.log;
