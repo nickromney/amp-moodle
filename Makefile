@@ -80,6 +80,17 @@ precommit-check: ## Run pre-commit hooks (always succeeds, for review)
 	@echo "$(YELLOW)Running all pre-commit hooks...$(NC)"
 	@pre-commit run --all-files || true
 
+.PHONY: hooks
+hooks: ## Install lefthook-managed repo hooks
+	@if ! command -v lefthook >/dev/null 2>&1; then \
+		echo "lefthook not found in PATH." >&2; \
+		echo "Install lefthook 2.1.9 or add ~/.local/share/mise/shims to PATH." >&2; \
+		exit 1; \
+	fi
+	@lefthook install
+	@echo "Installed lefthook hooks from lefthook.yml"
+	@echo "Skip one git command with: LEFTHOOK=0 git <command> or --no-verify"
+
 .PHONY: precommit-install
 precommit-install: ## Install pre-commit hooks
 	@echo "$(YELLOW)Installing pre-commit hooks...$(NC)"
