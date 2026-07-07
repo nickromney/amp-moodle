@@ -30,6 +30,36 @@ sudo ./laemp.sh -c -p 8.4 -w nginx -d pgsql -m 5021 -S -M -r
 sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 --mkcert
 ```
 
+## Local Validation Hooks
+
+This repo uses lefthook for local validation before commits and pushes.
+
+```bash
+lefthook install
+# or, if you prefer the repo Makefile entrypoint:
+make hooks
+```
+
+Pre-commit checks run fast staged-file validation such as ShellCheck for shell
+scripts and YAML linting for YAML files. Pre-push runs the local CI gate from
+`lefthook.yml`.
+
+Skip a hook only when you have a specific reason:
+
+```bash
+LEFTHOOK=0 git commit ...
+LEFTHOOK=0 git push
+git commit --no-verify
+git push --no-verify
+```
+
+GitHub Actions CI is now on demand rather than automatic:
+
+```bash
+gh workflow run ci.yml
+gh workflow run lint.yml
+```
+
 ## Test Strategy
 
 ### 1. Fast host-side checks
