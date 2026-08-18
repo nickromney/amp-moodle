@@ -27,7 +27,7 @@ bats test_laemp.bats
 
 ### 3. Docker baseline
 
-The first Docker path to reach for is the Slicer-proven baseline: Debian stock image, PHP 8.4, nginx, MariaDB, Moodle 5.2.1, self-signed TLS.
+The first Docker path to reach for is the Slicer-proven baseline: Debian stock image, PHP 8.4, nginx, MariaDB, Moodle 5.2.2, self-signed TLS. The runner binds `127.0.0.1` and probes from host port `10443` upward if that port is already taken. After install it checks that the published HTTPS leaf certificate is still valid. Use the URL the runner prints, including the port; the no-port `sslip.io` URL is whatever already owns `127.0.0.1:443`.
 
 ```bash
 make docker-baseline
@@ -83,8 +83,8 @@ npm install
 npx playwright install chromium
 
 tests/slicer/run-matrix.sh
-tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5021
-tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5021 --database pgsql --extra-flag -M
+tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5022
+tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5022 --database pgsql --extra-flag -M
 ```
 
 The repo also exposes:

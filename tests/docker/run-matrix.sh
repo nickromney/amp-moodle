@@ -7,14 +7,16 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # shellcheck source=tests/docker/lib.sh
 source "${SCRIPT_DIR}/lib.sh"
+# shellcheck source=tests/docker/tls-preflight.sh
+source "${SCRIPT_DIR}/tls-preflight.sh"
 
 SUPPORTED_CASES=(
-  "debian-stock-nginx-mariadb-m5021|debian|stock|8.4|nginx|mariadb|5021|"
-  "debian-stock-apache-mariadb-m5021|debian|stock|8.4|apache|mariadb|5021|"
-  "debian-stock-nginx-pgsql-m5021|debian|stock|8.4|nginx|pgsql|5021|"
-  "debian-prereqs-nginx-mariadb-m5021|debian|prereqs|8.4|nginx|mariadb|5021|"
-  "debian-stock-nginx-mariadb-m5021-memcached|debian|stock|8.4|nginx|mariadb|5021|-M"
-  "debian-stock-nginx-mariadb-m5021-prometheus|debian|stock|8.4|nginx|mariadb|5021|-r"
+  "debian-stock-nginx-mariadb-m5022|debian|stock|8.4|nginx|mariadb|5022|"
+  "debian-stock-apache-mariadb-m5022|debian|stock|8.4|apache|mariadb|5022|"
+  "debian-stock-nginx-pgsql-m5022|debian|stock|8.4|nginx|pgsql|5022|"
+  "debian-prereqs-nginx-mariadb-m5022|debian|prereqs|8.4|nginx|mariadb|5022|"
+  "debian-stock-nginx-mariadb-m5022-memcached|debian|stock|8.4|nginx|mariadb|5022|-M"
+  "debian-stock-nginx-mariadb-m5022-prometheus|debian|stock|8.4|nginx|mariadb|5022|-r"
 )
 
 RESULTS_DIR=""
@@ -128,6 +130,7 @@ function verify_case() {
   docker_exec_root_shell "${container_name}" "test -f /var/www/html/${SITE_HOST}/config.php"
   docker_exec_root_shell "${container_name}" "curl -ksSfI https://127.0.0.1 | head -n 1" >"${combo_dir}/http_head_internal.txt"
   curl -ksSfI "https://${SITE_HOST}:${host_port}" | head -n 1 >"${combo_dir}/http_head_external.txt"
+  tls_preflight_check_url "https://${SITE_HOST}:${host_port}"
 
   if [[ "${web_server}" == "nginx" ]]; then
     docker_exec_root_shell "${container_name}" "pgrep -f '/usr/sbin/nginx' >/dev/null"
@@ -248,7 +251,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 docker_require
-docker_require_tools awk curl date mktemp
+docker_require_tools awk curl date mktemp python3 openssl
 
 if [[ "${RUN_PLAYWRIGHT}" == "true" ]]; then
   require_playwright
@@ -290,7 +293,7 @@ for case_entry in "${SUPPORTED_CASES[@]}"; do
   mkdir -p "${combo_dir}"
   install_log="${combo_dir}/install.log"
   inspect_log="${combo_dir}/inspect.txt"
-  host_port=$((10442 + index))
+  host_port="$(docker_allocate_host_port "127.0.0.1" "$((10442 + index))")"
   image=$(docker_image_for_case "${distro}" "${image_set}")
   container_name="amp-moodle-$(docker_slugify "${label}")"
   status="FAIL"

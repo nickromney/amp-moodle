@@ -211,7 +211,7 @@ test: python-test typescript-test ## Run all tests (Python + TypeScript)
 
 .PHONY: test-smoke-bats
 test-smoke-bats: ## Run fast BATS smoke tests for laemp.sh
-	@bats test_smoke.bats
+	@bats test_smoke.bats test_docker_ports.bats test_tls_preflight.bats
 
 .PHONY: test-cli-bats
 test-cli-bats: ## Run BATS CLI and dry-run parsing tests
@@ -310,18 +310,7 @@ typescript-test: ## Run Playwright tests
 .PHONY: debian
 debian: ## Ensure Debian container is running (idempotent, won't destroy existing)
 	@echo "$(YELLOW)Ensuring Debian container is running...$(NC)"
-	@if ! $(COMPOSE_CMD) ps moodle-test-debian 2>/dev/null | grep -q "Up"; then \
-		echo "$(YELLOW)Starting Debian container...$(NC)"; \
-		$(COMPOSE_CMD) up -d moodle-test-debian; \
-	else \
-		echo "$(GREEN)Debian container already running$(NC)"; \
-	fi
-	@echo ""
-	@echo "$(GREEN)Container ready. Run this command to install:$(NC)"
-	@echo ""
-	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S"
-	@echo ""
-	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
+	@./tests/docker/compose-up.sh
 
 .PHONY: ubuntu
 ubuntu: ## Explain the current Ubuntu container path
@@ -337,13 +326,7 @@ ubuntu: ## Explain the current Ubuntu container path
 debian-clean: ## Destroy and recreate Debian container (clean slate)
 	@echo "$(YELLOW)Destroying and recreating Debian container...$(NC)"
 	@$(COMPOSE_CMD) down moodle-test-debian 2>/dev/null || true
-	@$(COMPOSE_CMD) up -d moodle-test-debian
-	@echo ""
-	@echo "$(GREEN)Fresh container started. Run this command to install:$(NC)"
-	@echo ""
-	@echo "  $(COMPOSE_CMD) exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5021 -S"
-	@echo ""
-	@echo "$(YELLOW)Access Moodle at: https://localhost:8443$(NC)"
+	@./tests/docker/compose-up.sh
 
 .PHONY: ubuntu-clean
 ubuntu-clean: ## Explain the current Ubuntu clean-slate container path
@@ -371,7 +354,7 @@ slicer-matrix: ## Run the supported Slicer matrix with Playwright smoke checks
 	@./tests/slicer/run-matrix.sh
 
 .PHONY: docker-baseline
-docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5021)
+docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5022)
 	@echo "$(YELLOW)Running Docker baseline install...$(NC)"
 	@./tests/docker/run-baseline.sh
 
