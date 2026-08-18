@@ -303,8 +303,8 @@ count_log_files() {
 @test "full moodle installation with nginx and mysql" {
   start_test_container
 
-  # Run full Moodle installation (Moodle 5.1.3)
-  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
+  # Run full Moodle installation (Moodle 5.2.2)
+  run exec_laemp -p -w nginx -d mysql -m 5022 -S -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
 
@@ -334,8 +334,8 @@ count_log_files() {
 @test "full moodle installation with apache and postgresql" {
   start_test_container
 
-  # Run full Moodle installation with Apache and PostgreSQL (Moodle 5.1.3)
-  run exec_laemp -p -w apache -f -d pgsql -m 5013 -S -c
+  # Run full Moodle installation with Apache and PostgreSQL (Moodle 5.2.2)
+  run exec_laemp -p -w apache -f -d pgsql -m 5022 -S -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
 
@@ -355,8 +355,8 @@ count_log_files() {
 @test "moodle installation creates vhost configuration" {
   start_test_container
 
-  # Run Moodle installation (Moodle 5.1.3)
-  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
+  # Run Moodle installation (Moodle 5.2.2)
+  run exec_laemp -p -w nginx -d mysql -m 5022 -S -c
   [ "$status" -eq 0 ]
 
   # Verify Nginx vhost configuration created
@@ -465,7 +465,7 @@ count_log_files() {
 @test "php configuration is optimized for moodle" {
   start_test_container
 
-  run exec_laemp -p -w nginx -d mysql -m 5013 -c
+  run exec_laemp -p -w nginx -d mysql -m 5022 -c
   [ "$status" -eq 0 ]
 
   # Check PHP FPM pool configuration
@@ -525,7 +525,7 @@ count_log_files() {
   start_test_container
 
   # First Moodle installation
-  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
+  run exec_laemp -p -w nginx -d mysql -m 5022 -S -c
   [ "$status" -eq 0 ]
 
   # Verify config.php exists
@@ -535,7 +535,7 @@ count_log_files() {
   local config_checksum_1=$(get_file_checksum "/var/www/html/moodle.127.0.0.1.sslip.io/config.php")
 
   # Second Moodle installation
-  run exec_laemp -p -w nginx -d mysql -m 5013 -S -c
+  run exec_laemp -p -w nginx -d mysql -m 5022 -S -c
   [ "$status" -eq 0 ]
 
   # Verify config.php still exists and unchanged
@@ -660,7 +660,7 @@ count_log_files() {
   start_test_container
 
   # Install complete stack: Nginx, PHP, MySQL, Moodle, SSL, Prometheus, Memcached
-  run exec_laemp -p -w nginx -d mysql -m 5013 -S -r -M -c
+  run exec_laemp -p -w nginx -d mysql -m 5022 -S -r -M -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
 

@@ -92,7 +92,7 @@ setup() {
   run ./laemp.sh -m -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Ensure Moodle version 5013" ]]
+  [[ "$output" =~ "Ensure Moodle version 5022" ]]
 }
 
 @test "moodle flag (-m) with version 405 (4.5) in dry-run verbose mode" {
@@ -109,11 +109,11 @@ setup() {
   [[ "$output" =~ "Ensure Moodle version 500" ]]
 }
 
-@test "moodle flag (-m) with version 5013 (5.1.3) in dry-run verbose mode" {
-  run ./laemp.sh -m 5013 -n -v
+@test "moodle flag (-m) with version 5022 (5.2.2) in dry-run verbose mode" {
+  run ./laemp.sh -m 5022 -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Ensure Moodle version 5013" ]]
+  [[ "$output" =~ "Ensure Moodle version 5022" ]]
 }
 
 @test "moodle flag (--moodle) with specific version in dry-run verbose mode" {
