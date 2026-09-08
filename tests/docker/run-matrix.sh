@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/lib.sh"
 source "${SCRIPT_DIR}/tls-preflight.sh"
 
 SUPPORTED_CASES=(
+  "debian-stock-nginx-mariadb-m4042|debian|stock|8.3|nginx|mariadb|4042|"
   "debian-stock-nginx-mariadb-m5022|debian|stock|8.4|nginx|mariadb|5022|"
   "debian-stock-apache-mariadb-m5022|debian|stock|8.4|apache|mariadb|5022|"
   "debian-stock-nginx-pgsql-m5022|debian|stock|8.4|nginx|pgsql|5022|"

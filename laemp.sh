@@ -26,7 +26,7 @@ PHP_ENSURE=false
 PROMETHEUS_ENSURE=false
 MARIADB_ENSURE=false
 POSTGRES_ENSURE=false
-# Moodle version format: 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5022 for 5.2.2, 5003 for 5.0.3, etc.
+# Moodle version format: 4042 for 4.4.2, 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5022 for 5.2.2, etc.
 DEFAULT_MOODLE_VERSION="5022"
 DEFAULT_PHP_VERSION_MAJOR_MINOR="8.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"

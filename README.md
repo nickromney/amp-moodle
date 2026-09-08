@@ -60,6 +60,17 @@ gh workflow run ci.yml
 gh workflow run lint.yml
 ```
 
+### Moodle 4.4.2+
+
+Moodle 4.4.2 and later in the 4.4 line are supported with PHP 8.3:
+
+```bash
+sudo ./laemp.sh -c -p 8.3 -w nginx -d mariadb -m 4042 -S
+```
+
+Use `-m 4042` for Moodle 4.4.2. Moodle 4.4 uses the application directory as
+its web root; Moodle 5.x's `/public` layout is detected and retained.
+
 ## Test Strategy
 
 ### 1. Fast host-side checks
