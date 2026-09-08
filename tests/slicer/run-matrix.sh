@@ -9,9 +9,11 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/lib.sh"
 
 SUPPORTED_COMBOS=(
+  "8.3|apache|4042"
   "8.3|apache|405"
   "8.3|apache|500"
   "8.3|apache|5022"
+  "8.3|nginx|4042"
   "8.3|nginx|405"
   "8.3|nginx|500"
   "8.3|nginx|5022"

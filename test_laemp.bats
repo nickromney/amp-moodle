@@ -116,6 +116,12 @@ setup() {
   [[ "$output" =~ "Ensure Moodle version 5022" ]]
 }
 
+@test "moodle flag (-m) supports Moodle 4.4.2 with PHP 8.3" {
+  run ./laemp.sh -p 8.3 -m 4042 -n -v
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Ensure Moodle version 4042" ]]
+}
+
 @test "moodle flag (--moodle) with specific version in dry-run verbose mode" {
   run ./laemp.sh --moodle 405 -n -v
   echo "Exit status: $status"
