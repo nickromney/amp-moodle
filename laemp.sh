@@ -777,6 +777,153 @@ function repository_ensure() {
   fi
 }
 
+AMP_MOODLE_STATE_DIR="${AMP_MOODLE_STATE_DIR:-/var/lib/amp-moodle}"
+moodleAdminCredentialsFile="${MOODLE_ADMIN_CREDENTIALS_FILE:-${AMP_MOODLE_STATE_DIR}/moodle-admin-credentials.env}"
+
+# Commands carrying credentials never enter the progress log. Child output
+# is suppressed because database/CLI errors can repeat their secret arguments.
+function run_sensitive_command() {
+  local makes_changes=false capture_output=false
+  if [[ ${1:-} == --capture-output ]]; then capture_output=true; shift; fi
+  if [[ ${1:-} == --makes-changes ]]; then makes_changes=true; shift; fi
+  if [[ $makes_changes == true && ${DRY_RUN_CHANGES:-false} == true ]]; then
+    log verbose "DRY RUN: Skipping a credential operation"
+    return 0
+  fi
+  local cmd=("$@")
+  if [[ ${USE_SUDO:-false} == true ]]; then cmd=(sudo "${cmd[@]}"); fi
+  if [[ $capture_output == true ]]; then
+    # Used only in command substitution; callers must never print this output.
+    "${cmd[@]}" 2>&1
+  else
+    "${cmd[@]}" >/dev/null 2>&1
+  fi
+}
+
+function credential_stat() {
+  stat -c "$1" -- "$2" 2>/dev/null || stat -f "$3" "$2"
+}
+
+function ensure_credential_directory() {
+  local directory="$1" current='' component owner mode
+  [[ $directory == /* && $directory != *'/../'* && $directory != */.. ]] || return 1
+  local components
+  IFS=/ read -r -a components <<< "$directory"
+  for component in "${components[@]}"; do
+    [[ -n $component && $component != . ]] || continue
+    current="${current}/${component}"
+    [[ ! -L $current ]] || return 1
+    if [[ ! -e $current ]]; then (umask 077; mkdir "$current") || return 1; fi
+    [[ -d $current ]] || return 1
+    owner=$(credential_stat %u "$current" %u) || return 1
+    mode=$(credential_stat %a "$current" %Lp) || return 1
+    [[ $owner == 0 || $owner == "$EUID" ]] || return 1
+    # The system temporary directory is a sticky, root-owned ancestor only.
+    if (( (8#$mode & 0022) != 0 )); then
+      [[ $owner == 0 && $mode == 1777 && ( $current == /tmp || $current == /private/tmp ) ]] || return 1
+    fi
+  done
+  owner=$(credential_stat %u "$directory" %u) || return 1
+  mode=$(credential_stat %a "$directory" %Lp) || return 1
+  [[ $owner == "$EUID" && $mode == 700 ]]
+}
+
+function validate_credential_file() {
+  local file="$1" owner mode links
+  [[ ! -L $file && -f $file ]] || return 1
+  owner=$(credential_stat %u "$file" %u) || return 1
+  mode=$(credential_stat %a "$file" %Lp) || return 1
+  links=$(credential_stat %h "$file" %l) || return 1
+  [[ $owner == "$EUID" && $mode == 600 && $links == 1 ]]
+}
+
+# Content arrives on stdin, including when the installer uses sudo. A private
+# staging file protects a valid previous value until the complete write succeeds.
+function validate_credential_destination() {
+  local file="$1"
+  ensure_credential_directory "$(dirname "$file")" || return 1
+  if [[ -e $file || -L $file ]]; then validate_credential_file "$file" || return 1; fi
+}
+
+function remove_private_credentials() {
+  local file="$1"
+  validate_credential_destination "$file" || return 1
+  if [[ -e $file ]]; then rm -- "$file"; fi
+}
+
+function publish_private_credentials() {
+  local file="$1" directory temporary
+  directory=$(dirname "$file")
+  ensure_credential_directory "$directory" || return 1
+  if [[ -e $file || -L $file ]]; then validate_credential_file "$file" || return 1; fi
+  temporary=$(umask 077; mktemp "$directory/.credential.XXXXXXXX") || return 1
+  if ! cat > "$temporary"; then rm -f "$temporary"; return 1; fi
+  if ! mv -f -- "$temporary" "$file"; then rm -f "$temporary"; return 1; fi
+}
+
+function validate_database_password() {
+  local password="$1"
+  [[ -n $password && $password != *$'\n'* && $password != *"'"* && $password != *\\* ]] || { printf '%s\n' 'Invalid stored database credential' >&2; return 1; }
+}
+
+function load_or_create_database_password() {
+  local directory="$1" user="$2" user_exists="$3" file legacy password
+  [[ $user =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { printf '%s\n' 'Invalid database user identifier' >&2; return 1; }
+  ensure_credential_directory "$directory" || { printf '%s\n' 'Unsafe database credential directory' >&2; return 1; }
+  file="$directory/${user}-db_password"
+  legacy="/tmp/${user}-db_password"
+  if [[ -e $file || -L $file ]]; then
+    validate_credential_file "$file" || { printf '%s\n' 'Unsafe database credential file' >&2; return 1; }
+    password=$(cat "$file") || return 1
+  elif [[ -e $legacy || -L $legacy ]]; then
+    validate_credential_file "$legacy" || { printf '%s\n' 'Unsafe legacy database credential file; recover it securely before retrying' >&2; return 1; }
+    password=$(cat "$legacy") || return 1
+    validate_database_password "$password" || return 1
+    printf '%s\n' "$password" | publish_private_credentials "$file" || return 1
+  elif [[ $user_exists != 0 ]]; then
+    printf '%s\n' 'Existing database user has no trusted credential; recover its password into the private credential file before retrying' >&2
+    return 1
+  else
+    password=$(openssl rand -base64 16 | tr -d '=+/') || return 1
+    [[ -n $password ]] || return 1
+    validate_database_password "$password" || return 1
+    printf '%s\n' "$password" | publish_private_credentials "$file" || return 1
+  fi
+  validate_database_password "$password" || return 1
+  printf '%s\n' "$password"
+}
+
+# Execute the filesystem helpers as the same privileged user as other mutations.
+# No source string or arguments are passed through the ordinary command logger.
+function run_credential_helper() {
+  local helper="$1"; shift
+  if [[ ${DRY_RUN_CHANGES:-false} == true ]]; then
+    log verbose 'DRY RUN: Skipping private credential storage' >&2
+    return 0
+  fi
+  local definitions
+  definitions=$(declare -f credential_stat ensure_credential_directory validate_credential_file publish_private_credentials validate_credential_destination remove_private_credentials validate_database_password load_or_create_database_password)
+  local cmd=("$BASH" -euo pipefail -c "$definitions"$'\n''"$@"' credential-helper "$helper" "$@")
+  if [[ ${USE_SUDO:-false} == true ]]; then cmd=(sudo "${cmd[@]}"); fi
+  "${cmd[@]}"
+}
+
+function write_moodle_admin_credentials() {
+  local username password email url site content
+  local destination="${3:-$moodleAdminCredentialsFile}"
+  printf -v username '%q' "$1"
+  printf -v password '%q' "$2"
+  printf -v email '%q' "${moodleAdminEmail}"
+  printf -v url '%q' "https://${moodleSiteName}${moodlePort:-}"
+  printf -v site '%q' "${moodleSiteName}"
+  printf -v content 'MOODLE_ADMIN_USERNAME=%s\nMOODLE_ADMIN_PASSWORD=%s\nMOODLE_ADMIN_EMAIL=%s\nMOODLE_URL=%s\nMOODLE_SITE_NAME=%s\n' "$username" "$password" "$email" "$url" "$site"
+  if ! printf '%s' "$content" | run_credential_helper publish_private_credentials "$destination"; then
+    log error 'Cannot safely publish private admin credentials; check directory ownership and permissions'
+    return 1
+  fi
+  log info "Admin credentials saved to ${destination}"
+}
+
 function replace_file_value() {
 
   local current_value="$1"
@@ -798,12 +945,12 @@ function replace_file_value() {
   local escaped_new_value
   escaped_new_value=$(echo "$new_value" | sed 's/[]\/$*.^[]/\\&/g')
 
-  if run_command grep -qF "$escaped_new_value" "$file_path"; then
+  if run_sensitive_command grep -qF "$escaped_new_value" "$file_path"; then
     log verbose "New value already set in $file_path"
   else
     # New value not present, do the replacement
-    run_command --makes-changes sed -i "s|$current_value|$new_value|" "$file_path"
-    log verbose "Replaced $current_value with $new_value in $file_path"
+    run_sensitive_command --makes-changes sed -i "s|$current_value|$new_value|" "$file_path"
+    log verbose "Updated configuration in $file_path"
   fi
 
   # Release lock
@@ -1569,9 +1716,13 @@ function moodle_install_database() {
   log verbose "  Full name: ${moodleDisplayName}"
   log verbose "  Short name: ${moodleDisplayName}"
 
+  # Keep the last-good canonical credentials until installation succeeds.
+  run_credential_helper validate_credential_destination "$moodleAdminCredentialsFile" || return 1
+  write_moodle_admin_credentials "${moodleAdminUsername:-admin}" "${admin_password}" "${moodleAdminCredentialsFile}.pending" || return 1
+
   # Run Moodle CLI installer
   local install_output
-  if ! install_output=$(run_command --makes-changes php "${moodleDir}/admin/cli/install_database.php" \
+  if ! install_output=$(run_sensitive_command --capture-output --makes-changes php "${moodleDir}/admin/cli/install_database.php" \
     --lang=en \
     --adminuser=admin \
     --adminpass="${admin_password}" \
@@ -1580,25 +1731,26 @@ function moodle_install_database() {
     --shortname="${moodleDisplayName}" \
     --agree-license 2>&1); then
     if echo "${install_output}" | grep -qi "Database tables already present"; then
+      run_credential_helper remove_private_credentials "${moodleAdminCredentialsFile}.pending" || return 1
       log info "Database tables already present. Skipping Moodle database installation."
       return 0
     fi
-    log error "Moodle CLI installer failed."
-    echo "${install_output}"
+    log error "Moodle CLI installer failed; pending credentials remain private at ${moodleAdminCredentialsFile}.pending"
     exit 1
   fi
 
-  # Log the admin password
+  write_moodle_admin_credentials admin "${admin_password}" || return 1
+  run_credential_helper remove_private_credentials "${moodleAdminCredentialsFile}.pending" || return 1
+
+  # Report where the private credentials are available
   log info "Moodle installation completed successfully!"
   log info "=========================================="
   log info "IMPORTANT: Save these credentials securely"
   log info "=========================================="
   log info "Admin username: admin"
-  log info "Admin password: ${admin_password}"
   log info "Admin email: ${moodleAdminEmail}"
   log info "Site URL: https://${moodleSiteName}"
   log info "=========================================="
-  log verbose "Admin password has been logged to: ${LOG_FILE}"
 }
 
 function setup_moodle_cron() {
@@ -3490,44 +3642,13 @@ function mariadb_ensure() {
     # Check if database and user already exist
     local db_exists
     local user_exists
-    db_exists=$(mysql "${MYSQL_SSL_FLAGS[@]}" -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}';" 2>/dev/null | tail -n1 || echo "0")
-    user_exists=$(mysql "${MYSQL_SSL_FLAGS[@]}" -e "SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='${DB_HOST}';" 2>/dev/null | tail -n1 || echo "0")
+    db_exists=$(mysql "${MYSQL_SSL_FLAGS[@]}" -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${DB_NAME}';" 2>/dev/null | tail -n1) || exit 1
+    user_exists=$(mysql "${MYSQL_SSL_FLAGS[@]}" -e "SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='${DB_HOST}';" 2>/dev/null | tail -n1) || exit 1
 
-    # Determine password to use
+    # Reuse a trusted credential even when only the database is missing.
     local db_password
-    local password_file="/tmp/${DB_USER}-db_password"
-
-    if [ "$db_exists" != "0" ] && [ "$user_exists" != "0" ]; then
-      log verbose "Database ${DB_NAME} and user ${DB_USER} already exist."
-      # Try to read existing password from password file
-      if [ -f "$password_file" ]; then
-        db_password=$(cat "$password_file")
-        log verbose "Using existing password from ${password_file}"
-      else
-        # If password file doesn't exist but DB does, provide helpful instructions
-        log error "Database ${DB_NAME} exists but password file ${password_file} not found."
-        log error ""
-        log error "To recreate with a new password, run:"
-        log error "  mysql -u root -e \"DROP DATABASE ${DB_NAME}; DROP USER IF EXISTS '${DB_USER}'@'${DB_HOST}';\""
-        log error "  rm -f ${password_file}"
-        log error "  # Then re-run this script"
-        log error ""
-        log error "Or to reuse existing database, create the password file:"
-        log error "  echo 'YOUR_PASSWORD' > ${password_file}"
-        log error "  chmod 600 ${password_file}"
-        exit 1
-      fi
-    else
-      # Generate new secure random password
-      db_password=$(openssl rand -base64 16 | tr -d "=+/")
-
-      # Store password in /tmp with restricted permissions
-      echo "$db_password" >"$password_file"
-      run_command --makes-changes chmod 600 "$password_file"
-      log verbose "Generated new database password and stored in ${password_file}"
-    fi
-
-    # Update the global DB_PASS variable
+    local password_file="${AMP_MOODLE_STATE_DIR}/credentials/${DB_USER}-db_password"
+    db_password=$(run_credential_helper load_or_create_database_password "${AMP_MOODLE_STATE_DIR}/credentials" "$DB_USER" "$user_exists") || exit 1
     DB_PASS="$db_password"
 
     # Create database with UTF-8 encoding (idempotent with IF NOT EXISTS)
@@ -3536,7 +3657,7 @@ function mariadb_ensure() {
 
     # Create database user and grant privileges (idempotent with IF NOT EXISTS)
     log verbose "Creating database user ${DB_USER}..."
-    run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
+    run_sensitive_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST}' IDENTIFIED BY '${DB_PASS}';"
     run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'${DB_HOST}';"
     run_command --makes-changes mysql "${MYSQL_SSL_FLAGS[@]}" -e "FLUSH PRIVILEGES;"
 
@@ -3658,26 +3779,18 @@ function postgres_ensure() {
 
     log verbose "PostgreSQL installation completed."
 
-    # Generate secure random password
-    local db_password
-    db_password=$(openssl rand -base64 16 | tr -d "=+/")
-
-    # Store password in /tmp with restricted permissions
-    local password_file="/tmp/${DB_USER}-db_password"
-    echo "$db_password" >"$password_file"
-    run_command --makes-changes chmod 600 "$password_file"
-    log verbose "Database password stored in ${password_file}"
-
-    # Update the global DB_PASS variable
+    # A rerun must not rotate a role's password or replace its saved credential.
+    local user_exists db_exists db_password
+    user_exists=$(sudo -u postgres psql -tAc "SELECT COUNT(*) FROM pg_roles WHERE rolname='${DB_USER}';") || exit 1
+    db_exists=$(sudo -u postgres psql -tAc "SELECT COUNT(*) FROM pg_database WHERE datname='${DB_NAME}';") || exit 1
+    db_password=$(run_credential_helper load_or_create_database_password "${AMP_MOODLE_STATE_DIR}/credentials" "$DB_USER" "$user_exists") || exit 1
     DB_PASS="$db_password"
-
-    # Create database user
-    log verbose "Creating database user ${DB_USER}..."
-    run_command --makes-changes sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
-
-    # Create database with UTF-8 encoding
-    log verbose "Creating database ${DB_NAME}..."
-    run_command --makes-changes sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} ENCODING 'UTF8' LC_COLLATE='en_US.UTF-8' LC_CTYPE='en_US.UTF-8' TEMPLATE=template0;"
+    if [[ $user_exists == 0 ]]; then
+      run_sensitive_command --makes-changes sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
+    fi
+    if [[ $db_exists == 0 ]]; then
+      run_command --makes-changes sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} ENCODING 'UTF8' LC_COLLATE='en_US.UTF-8' LC_CTYPE='en_US.UTF-8' TEMPLATE=template0;"
+    fi
 
     # Grant privileges
     run_command --makes-changes sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
