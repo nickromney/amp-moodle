@@ -556,3 +556,15 @@ An Ansible rewrite is underway to provide Infrastructure as Code capabilities wi
 - Testing strategy uses same Podman containers as bash script for parity validation
 
 See `ansible/README.md` and `next-steps.md` for current work items.
+
+## Codex workflow
+
+- Keep this file short, concrete, and repo-specific. Capture layout, commands, conventions, constraints, and done criteria; move repeatable procedures to scoped skills/docs.
+- For each task, state the goal, relevant context/files, constraints, and verification criteria. Plan complex or ambiguous work before editing.
+- Keep one thread per coherent outcome. Read only relevant files; delegate bounded exploration/tests when useful, and use worktrees for parallel work.
+- Verify changes with focused tests and applicable lint, formatting, type checks, builds, and diff review; report checks run or skipped.
+- Prefer least-privilege permissions and dry-runs. Add MCP/tools only when they remove a real repeated loop.
+- Use background or scheduled work for long-running or recurring tasks instead of continuous polling.
+- After a repeated mistake or correction, update this file with the smallest actionable rule that would prevent it.
+
+Reference: https://learn.chatgpt.com/guides/best-practices
