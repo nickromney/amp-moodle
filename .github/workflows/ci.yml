@@ -34,6 +34,9 @@ jobs:
       with:
         php-version: '7.4'
 
+    - name: Test private credential handling
+      run: make test-security
+
     - name: Run laemp.sh
       run: |
         ./laemp.sh -c -p 7.4 -f -m 310 -w apache

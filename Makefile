@@ -206,7 +206,7 @@ clean-git: ## Remove nested .git directories (dangerous - prompts first)
 ##@ Testing
 
 .PHONY: test
-test: python-test typescript-test ## Run all tests (Python + TypeScript)
+test: test-security python-test typescript-test ## Run all tests (Python + TypeScript)
 	@echo "$(GREEN)✓ All tests passed (Python + TypeScript)$(NC)"
 
 .PHONY: test-smoke-bats
@@ -369,3 +369,7 @@ slicer-clean: ## Remove accidental repo-local Slicer artifacts; authoritative ru
 	@rm -f *.img *.log *-vsock.sock slicer.sock slicer-mac.yaml.sample
 	@rm -rf .sbox-runtime .slicer-configdrive .slicer-power-events
 	@echo "$(GREEN)✓ Repo-local artifacts removed. System Slicer runtime remains under ~/slicer-mac$(NC)"
+
+.PHONY: test-security
+test-security: ## Test installer credential privacy with synthetic fixtures
+	@python3 -m unittest discover -s tests/security -p 'test_installer_*.py' -v
