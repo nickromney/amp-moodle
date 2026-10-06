@@ -12,12 +12,14 @@ source "${SCRIPT_DIR}/tls-preflight.sh"
 
 SUPPORTED_CASES=(
   "debian-stock-nginx-mariadb-m4042|debian|stock|8.3|nginx|mariadb|4042|"
-  "debian-stock-nginx-mariadb-m5022|debian|stock|8.4|nginx|mariadb|5022|"
-  "debian-stock-apache-mariadb-m5022|debian|stock|8.4|apache|mariadb|5022|"
-  "debian-stock-nginx-pgsql-m5022|debian|stock|8.4|nginx|pgsql|5022|"
-  "debian-prereqs-nginx-mariadb-m5022|debian|prereqs|8.4|nginx|mariadb|5022|"
-  "debian-stock-nginx-mariadb-m5022-memcached|debian|stock|8.4|nginx|mariadb|5022|-M"
-  "debian-stock-nginx-mariadb-m5022-prometheus|debian|stock|8.4|nginx|mariadb|5022|-r"
+  "debian-stock-nginx-mariadb-m5024|debian|stock|8.4|nginx|mariadb|5024|"
+  "debian-stock-apache-mariadb-m5024|debian|stock|8.4|apache|mariadb|5024|"
+  "debian-stock-nginx-pgsql-m5024|debian|stock|8.4|nginx|pgsql|5024|"
+  "debian-stock-nginx-mariadb-m5030|debian|stock|8.4|nginx|mariadb|5030|"
+  "debian-stock-nginx-pgsql-m5030|debian|stock|8.4|nginx|pgsql|5030|"
+  "debian-prereqs-nginx-mariadb-m5024|debian|prereqs|8.4|nginx|mariadb|5024|"
+  "debian-stock-nginx-mariadb-m5024-memcached|debian|stock|8.4|nginx|mariadb|5024|-M"
+  "debian-stock-nginx-mariadb-m5024-prometheus|debian|stock|8.4|nginx|mariadb|5024|-r"
 )
 
 RESULTS_DIR=""

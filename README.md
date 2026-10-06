@@ -18,16 +18,16 @@ Local defaults now split site identity from browser hostname:
 ./laemp.sh -h
 
 # Dry run
-./laemp.sh -n -v -p 8.4 -w nginx -d mariadb -m 5022 -S
+./laemp.sh -n -v -p 8.4 -w nginx -d mariadb -m 5024 -S
 
 # Full local install on Ubuntu/Debian
-sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5022 -S
+sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5024 -S
 
 # Full local install with PostgreSQL, memcached, and monitoring
-sudo ./laemp.sh -c -p 8.4 -w nginx -d pgsql -m 5022 -S -M -r
+sudo ./laemp.sh -c -p 8.4 -w nginx -d pgsql -m 5024 -S -M -r
 
 # Locally trusted certificate inside the guest
-sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5022 --mkcert
+sudo ./laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5024 --mkcert
 ```
 
 ## Local Validation Hooks
@@ -59,6 +59,31 @@ GitHub Actions CI is now on demand rather than automatic:
 gh workflow run ci.yml
 gh workflow run lint.yml
 ```
+
+### Moodle 5.2.4 and 5.3.0
+
+The default is Moodle 5.2.4 (`-m 5024`, tag `v5.2.4`). Moodle 5.3.0 (`-m 5030`,
+tag `v5.3.0`) is the next LTS release and is supported on request:
+
+```bash
+sudo ./laemp.sh -c -p 8.4 -w nginx -d pgsql -m 5030 -S
+```
+
+Four-digit codes install the tagged release package and verify its pinned
+sha256; three-digit codes (`502`, `503`) install Moodle's weekly `+` build
+instead. Downloads fall back from `download.moodle.org` to
+`packaging.moodle.org`.
+
+| Code | Release | PHP | MariaDB | PostgreSQL |
+| --- | --- | --- | --- | --- |
+| `5024` | 5.2.4 | 8.3-8.4 | 10.11+ | 16+ |
+| `5030` | 5.3.0 | 8.3-8.4 | 11.4+ | 17+ |
+
+Moodle 5.3 rejects MariaDB 10.11, which is what Ubuntu 24.04 and Debian 12
+ship. `laemp.sh` checks the MariaDB this host would install and stops before
+provisioning if it is too old; use Debian 13 (MariaDB 11.8), PostgreSQL
+(`-d pgsql`, installs PostgreSQL 17 from the PGDG repository for 5.3), or
+stay on 5.2.4. Moodle 5.3 also removes the Classic theme.
 
 ### Moodle 4.4.2+
 
@@ -109,7 +134,7 @@ Use Slicer when the question is "does this behave like a real Ubuntu host?"
 
 ```bash
 # One supported combo with Playwright smoke
-tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5022
+tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5024
 
 # Full supported Slicer matrix
 make slicer-matrix
