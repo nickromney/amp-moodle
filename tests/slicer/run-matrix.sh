@@ -12,15 +12,15 @@ SUPPORTED_COMBOS=(
   "8.3|apache|4042"
   "8.3|apache|405"
   "8.3|apache|500"
-  "8.3|apache|5022"
+  "8.3|apache|5024"
   "8.3|nginx|4042"
   "8.3|nginx|405"
   "8.3|nginx|500"
-  "8.3|nginx|5022"
+  "8.3|nginx|5024"
   "8.4|apache|500"
-  "8.4|apache|5022"
+  "8.4|apache|5024"
   "8.4|nginx|500"
-  "8.4|nginx|5022"
+  "8.4|nginx|5024"
 )
 
 DB_TYPE="mariadb"
@@ -44,7 +44,7 @@ Usage:
 Options:
   --php VERSION             Filter to one PHP version (8.3 or 8.4)
   --web SERVER              Filter to one web server (apache or nginx)
-  --moodle VERSION          Filter to one Moodle version (405, 500, 5022)
+  --moodle VERSION          Filter to one Moodle version (405, 500, 5024)
   --database TYPE           Database type to install (default: mariadb)
   --cert MODE               Certificate mode: self-signed or mkcert (default: self-signed)
   --extra-flag FLAG         Extra laemp.sh flag to pass through (repeatable)
@@ -55,8 +55,8 @@ Options:
 
 Examples:
   tests/slicer/run-matrix.sh
-  tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5022
-  tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5022 --database pgsql --extra-flag -M
+  tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5024
+  tests/slicer/run-matrix.sh --php 8.4 --web nginx --moodle 5024 --database pgsql --extra-flag -M
 EOF
 }
 

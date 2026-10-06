@@ -92,7 +92,7 @@ setup() {
   run ./laemp.sh -m -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Ensure Moodle version 5022" ]]
+  [[ "$output" =~ "Ensure Moodle version 5024" ]]
 }
 
 @test "moodle flag (-m) with version 405 (4.5) in dry-run verbose mode" {
@@ -109,11 +109,11 @@ setup() {
   [[ "$output" =~ "Ensure Moodle version 500" ]]
 }
 
-@test "moodle flag (-m) with version 5022 (5.2.2) in dry-run verbose mode" {
-  run ./laemp.sh -m 5022 -n -v
+@test "moodle flag (-m) with version 5024 (5.2.4) in dry-run verbose mode" {
+  run ./laemp.sh -m 5024 -n -v
   echo "Exit status: $status"
   [ $status -eq 0 ]
-  [[ "$output" =~ "Ensure Moodle version 5022" ]]
+  [[ "$output" =~ "Ensure Moodle version 5024" ]]
 }
 
 @test "moodle flag (-m) supports Moodle 4.4.2 with PHP 8.3" {
@@ -587,4 +587,63 @@ setup() {
   echo "Exit status: $status"
   [ $status -eq 0 ]
   [[ "$output" =~ "Verbose output" ]]
+}
+
+@test "Moodle 5.3.0 accepts PHP 8.4 in dry-run verbose mode" {
+  run ./laemp.sh -p 8.4 -m 5030 -n -v
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Ensure Moodle version 5030" ]]
+}
+
+@test "Moodle 5.3.0 rejects PHP 8.2 in dry-run verbose mode" {
+  run ./laemp.sh -p 8.2 -m 5030 -n -v
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "Moodle 5.3.0 requires PHP 8.3 or higher" ]]
+}
+
+@test "Moodle 5.3.0 rejects PHP 8.5 in dry-run verbose mode" {
+  run ./laemp.sh -p 8.5 -m 5030 -n -v
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "Moodle 5.3.0 supports PHP 8.3, 8.4" ]]
+}
+
+# Load the release helpers without running main.
+load_release_helpers() {
+  local fn
+  eval "$(sed -n '/^MOODLE_KNOWN_RELEASES=(/,/^)/p;/^MOODLE_DOWNLOAD_MIRRORS=(/,/^)/p' laemp.sh)"
+  for fn in moodle_version_stable moodle_version_semver moodle_archive_file moodle_known_sha256 moodle_min_database_version moodle_postgres_major; do
+    eval "$(awk "/^function ${fn}\\(\\)/,/^}/" laemp.sh)"
+  done
+}
+
+@test "tagged releases map to Moodle's package names" {
+  load_release_helpers
+  [ "$(moodle_archive_file 5024)" = "moodle-5.2.4.tgz" ]
+  [ "$(moodle_archive_file 5030)" = "moodle-5.3.tgz" ]
+  [ "$(moodle_archive_file 4042)" = "moodle-4.4.2.tgz" ]
+  [ "$(moodle_archive_file 503)" = "moodle-latest-503.tgz" ]
+}
+
+@test "Moodle 5.2.4 and 5.3.0 packages are pinned by checksum" {
+  load_release_helpers
+  [ "$(moodle_known_sha256 5024)" = "8569b63f1e97416ecb67ec75767dd20675892c7a62a5e90d1647366fddf873cf" ]
+  [ "$(moodle_known_sha256 5030)" = "7e5edf110555956571f40e42acffde0eb23681ebebd212a2fec0fe7d795dd511" ]
+  run moodle_known_sha256 5022
+  [ "$status" -ne 0 ]
+}
+
+@test "downloads fall back to packaging.moodle.org" {
+  load_release_helpers
+  [ "${MOODLE_DOWNLOAD_MIRRORS[1]}" = "https://packaging.moodle.org" ]
+}
+
+@test "Moodle 5.3 raises the MariaDB and PostgreSQL floors" {
+  load_release_helpers
+  [ "$(moodle_min_database_version 5024 mariadb)" = "10.11" ]
+  [ "$(moodle_min_database_version 5030 mariadb)" = "11.4" ]
+  [ "$(moodle_min_database_version 5024 pgsql)" = "16" ]
+  [ "$(moodle_min_database_version 5030 pgsql)" = "17" ]
+  [ "$(moodle_postgres_major 5024)" = "16" ]
+  [ "$(moodle_postgres_major 5030)" = "17" ]
+  [ "$(moodle_postgres_major 4042)" = "16" ]
 }

@@ -1,9 +1,9 @@
 ---
 # Moodle deployment defaults shared across containers
-moodle_version: "5.2.2"
+moodle_version: "5.2.4"
 moodle_deploy_repository: https://github.com/moodle/moodle
-# GitHub/git.moodle.org tag is v5.2.2. Moodle's own release name is MOODLE_5022.
-moodle_deploy_version: v5.2.2
+# GitHub/git.moodle.org tag is v5.2.4. Moodle's own release name is MOODLE_5024.
+moodle_deploy_version: v5.2.4
 moodle_deploy_update: true
 
 moodle_web_protocol: https

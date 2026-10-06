@@ -354,7 +354,7 @@ slicer-matrix: ## Run the supported Slicer matrix with Playwright smoke checks
 	@./tests/slicer/run-matrix.sh
 
 .PHONY: docker-baseline
-docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5022)
+docker-baseline: ## Run the Docker baseline (Debian stock, PHP 8.4, nginx, MariaDB, Moodle 5024)
 	@echo "$(YELLOW)Running Docker baseline install...$(NC)"
 	@./tests/docker/run-baseline.sh
 

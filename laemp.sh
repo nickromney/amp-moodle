@@ -26,8 +26,9 @@ PHP_ENSURE=false
 PROMETHEUS_ENSURE=false
 MARIADB_ENSURE=false
 POSTGRES_ENSURE=false
-# Moodle version format: 4042 for 4.4.2, 405 for 4.5, 500 for 5.0.0, 501 for 5.1.0, 5022 for 5.2.2, etc.
-DEFAULT_MOODLE_VERSION="5022"
+# Moodle version format: 4042 for 4.4.2, 405 for 4.5, 5024 for 5.2.4, 5030 for 5.3.0, etc.
+# Three-digit codes (502, 503) fetch the weekly moodle-latest-NNN build, not a tagged release.
+DEFAULT_MOODLE_VERSION="5024"
 DEFAULT_PHP_VERSION_MAJOR_MINOR="8.4"
 MOODLE_VERSION="${DEFAULT_MOODLE_VERSION}"
 PHP_VERSION_MAJOR_MINOR="${DEFAULT_PHP_VERSION_MAJOR_MINOR}"
@@ -111,7 +112,7 @@ function echo_usage() {
   log info "  -d, --database      Database type (default: mariadb, supported: [mariadb, pgsql])"
   log info "  -f, --fpm           Enable FPM for the web server (requires -w apache (-w nginx sets fpm by default))"
   log info "  -h, --help          Display this help message"
-  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 5022 for 5.2.2)"
+  log info "  -m, --moodle        Ensure Moodle of specified version is installed (default: ${MOODLE_VERSION}, e.g., 405 for 4.5, 500 for 5.0.0, 5024 for 5.2.4)"
   log info "  -M, --memcached     Ensure Memcached is installed"
   log info "  -n, --nop           Dry run (show commands without executing)"
   log info "  -p, --php           Ensure PHP is installed. If not, install specified version (default: ${PHP_VERSION_MAJOR_MINOR})"
@@ -1593,6 +1594,107 @@ function moodle_version_semver() {
   echo "${major}.${minor}.${patch}"
 }
 
+# Tagged releases this installer verifies: code|git tag commit|package sha256.
+MOODLE_KNOWN_RELEASES=(
+  "5024|2df605b1e093248e8f8d1e2fc081fb3b1f65665f|8569b63f1e97416ecb67ec75767dd20675892c7a62a5e90d1647366fddf873cf"
+  "5030|42622298fe06f9626d988d60b2bf589bd8f850e8|7e5edf110555956571f40e42acffde0eb23681ebebd212a2fec0fe7d795dd511"
+)
+
+MOODLE_DOWNLOAD_MIRRORS=(
+  "https://download.moodle.org/download.php/direct"
+  "https://packaging.moodle.org"
+)
+
+function moodle_archive_file() {
+  local version="$1"
+
+  if [[ ${#version} -lt 4 ]]; then
+    echo "moodle-latest-$(moodle_version_stable "${version}").tgz"
+    return
+  fi
+
+  local semver
+  semver=$(moodle_version_semver "${version}")
+  # Moodle names the first package of a major release without the patch digit:
+  # 5.3.0 ships as moodle-5.3.tgz.
+  echo "moodle-${semver%.0}.tgz"
+}
+
+function moodle_known_sha256() {
+  local version="$1"
+  local entry
+
+  for entry in "${MOODLE_KNOWN_RELEASES[@]}"; do
+    if [[ "${entry%%|*}" == "${version}" ]]; then
+      echo "${entry##*|}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Minimum database server version for a Moodle release family, from that
+# release's admin/environment.xml. Prints X.Y, or nothing when unknown.
+function moodle_min_database_version() {
+  local family
+  family=$(moodle_version_stable "$1")
+  local db_engine="$2"
+
+  case "${db_engine}:${family}" in
+  mariadb:503) echo "11.4" ;;
+  mariadb:500 | mariadb:501 | mariadb:502) echo "10.11" ;;
+  pgsql:503) echo "17" ;;
+  pgsql:500 | pgsql:501 | pgsql:502) echo "16" ;;
+  esac
+}
+
+function moodle_postgres_major() {
+  local min
+  min=$(moodle_min_database_version "$1" pgsql)
+
+  if [[ -n "${min}" ]] && ((min > 16)); then
+    echo "${min}"
+  else
+    echo "16"
+  fi
+}
+
+# Refuse before provisioning when the MariaDB this host would run is older than
+# the requested Moodle release accepts. Ubuntu 24.04 and Debian 12 ship
+# MariaDB 10.11, which Moodle 5.3 rejects.
+function moodle_validate_database_version() {
+  log verbose "Entered function ${FUNCNAME[0]}"
+
+  local moodle_version="$1"
+  local min_mariadb
+  min_mariadb=$(moodle_min_database_version "${moodle_version}" mariadb)
+
+  if ! $MARIADB_ENSURE || [[ -z "${min_mariadb}" ]]; then
+    return 0
+  fi
+
+  local mariadb_version=""
+  if tool_exists mariadb; then
+    mariadb_version=$(mariadb --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-MariaDB' | head -n 1)
+    mariadb_version="${mariadb_version%-MariaDB}"
+  fi
+  if [[ -z "${mariadb_version}" && "${package_manager:-}" == "apt" ]] && tool_exists apt-cache; then
+    mariadb_version=$(apt-cache policy mariadb-server 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -oE '[0-9]+\.[0-9]+' | head -n 1)
+  fi
+
+  if [[ -z "${mariadb_version}" ]]; then
+    log verbose "Moodle ${moodle_version} requires MariaDB ${min_mariadb} or higher; could not determine the MariaDB version this host will install."
+    return 0
+  fi
+
+  if ! version_compare "$(echo "${mariadb_version}" | cut -d. -f1-2)" "${min_mariadb}"; then
+    log error "Moodle ${moodle_version} requires MariaDB ${min_mariadb} or higher; this host would run MariaDB ${mariadb_version}. Use Debian 13, PostgreSQL (-d pgsql), or Moodle 5.2 (-m 5024)."
+    exit 1
+  fi
+
+  log verbose "MariaDB ${mariadb_version} meets Moodle ${moodle_version}'s minimum of ${min_mariadb}"
+}
+
 function moodle_download_extract() {
   log verbose "Entered function ${FUNCNAME[0]}"
   local moodleDir="${1}"
@@ -1600,15 +1702,11 @@ function moodle_download_extract() {
   local moodleVersion="${3}"
   local moodleStableVersion
   moodleStableVersion=$(moodle_version_stable "${moodleVersion}")
-  local moodleArchiveFile="moodle-latest-${moodleStableVersion}.tgz"
+  local moodleArchiveFile
+  moodleArchiveFile=$(moodle_archive_file "${moodleVersion}")
 
-  if [[ ${#moodleVersion} -ge 4 ]]; then
-    local moodleSemver
-    moodleSemver=$(moodle_version_semver "${moodleVersion}")
-    moodleArchiveFile="moodle-${moodleSemver}.tgz"
-  fi
-
-  local moodleArchive="https://download.moodle.org/download.php/direct/stable${moodleStableVersion}/${moodleArchiveFile}"
+  local moodleArchive="${MOODLE_DOWNLOAD_MIRRORS[0]}/stable${moodleStableVersion}/${moodleArchiveFile}"
+  local moodleArchiveFallback="${MOODLE_DOWNLOAD_MIRRORS[1]}/stable${moodleStableVersion}/${moodleArchiveFile}"
 
   # Check if Moodle is already installed (check for config-dist.php which is in every Moodle installation)
   if [ -f "${moodleDir}/config-dist.php" ]; then
@@ -1623,8 +1721,26 @@ function moodle_download_extract() {
     # Download Moodle
     log verbose "Downloading ${moodleArchive}"
     # Use -O to not overwrite existing file
-    download_file "${moodleArchive}" "${moodleArchiveFile}"
+    # download_file exits on failure; the subshell lets a second mirror be tried.
+    if ! (download_file "${moodleArchive}" "${moodleArchiveFile}"); then
+      log verbose "Retrying from ${moodleArchiveFallback}"
+      download_file "${moodleArchiveFallback}" "${moodleArchiveFile}"
+    fi
 
+  fi
+
+  local moodleArchiveSha256
+  if [[ "$DRY_RUN_CHANGES" == "true" ]]; then
+    log verbose "DRY_RUN: Skipping checksum verification of ${moodleArchiveFile}"
+  elif moodleArchiveSha256=$(moodle_known_sha256 "${moodleVersion}"); then
+    if [[ "$(sha256sum "${moodleArchiveFile}" | cut -d' ' -f1)" != "${moodleArchiveSha256}" ]]; then
+      log error "Moodle archive ${moodleArchiveFile} does not match the pinned sha256 ${moodleArchiveSha256}."
+      run_command --makes-changes rm -f "${moodleArchiveFile}"
+      exit 1
+    fi
+    log verbose "Verified ${moodleArchiveFile} sha256 ${moodleArchiveSha256}"
+  else
+    log verbose "Moodle ${moodleVersion} is not a pinned release; ${moodleArchiveFile} checksum not verified."
   fi
 
   # Check if Moodle archive has been extracted
@@ -1858,7 +1974,7 @@ function moodle_validate_php_version() {
 
   # Moodle/PHP compatibility matrix (February 2026)
   # Reference: https://docs.moodle.org/en/PHP
-  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5022=5.2.2, 5003=5.0.3
+  # Version format: 500=5.0.0, 501=5.1.0, 502=5.2.0, 5024=5.2.4, 5003=5.0.3
   local moodle_family="$moodle_version"
   if [[ ${#moodle_family} -ge 4 ]]; then
     moodle_family="${moodle_family:0:3}"
@@ -1869,16 +1985,18 @@ function moodle_validate_php_version() {
   local supported_range=""
   local moodle_label="Moodle ${moodle_version}"
 
+  if [[ ${#moodle_version} -ge 4 ]]; then
+    moodle_label="Moodle $(moodle_version_semver "${moodle_version}")"
+  elif [[ ${#moodle_version} -eq 3 ]]; then
+    moodle_label="Moodle ${moodle_family:0:1}.$((10#${moodle_family:1:2}))"
+  fi
+
   case "$moodle_family" in
-  "502")
-    # Moodle 5.2.x supports PHP 8.3-8.4.
+  "502" | "503")
+    # Moodle 5.2.x and 5.3.x support PHP 8.3-8.4.
     min_php="8.3"
     max_php="8.4"
     supported_range="8.3, 8.4"
-    moodle_label="Moodle 5.2"
-    if [[ "$moodle_version" == "5022" ]]; then
-      moodle_label="Moodle 5.2.2"
-    fi
     ;;
   "500" | "501")
     # Moodle 5.0-5.1 supports PHP 8.2-8.4
@@ -1924,7 +2042,7 @@ function moodle_validate_php_version() {
     ;;
   *)
     log verbose "No specific PHP version requirements known for Moodle version $moodle_version"
-    log verbose "Note: Default Moodle version is 5022 (5.2.2)"
+    log verbose "Note: Default Moodle version is 5024 (5.2.4)"
     ;;
   esac
 
@@ -3760,7 +3878,8 @@ function postgres_ensure() {
     fi
 
     # Add PostgreSQL APT repository
-    local postgres_version="16"
+    local postgres_version
+    postgres_version=$(moodle_postgres_major "${MOODLE_VERSION}")
     local postgres_repository_arch
     postgres_repository_arch=$(normalized_system_arch)
     local postgres_repository="deb [arch=${postgres_repository_arch} signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main"
@@ -3834,6 +3953,9 @@ function main() {
   if $MOODLE_ENSURE; then
     log verbose "Validating requested PHP ${PHP_VERSION_MAJOR_MINOR} for Moodle ${MOODLE_VERSION} before provisioning"
     moodle_validate_php_version "${MOODLE_VERSION}" "${PHP_VERSION_MAJOR_MINOR}"
+    if ! $SKIP_DB_SERVER; then
+      moodle_validate_database_version "${MOODLE_VERSION}"
+    fi
   fi
 
   log verbose "checking ACME_CERT"
