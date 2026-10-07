@@ -165,8 +165,8 @@ fmt: ## Format all code (Terraform, Python, etc.)
 		for dir in $(PYTHON_PROJECTS); do \
 			if [ -f "$$dir/pyproject.toml" ]; then \
 				echo "$(YELLOW)Formatting $$dir...$(NC)"; \
-				if (cd "$$dir" && uv run ruff --version >/dev/null 2>&1); then \
-					(cd "$$dir" && uv run ruff format . 2>/dev/null) || true; \
+				if (cd "$$dir" && uv run --locked ruff --version >/dev/null 2>&1); then \
+					(cd "$$dir" && uv run --locked ruff format . 2>/dev/null) || true; \
 				else \
 					echo "$(YELLOW)  Skipping (no ruff installed)$(NC)"; \
 				fi; \
@@ -233,7 +233,7 @@ python-test: ## Run Python tests with pytest in all Python projects
 	@for dir in $(PYTHON_PROJECTS); do \
 		if [ -f "$$dir/pyproject.toml" ]; then \
 			echo "$(YELLOW)Testing $$dir...$(NC)"; \
-			(cd "$$dir" && uv run pytest -v) || exit 1; \
+			(cd "$$dir" && uv run --locked pytest -v) || exit 1; \
 		fi; \
 	done
 	@echo "$(GREEN)✓ All tests passed$(NC)"
@@ -244,9 +244,9 @@ python-lint: ## Run Python linting (ruff) in all Python projects
 	@for dir in $(PYTHON_PROJECTS); do \
 		if [ -f "$$dir/pyproject.toml" ]; then \
 			echo "$(YELLOW)Linting $$dir...$(NC)"; \
-			(cd "$$dir" && uv sync --extra dev --quiet 2>/dev/null || uv sync --quiet) || exit 1; \
-			if (cd "$$dir" && uv run ruff --version >/dev/null 2>&1); then \
-				(cd "$$dir" && uv run ruff check .) || exit 1; \
+			(cd "$$dir" && uv sync --locked --extra dev --quiet 2>/dev/null || uv sync --locked --quiet) || exit 1; \
+			if (cd "$$dir" && uv run --locked ruff --version >/dev/null 2>&1); then \
+				(cd "$$dir" && uv run --locked ruff check .) || exit 1; \
 			else \
 				echo "$(YELLOW)  Skipping (no ruff installed)$(NC)"; \
 			fi; \
@@ -259,10 +259,10 @@ python-fmt: ## Format Python code with ruff
 	@for dir in $(PYTHON_PROJECTS); do \
 		if [ -f "$$dir/pyproject.toml" ]; then \
 			echo "$(YELLOW)Formatting $$dir...$(NC)"; \
-			(cd "$$dir" && uv sync --extra dev --quiet 2>/dev/null || uv sync --quiet) || exit 1; \
-			if (cd "$$dir" && uv run ruff --version >/dev/null 2>&1); then \
-				(cd "$$dir" && uv run ruff format .) || exit 1; \
-				(cd "$$dir" && uv run ruff check --fix .) || exit 1; \
+			(cd "$$dir" && uv sync --locked --extra dev --quiet 2>/dev/null || uv sync --locked --quiet) || exit 1; \
+			if (cd "$$dir" && uv run --locked ruff --version >/dev/null 2>&1); then \
+				(cd "$$dir" && uv run --locked ruff format .) || exit 1; \
+				(cd "$$dir" && uv run --locked ruff check --fix .) || exit 1; \
 			else \
 				echo "$(YELLOW)  Skipping (no ruff installed)$(NC)"; \
 			fi; \
@@ -372,4 +372,4 @@ slicer-clean: ## Remove accidental repo-local Slicer artifacts; authoritative ru
 
 .PHONY: test-security
 test-security: ## Test installer credential privacy with synthetic fixtures
-	@python3 -m unittest discover -s tests/security -p 'test_installer_*.py' -v
+	@uv run --locked python -m unittest discover -s tests/security -p 'test_installer_*.py' -v

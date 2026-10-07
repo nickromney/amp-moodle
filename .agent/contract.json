@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "project": "amp-moodle",
+  "purpose": "Host-oriented LAMP/LEMP Moodle installer with container and VM validation.",
+  "actions": [
+    {
+      "id": "verify",
+      "intent": "Execute the complete configured local gate before publishing this repository.",
+      "argv": [
+        "lefthook",
+        "run",
+        "pre-push",
+        "--force"
+      ],
+      "effects": [
+        "read",
+        "local_write",
+        "process"
+      ],
+      "acceptance_scope": "fixture",
+      "inputs": [
+        "lefthook.yml",
+        "Makefile",
+        "package.json",
+        "pyproject.toml",
+        "uv.lock",
+        "tests/security/test_installer_secrecy.py",
+        "laemp.sh"
+      ],
+      "requires": [],
+      "recovery": "Read the failed owner job; repair its source or declared prerequisite, then rerun the full local gate. Fixture acceptance does not authorize cloud/device deployment."
+    },
+    {
+      "id": "verify-lesson",
+      "intent": "Re-evaluate the retained domain decision using its owning regression/contract.",
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "make",
+        "test-security"
+      ],
+      "effects": [
+        "read",
+        "local_write",
+        "process"
+      ],
+      "acceptance_scope": "fixture",
+      "inputs": [
+        "tests/security/test_installer_secrecy.py",
+        "laemp.sh"
+      ],
+      "requires": [],
+      "recovery": "Inspect the named source/test and reproduce the failing synthetic case before reusing this lesson."
+    }
+  ],
+  "learning": [
+    {
+      "id": "owner-invariant",
+      "when": [
+        "credentials",
+        "privacy",
+        "installer"
+      ],
+      "summary": "Installer credential acceptance uses synthetic secrets and must preserve argv/log/file privacy; an option-parsing pass does not prove a live Moodle install.",
+      "owner": "tests/security/test_installer_secrecy.py",
+      "basis": [
+        {
+          "path": "tests/security/test_installer_secrecy.py",
+          "sha256": "b90d729e29bddb16820b8375f3a769f369f2792c2a64f2604e3dec73f793820e"
+        },
+        {
+          "path": "laemp.sh",
+          "sha256": "569c056b8200e25eaf4feac0a755f8525e6bcde8e5e3deb406bcf338eb11ac59"
+        }
+      ],
+      "verify_action": "verify-lesson"
+    }
+  ]
+}

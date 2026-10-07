@@ -1,0 +1,9 @@
+[project]
+name = "amp-moodle-local-tooling"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false
+exclude-newer = "7 days"

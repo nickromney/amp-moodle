@@ -23,8 +23,8 @@ amp-moodle pre-push local CI gate
 
 Running:
   shellcheck -x on tracked shell scripts
-  make test-smoke-bats
-  make test-cli-bats
+  uv run --locked make test-smoke-bats
+  uv run --locked make test-cli-bats
 
 Skip only when you have a reason:
   LEFTHOOK=0 git push
@@ -44,10 +44,10 @@ if ! command -v shellcheck >/dev/null 2>&1; then
   failed_gate="shellcheck not found"
 elif ! shellcheck -x "${shell_files[@]}"; then
   failed_gate="shellcheck -x on tracked shell scripts"
-elif ! make test-smoke-bats; then
-  failed_gate="make test-smoke-bats"
-elif ! make test-cli-bats; then
-  failed_gate="make test-cli-bats"
+elif ! uv run --locked make test-smoke-bats; then
+  failed_gate="uv run --locked make test-smoke-bats"
+elif ! uv run --locked make test-cli-bats; then
+  failed_gate="uv run --locked make test-cli-bats"
 fi
 
 if [[ -n "${failed_gate}" ]]; then

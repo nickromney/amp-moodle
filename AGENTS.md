@@ -565,3 +565,9 @@ An Ansible rewrite is underway to provide Infrastructure as Code capabilities wi
 - Testing strategy uses same Podman containers as bash script for parity validation
 
 See `ansible/README.md` and `next-steps.md` for current work items.
+
+The source-owned `.agent/contract.json` declares existing local verification actions,
+their effects and acceptance scope, and lessons bound to exact source/test bytes.
+Run the full local gate with `lefthook run pre-push --force`; a plain manual run
+can select no files. Remote workflows publish allowed artifacts only. Local
+fixture acceptance does not establish a live cloud, device or deployment state.

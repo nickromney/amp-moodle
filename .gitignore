@@ -40,3 +40,7 @@ slicer.sock
 .slicer-configdrive/
 .slicer-power-events/
 slicer-mac.yaml.sample
+
+.venv/
+
+__pycache__/

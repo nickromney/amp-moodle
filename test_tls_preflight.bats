@@ -1,5 +1,13 @@
 #!/usr/bin/env bats
 
+if [[ -z "${OPENSSL_FIXTURE_BIN:-}" ]]; then
+  if [[ -x /opt/homebrew/opt/openssl@3/bin/openssl ]]; then
+    OPENSSL_FIXTURE_BIN=/opt/homebrew/opt/openssl@3/bin/openssl
+  else
+    OPENSSL_FIXTURE_BIN=openssl
+  fi
+fi
+
 PREFLIGHT="./tests/docker/tls-preflight.sh"
 
 utc_stamp() {
@@ -12,7 +20,7 @@ mint_cert() {
   local not_after="$3"
 
   mkdir -p "${dest_dir}"
-  openssl req -x509 -newkey rsa:2048 -nodes \
+  "${OPENSSL_FIXTURE_BIN}" req -x509 -newkey rsa:2048 -nodes \
     -keyout "${dest_dir}/key.pem" \
     -out "${dest_dir}/cert.pem" \
     -subj "/CN=tls-preflight.test" \
