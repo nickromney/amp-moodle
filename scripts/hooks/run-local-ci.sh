@@ -8,12 +8,13 @@ source "${SCRIPT_DIR}/lib.sh"
 hook_parse_execute_flag "$@"
 
 if hook_skip_requested; then
-  hook_print_skip_and_exit
+  hook_fail "skip_requested: verification did not execute"
+  exit 1
 fi
 
 if [[ "${AMP_MOODLE_LOCAL_CI_IN_PROGRESS:-}" == "1" ]]; then
-  hook_warn "AMP_MOODLE_LOCAL_CI_IN_PROGRESS=1; skipping run-local-ci.sh to avoid recursive local CI"
-  exit 0
+  hook_fail "recursive_gate: verification did not execute"
+  exit 1
 fi
 
 cd "${HOOKS_REPO_ROOT}"
@@ -26,10 +27,8 @@ Running:
   uv run --locked make test-smoke-bats
   uv run --locked make test-cli-bats
 
-Skip only when you have a reason:
-  LEFTHOOK=0 git push
-  AMP_MOODLE_SKIP_HOOKS=1 git push
-  git push --no-verify
+Full acceptance requires every configured check.
+Explicit skip and recursive execution requests refuse verification.
 EOF
 
 export AMP_MOODLE_LOCAL_CI_IN_PROGRESS=1
