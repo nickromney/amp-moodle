@@ -1,5 +1,9 @@
 # AGENTS.md
 
+For system ownership, action effects, verification scope or a new agent task,
+read [the operating model](docs/agent-system.md). Detailed product plans
+remain at the linked owners; historical observations retain their dates.
+
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
@@ -60,7 +64,7 @@ podman build --platform linux/amd64 -f Dockerfile.debian -t amp-moodle-debian:13
 
 # Test full bootstrap (installs all packages + configuration)
 podman run -it amp-moodle-ubuntu:24.04
-sudo laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
+sudo laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5024 -S
 # Duration: ~5-10 minutes
 ```
 
@@ -74,7 +78,7 @@ podman build --platform linux/amd64 -f Dockerfile.prereqs.debian -t amp-moodle-p
 
 # Test last mile configuration only (skips package installation)
 podman run -it amp-moodle-prereqs-ubuntu
-sudo laemp.sh -c -m 501 -S -w nginx -d mariadb  # Note: no -p flag
+sudo laemp.sh -c -m 5024 -S -w nginx -d mariadb  # Note: no -p flag
 # Duration: ~2-3 minutes
 ```
 
@@ -92,17 +96,18 @@ The project includes a `compose.yml` (Podman Compose) that orchestrates multi-co
 ```bash
 # Start persistent Debian container (idempotent - won't destroy existing)
 make debian
-# Then run: podman-compose exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
+# Then run: podman-compose exec moodle-test-debian sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5024 -S
 
 # Start persistent Ubuntu container
 make ubuntu
-# Then run: podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 501 -S
+# Then run: podman-compose exec moodle-test-ubuntu sudo /usr/local/bin/laemp.sh -c -p 8.4 -w nginx -d mariadb -m 5024 -S
 
 # Destroy and recreate for clean slate testing
 make debian-clean  # or make ubuntu-clean
 ```
 
 The compose setup includes:
+
 - Separate PostgreSQL database container (`postgres-db`) with health checks
 - Systemd-enabled Debian/Ubuntu containers for realistic service management
 - Port mappings: 8443 (Debian), 9443 (Ubuntu) for HTTPS access
@@ -411,7 +416,7 @@ make precommit          # Run manually
 ### Full LAMP Stack with Moodle (MySQL)
 
 ```bash
-sudo laemp.sh -p 8.4 -w apache -f -d mysql -m 501 -S
+sudo laemp.sh -p 8.4 -w apache -f -d mysql -m 5024 -S
 ```
 
 **Installs:**
@@ -427,7 +432,7 @@ sudo laemp.sh -p 8.4 -w apache -f -d mysql -m 501 -S
 ### Full LEMP Stack with Moodle (PostgreSQL)
 
 ```bash
-sudo laemp.sh -p 8.4 -w nginx -d pgsql -m 501 -a
+sudo laemp.sh -p 8.4 -w nginx -d pgsql -m 5024 -a
 ```
 
 **Installs:**
@@ -443,7 +448,7 @@ sudo laemp.sh -p 8.4 -w nginx -d pgsql -m 501 -a
 ### Production Setup with Monitoring and Caching
 
 ```bash
-sudo laemp.sh -p 8.4 -w nginx -d mysql -m 501 -S -r -M
+sudo laemp.sh -p 8.4 -w nginx -d mysql -m 5024 -S -r -M
 ```
 
 **Installs everything above PLUS:**
@@ -457,7 +462,7 @@ sudo laemp.sh -p 8.4 -w nginx -d mysql -m 501 -S -r -M
 ### Testing Before Installation (Dry Run)
 
 ```bash
-sudo laemp.sh -n -v -p 8.4 -w nginx -d mysql -m 501 -S
+sudo laemp.sh -n -v -p 8.4 -w nginx -d mysql -m 5024 -S
 ```
 
 Shows all commands that would be executed without making changes.
@@ -519,6 +524,7 @@ Additional documentation in `docs/` directory:
 The bash script has been completed and enhanced from 2,242 to 2,731 lines (+489 lines). Key improvements:
 
 **Critical Fixes:**
+
 1. **Database Installation**: Was missing entirely, now fully functional for MySQL and PostgreSQL
 2. **SSL Certificates**: Fixed certbot command flags and certificate path handling
 3. **Moodle Installation**: Now completes full installation including database schema and admin user
@@ -526,6 +532,7 @@ The bash script has been completed and enhanced from 2,242 to 2,731 lines (+489 
 5. **Nginx Repository**: Replaced third-party repositories (Ondrej PPA for Ubuntu, Sury for Debian) with official nginx.org repository for both distros (lines 1414-1447)
 
 **New Functions Added:**
+
 - `mysql_verify()`, `mysql_ensure()` (lines 2130-2235)
 - `postgres_verify()`, `postgres_ensure()` (lines 2236-2358)
 - `get_cert_path()`, `validate_certificates()` (lines 419-504)
@@ -534,11 +541,13 @@ The bash script has been completed and enhanced from 2,242 to 2,731 lines (+489 
 - `setup_moodle_cron()` (line 951)
 
 **Platform Support:**
+
 - Moodle 5.1.0 Support (version 501)
 - Ubuntu 24.04 LTS (Noble Numbat)
 - Debian 13 (Trixie)
 
 **Testing:**
+
 - Expanded from 8 to 70 total tests across 3 test suites
 - Integration tests with Podman containers
 - Smoke tests for fast validation
@@ -556,15 +565,3 @@ An Ansible rewrite is underway to provide Infrastructure as Code capabilities wi
 - Testing strategy uses same Podman containers as bash script for parity validation
 
 See `ansible/README.md` and `next-steps.md` for current work items.
-
-## Codex workflow
-
-- Keep this file short, concrete, and repo-specific. Capture layout, commands, conventions, constraints, and done criteria; move repeatable procedures to scoped skills/docs.
-- For each task, state the goal, relevant context/files, constraints, and verification criteria. Plan complex or ambiguous work before editing.
-- Keep one thread per coherent outcome. Read only relevant files; delegate bounded exploration/tests when useful, and use worktrees for parallel work.
-- Verify changes with focused tests and applicable lint, formatting, type checks, builds, and diff review; report checks run or skipped.
-- Prefer least-privilege permissions and dry-runs. Add MCP/tools only when they remove a real repeated loop.
-- Use background or scheduled work for long-running or recurring tasks instead of continuous polling.
-- After a repeated mistake or correction, update this file with the smallest actionable rule that would prevent it.
-
-Reference: https://learn.chatgpt.com/guides/best-practices
