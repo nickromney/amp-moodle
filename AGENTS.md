@@ -1,9 +1,5 @@
 # AGENTS.md
 
-For system ownership, action effects, verification scope or a new agent task,
-read [the operating model](docs/agent-system.md). Detailed product plans
-remain at the linked owners; historical observations retain their dates.
-
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
@@ -566,8 +562,20 @@ An Ansible rewrite is underway to provide Infrastructure as Code capabilities wi
 
 See `ansible/README.md` and `next-steps.md` for current work items.
 
-The source-owned `.agent/contract.json` declares existing local verification actions,
-their effects and acceptance scope, and lessons bound to exact source/test bytes.
-Run the full local gate with `lefthook run pre-push --force`; a plain manual run
-can select no files. No GitHub Actions workflow is active in this checkout. Local
-fixture acceptance does not establish a live cloud, device or deployment state.
+## Verify
+
+- Pre-push gate: `lefthook run pre-push --force` (`local-ci`,
+  `installer-privacy` = `make test-security`, `gate-refusal-contract`). Run it
+  manually; a plain run may select no files. No GitHub Actions workflow is
+  active in this checkout.
+- Fast host-side checks: `bats test_smoke.bats test_laemp.bats test_tls_preflight.bats`.
+  These use dry-run and stubbed behavior; they do not install anything.
+- `make docker-baseline` builds and verifies a container (needs podman and
+  network downloads). Containers cannot prove systemd VM lifecycle; browser
+  acceptance is a separate attended check.
+
+## Hazards
+
+- `laemp.sh` changes host packages and services when run without `-n`. Use
+  `./laemp.sh -n -v ...` to preview on a host.
+- Moodle `5024` (PHP 8.4) is the current baseline; `501` examples are historical.
