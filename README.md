@@ -53,11 +53,10 @@ git commit --no-verify
 git push --no-verify
 ```
 
-GitHub Actions CI is now on demand rather than automatic:
+No GitHub Actions workflow is active in this checkout. The pre-push gate runs locally; run it manually with:
 
 ```bash
-gh workflow run ci.yml
-gh workflow run lint.yml
+lefthook run pre-push --force
 ```
 
 ### Moodle 5.2.4 and 5.3.0
