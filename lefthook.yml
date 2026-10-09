@@ -11,4 +11,8 @@ pre-commit:
 pre-push:
   commands:
     local-ci:
-      run: scripts/hooks/run-local-ci.sh --execute
+      run: uv run --locked scripts/hooks/run-local-ci.sh --execute
+    installer-privacy:
+      run: uv run --locked make test-security
+    gate-refusal-contract:
+      run: bats tests/local-gate-refusal.bats
