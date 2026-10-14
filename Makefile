@@ -373,3 +373,9 @@ slicer-clean: ## Remove accidental repo-local Slicer artifacts; authoritative ru
 .PHONY: test-security
 test-security: ## Test installer credential privacy with synthetic fixtures
 	@uv run --locked python -m unittest discover -s tests/security -p 'test_installer_*.py' -v
+
+VERIFY_SKILL := skills/verify-laemp
+.PHONY: verify-help
+verify-help: ## Safely run only the LAEMP CLI help path
+	@/bin/bash $(VERIFY_SKILL)/scripts/control.sh --execute help
+include $(VERIFY_SKILL)/verify.mk
