@@ -1708,11 +1708,12 @@ function moodle_validate_database_version() {
 
   local mariadb_version=""
   if tool_exists mariadb; then
-    mariadb_version=$(mariadb --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-MariaDB' | head -n 1)
+    mariadb_version=$(mariadb --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-MariaDB' | head -n 1) || true
     mariadb_version="${mariadb_version%-MariaDB}"
   fi
   if [[ -z "${mariadb_version}" && "${package_manager:-}" == "apt" ]] && tool_exists apt-cache; then
-    mariadb_version=$(apt-cache policy mariadb-server 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -oE '[0-9]+\.[0-9]+' | head -n 1)
+    # Before the first apt-get update there is no candidate, so grep matches nothing.
+    mariadb_version=$(apt-cache policy mariadb-server 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -oE '[0-9]+\.[0-9]+' | head -n 1) || true
   fi
 
   if [[ -z "${mariadb_version}" ]]; then

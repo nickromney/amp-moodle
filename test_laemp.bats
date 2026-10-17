@@ -773,3 +773,37 @@ load_laemp_functions() {
   echo "$hits"
   [ -z "${hits//$'\n'/}" ]
 }
+
+# A fresh host has no apt lists, so apt-cache reports no MariaDB candidate.
+# The mariadb stub reports no version, so the check always reaches apt-cache.
+run_with_apt_cache_policy() {
+  local stub_dir="${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "${stub_dir}"
+  printf '%b' "$1" >"${stub_dir}/policy"
+  printf '#!/bin/sh\ncat "%s"\n' "${stub_dir}/policy" >"${stub_dir}/apt-cache"
+  printf '#!/bin/sh\nexit 0\n' >"${stub_dir}/mariadb"
+  chmod +x "${stub_dir}/apt-cache" "${stub_dir}/mariadb"
+  run env PATH="${stub_dir}:${PATH}" ./laemp.sh -c -n -v -p 8.4 -w nginx -d mariadb -m "${2:-5024}" -S
+}
+
+@test "MariaDB check continues when apt-cache has no candidate" {
+  run_with_apt_cache_policy 'mariadb-server:\n  Installed: (none)\n  Candidate: (none)\n  Version table:\n'
+  echo "Exit status: $status"
+  echo "Output: $output"
+  [[ "$output" =~ "could not determine the MariaDB version this host will install" ]]
+}
+
+@test "MariaDB check continues when apt-cache prints no policy" {
+  run_with_apt_cache_policy ''
+  echo "Exit status: $status"
+  echo "Output: $output"
+  [[ "$output" =~ "could not determine the MariaDB version this host will install" ]]
+}
+
+@test "MariaDB check still refuses an old apt candidate for Moodle 5.3" {
+  run_with_apt_cache_policy 'mariadb-server:\n  Installed: (none)\n  Candidate: 1:10.11.13-0ubuntu0.24.04.1\n' 5030
+  echo "Exit status: $status"
+  echo "Output: $output"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "requires MariaDB 11.4 or higher; this host would run MariaDB 10.11" ]]
+}
