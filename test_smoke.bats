@@ -240,7 +240,7 @@ setup() {
 @test "script uses [[ ]] instead of [ ] for conditionals" {
   # Modern bash prefers [[ ]]
   double_bracket=$(grep -c '\[\[' "$SCRIPT" || echo 0)
-  single_bracket=$(grep -c '\[ ' "$SCRIPT" || echo 0)
+  single_bracket=$(grep -cE '(^|[^[])\[ ' "$SCRIPT" || echo 0)
   # Ensure modern [[ ]] usage is prevalent
   [ "$double_bracket" -gt 80 ]
   [ "$single_bracket" -lt 250 ]
