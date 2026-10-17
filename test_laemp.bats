@@ -647,3 +647,129 @@ load_release_helpers() {
   [ "$(moodle_postgres_major 5030)" = "17" ]
   [ "$(moodle_postgres_major 4042)" = "16" ]
 }
+
+# ==============================================================================
+# DRY-RUN FILE EDITS
+# ==============================================================================
+
+load_replace_file_value() {
+  # laemp.sh runs main when sourced, so load only the function under test.
+  eval "$(awk '/^function replace_file_value\(\)/,/^}/' ./laemp.sh)"
+  log() { :; }
+  run_sensitive_command() {
+    if [[ $1 == --makes-changes ]]; then
+      shift
+      [[ ${DRY_RUN_CHANGES:-false} == true ]] && return 0
+    fi
+    "$@"
+  }
+}
+
+@test "dry-run config edits need no write access to an installed config.php" {
+  load_replace_file_value
+  config="$BATS_TEST_TMPDIR/config.php"
+  printf '%s\n' "\$CFG->dbhost = 'localhost';" > "$config"
+  chmod 0444 "$config"
+  DRY_RUN_CHANGES=true
+  run replace_file_value "\$CFG->dbhost\s*=\s*'localhost';" "\$CFG->dbhost = 'db';" "$config"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$config")" = "\$CFG->dbhost = 'localhost';" ]
+}
+
+@test "real config edits still lock and update config.php" {
+  load_replace_file_value
+  config="$BATS_TEST_TMPDIR/config.php"
+  printf '%s\n' "\$CFG->dbhost = 'localhost';" > "$config"
+  DRY_RUN_CHANGES=false
+  run replace_file_value "\$CFG->dbhost\s*=\s*'localhost';" "\$CFG->dbhost = 'db';" "$config"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$config")" = "\$CFG->dbhost = 'db';" ]
+}
+
+# ==============================================================================
+# DRY RUN (-n) WRITES NOTHING
+# ==============================================================================
+
+load_laemp_functions() {
+  # laemp.sh runs main when sourced, so load only the named functions.
+  local name
+  for name in "$@"; do
+    eval "$(awk "/^function ${name}\\(\\)/,/^}/" ./laemp.sh)"
+  done
+  log() { :; }
+}
+
+@test "dry-run write_file creates nothing and drains a piped producer" {
+  load_laemp_functions write_file
+  target="$BATS_TEST_TMPDIR/written.conf"
+  run bash -c "$(declare -f log write_file); set -euo pipefail; DRY_RUN_CHANGES=true; seq 1 100000 | write_file '$target'"
+  [ "$status" -eq 0 ]
+  [ ! -e "$target" ]
+}
+
+@test "real write_file writes and appends" {
+  load_laemp_functions write_file
+  target="$BATS_TEST_TMPDIR/written.conf"
+  DRY_RUN_CHANGES=false
+  printf 'one\n' | write_file "$target"
+  printf 'two\n' | write_file --append "$target"
+  [ "$(cat "$target")" = $'one\ntwo' ]
+}
+
+@test "dry-run Moodle config edits leave an installed config.php unchanged" {
+  load_laemp_functions run_command replace_file_value moodle_config_files
+  validate_db_prefix() { :; }
+  run_sensitive_command() {
+    if [[ $1 == --makes-changes ]]; then
+      shift
+      [[ ${DRY_RUN_CHANGES:-false} == true ]] && return 0
+    fi
+    "$@"
+  }
+  site="$BATS_TEST_TMPDIR/moodle"
+  mkdir -p "$site"
+  printf '%s\n' "<?php" "require_once(__DIR__ . '/lib/setup.php');" > "$site/config-dist.php"
+  cp "$site/config-dist.php" "$site/config.php"
+  before="$(cat "$site/config.php")"
+  DRY_RUN_CHANGES=true NGINX_ENSURE=true MEMCACHED_ENSURE=true
+  DB_TYPE=mariadb DB_HOST=localhost DB_NAME=moodle DB_USER=moodle DB_PASS=x DB_PREFIX=mdl_
+  moodleSiteName=moodle.test moodlePort='' moodleDataDir=/var/moodledata
+  run moodle_config_files "$site"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$site/config.php")" = "$before" ]
+}
+
+@test "dry-run PHP-FPM pool setup does not kill running PHP-FPM" {
+  load_laemp_functions run_command write_file php_fpm_create_pool
+  calls="$BATS_TEST_TMPDIR/calls"
+  : > "$calls"
+  pidof() { return 0; }
+  pkill() { echo "pkill $*" >> "$calls"; }
+  sleep() { :; }
+  service_manage() { echo "service_manage $*" >> "$calls"; }
+  PHP_VERSION_MAJOR_MINOR=8.4 DRY_RUN_CHANGES=true
+  run php_fpm_create_pool moodle www-data
+  [ "$status" -eq 0 ]
+  [ ! -s "$calls" ]
+}
+
+@test "dry-run Nginx check does not run nginx -t" {
+  load_laemp_functions run_command nginx_verify
+  calls="$BATS_TEST_TMPDIR/calls"
+  : > "$calls"
+  tool_exists() { return 0; }
+  nginx() { echo "nginx $*" >> "$calls"; }
+  DRY_RUN_CHANGES=true
+  run nginx_verify --exit-on-failure
+  [ "$status" -eq 0 ]
+  ! grep -q -- 'nginx -t' "$calls"
+}
+
+@test "laemp.sh routes every file write through dry-run-aware helpers" {
+  # Redirections to log files, /dev/null and the private credential staging file are allowed.
+  hits="$(grep -nE '(cat|echo|printf)[^|#]*>>?[[:space:]]*"?\$?\{?[A-Za-z_/]' ./laemp.sh |
+    grep -vE 'run_command|run_sensitive|/dev/null|>&2|2>|log |LOG_FILE|"\$temporary"' || true)"
+  hits+=$'\n'"$(grep -nE '\|[[:space:]]*tee ' ./laemp.sh | grep -vE 'run_command|LOG_FILE' || true)"
+  echo "$hits"
+  [ -z "${hits//$'\n'/}" ]
+}

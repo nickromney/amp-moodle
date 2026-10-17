@@ -939,8 +939,13 @@ function replace_file_value() {
 
   # Acquire lock on file using file descriptor 200
   # Use >> instead of > to avoid truncating the file
-  exec 200>>"$file_path"
-  flock -x 200 || exit 1
+  # A dry run never writes, so it must not need write access to take the lock.
+  local locked=false
+  if [[ ${DRY_RUN_CHANGES:-false} != true ]]; then
+    exec 200>>"$file_path"
+    flock -x 200 || exit 1
+    locked=true
+  fi
 
   # Check if new value already exists (escaped for grep)
   local escaped_new_value
@@ -955,7 +960,9 @@ function replace_file_value() {
   fi
 
   # Release lock
-  flock -u 200
+  if [[ $locked == true ]]; then
+    flock -u 200
+  fi
 
 }
 
@@ -1008,6 +1015,28 @@ function run_command() {
     fi
     return $?
   fi
+}
+
+# Write stdin to a file (or append with --append) unless this is a dry run.
+# A dry run drains stdin so a producer on the other side of a pipe never fails.
+function write_file() {
+  local append=false
+  if [[ "${1:-}" == "--append" ]]; then
+    append=true
+    shift
+  fi
+  local destination="$1"
+
+  if [[ ${DRY_RUN_CHANGES:-false} == true ]]; then
+    cat >/dev/null
+    log verbose "DRY RUN: Would write ${destination}"
+    return 0
+  fi
+
+  local cmd=(tee)
+  if $append; then cmd+=(-a); fi
+  if [[ ${USE_SUDO:-false} == true ]]; then cmd=(sudo "${cmd[@]}"); fi
+  "${cmd[@]}" "$destination" >/dev/null
 }
 
 function acme_cert_provider() {
@@ -1208,7 +1237,11 @@ function apache_verify() {
 
     # Check Apache configuration for syntax errors
     log verbose "Checking Apache configuration for syntax errors:"
-    run_command apache2ctl configtest
+    if [[ ${DRY_RUN_CHANGES:-false} == true ]]; then
+      log verbose "DRY RUN: Would check Apache configuration with: apache2ctl configtest"
+    else
+      run_command apache2ctl configtest
+    fi
   else
     log verbose "Apache is not installed."
     if [[ "$exit_on_failure" == true ]]; then
@@ -1274,7 +1307,7 @@ function apache_ensure() {
       # Stop any existing PHP-FPM processes (from failed previous runs)
       if pidof "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
         log verbose "Stopping existing PHP-FPM processes before package installation"
-        pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
+        run_command --makes-changes pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
         sleep 1
       fi
 
@@ -1389,7 +1422,7 @@ function apache_create_vhost() {
       "include_file=${include_file}"
   )
 
-  echo "$vhost_config" >"/etc/apache2/sites-available/${site_name}.conf"
+  printf '%s\n' "$vhost_config" | write_file "/etc/apache2/sites-available/${site_name}.conf"
   run_command --makes-changes a2ensite "${site_name}"
   run_command --makes-changes service_manage "${APACHE_NAME}" reload
 }
@@ -1509,7 +1542,7 @@ function moodle_config_files() {
         # Check if xsendfile settings already exist
         if ! grep -q "CFG->xsendfile" "$configFile"; then
           # Add before the require_once line at the end of the file
-          sed -i "/require_once(__DIR__ . '\/lib\/setup.php');/i\
+          run_command --makes-changes sed -i "/require_once(__DIR__ . '\/lib\/setup.php');/i\
 \n\
 // X-Sendfile configuration for Nginx\n\
 \$CFG->xsendfile = 'X-Accel-Redirect';\n\
@@ -1525,7 +1558,7 @@ function moodle_config_files() {
         # Check if memcached session settings already exist
         if ! grep -q "CFG->session_handler_class" "$configFile"; then
           # Add before the require_once line at the end of the file
-          sed -i "/require_once(__DIR__ . '\/lib\/setup.php');/i\
+          run_command --makes-changes sed -i "/require_once(__DIR__ . '\/lib\/setup.php');/i\
 \n\
 // Memcached session configuration\n\
 \$CFG->session_handler_class = '\\\\\\\\core\\\\\\\\session\\\\\\\\memcached';\n\
@@ -2209,8 +2242,10 @@ function nginx_verify() {
     run_command nginx -V 2>&1 | grep --color=never -o -- '-\S\+' # Filter out the modules
 
     # Check if the Nginx configuration has errors
-    log verbose "Checking Nginx configuration for errors:"
-    if ! run_command nginx -t; then
+    # nginx -t reads private TLS keys and opens log files, so a dry run only reports it.
+    if [[ ${DRY_RUN_CHANGES:-false} == true ]]; then
+      log verbose "DRY RUN: Would check Nginx configuration with: nginx -t"
+    elif ! run_command nginx -t; then
       log error "Nginx configuration has errors!"
       if [[ "$exit_on_failure" == true ]]; then
         exit 1
@@ -2246,7 +2281,7 @@ function nginx_create_optimized_config() {
   fi
 
   # Create optimized nginx.conf
-  cat >/etc/nginx/nginx.conf <<'EOF'
+  write_file /etc/nginx/nginx.conf <<'EOF'
 # Optimized Nginx Configuration
 # Based on best practices for performance and security
 
@@ -2350,7 +2385,7 @@ EOF
   run_command --makes-changes mkdir -p /etc/nginx/global
 
   # Create security configuration for uploads
-  cat >/etc/nginx/global/uploads-protection.conf <<'EOF'
+  write_file /etc/nginx/global/uploads-protection.conf <<'EOF'
 # Deny access to any files with a .php extension in uploads directories
 location ~* /uploads/.*\.php$ {
     deny all;
@@ -2367,7 +2402,7 @@ EOF
 
   # Create Moodle-specific security rules
   # Use unquoted heredoc to allow variable expansion for moodleDataDir
-  cat >/etc/nginx/global/moodle-security.conf <<EOF
+  write_file /etc/nginx/global/moodle-security.conf <<EOF
 # Moodle Security Configuration
 #
 # X-Sendfile Support:
@@ -2408,7 +2443,7 @@ location = /xmlrpc.php {
 EOF
 
   # Create static files caching configuration
-  cat >/etc/nginx/global/static-files.conf <<'EOF'
+  write_file /etc/nginx/global/static-files.conf <<'EOF'
 # Cache static files
 location ~* \.(jpg|jpeg|png|gif|ico|webp|svg|css|js|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|gz|bz2|7z)$ {
     expires 30d;
@@ -2476,11 +2511,11 @@ function nginx_ensure() {
       local distro_lower
       codename=$(lsb_release -cs)
       distro_lower=$(echo "$DISTRO" | tr '[:upper:]' '[:lower:]')
-      echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${distro_lower} ${codename} nginx" | tee /etc/apt/sources.list.d/nginx.list >/dev/null
+      echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${distro_lower} ${codename} nginx" | write_file /etc/apt/sources.list.d/nginx.list
 
       # Set APT pinning to prioritize nginx.org packages
       log verbose "Configuring APT pinning for nginx.org..."
-      echo -e "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" | tee /etc/apt/preferences.d/99nginx >/dev/null
+      echo -e "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" | write_file /etc/apt/preferences.d/99nginx
 
       # Update package list to include new repository
       run_command --makes-changes apt-get update
@@ -2519,7 +2554,7 @@ function nginx_ensure() {
     # Stop any existing PHP-FPM processes (from failed previous runs)
     if pidof "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
       log verbose "Stopping existing PHP-FPM processes before package installation"
-      pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
+      run_command --makes-changes pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
       sleep 1
     fi
 
@@ -2712,7 +2747,7 @@ function nginx_create_vhost() {
   fi
   # Create vhost configuration with direct variable substitution
   # Using unquoted heredoc (EOF not 'EOF') to allow variable expansion
-  cat >"${vhost_path}" <<EOF
+  write_file "${vhost_path}" <<EOF
 server {
     listen ${http_port};
     listen [::]:${http_port};
@@ -3118,7 +3153,7 @@ function php_fpm_create_pool() {
   # Ensure PHP-FPM is completely stopped before reconfiguring
   if pidof "php-fpm${PHP_VERSION_MAJOR_MINOR}" >/dev/null 2>&1; then
     log verbose "Stopping existing PHP-FPM processes before reconfiguring"
-    pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
+    run_command --makes-changes pkill -9 "php-fpm${PHP_VERSION_MAJOR_MINOR}" 2>/dev/null || true
     sleep 1
   fi
 
@@ -3148,7 +3183,7 @@ function php_fpm_create_pool() {
 
   log verbose "Creating PHP-FPM pool configuration for ${pool_name}"
 
-  cat >"${pool_conf}" <<EOF
+  write_file "${pool_conf}" <<EOF
 [${pool_name}]
 
 ; Pool user and group
@@ -3366,7 +3401,7 @@ function prometheus_ensure() {
   fi
 
   # Create Prometheus configuration
-  cat >/etc/prometheus/prometheus.yml <<'EOF'
+  write_file /etc/prometheus/prometheus.yml <<'EOF'
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -3396,7 +3431,7 @@ EOF
   run_command --makes-changes chown prometheus:prometheus /etc/prometheus/prometheus.yml
 
   # Create systemd service
-  cat >/etc/systemd/system/prometheus.service <<'EOF'
+  write_file /etc/systemd/system/prometheus.service <<'EOF'
 [Unit]
 Description=Prometheus
 Documentation=https://prometheus.io/docs/introduction/overview/
@@ -3464,7 +3499,7 @@ function prometheus_install_node_exporter() {
   fi
 
   # Create systemd service
-  cat >/etc/systemd/system/node_exporter.service <<'EOF'
+  write_file /etc/systemd/system/node_exporter.service <<'EOF'
 [Unit]
 Description=Node Exporter
 Wants=network-online.target
@@ -3494,7 +3529,7 @@ function prometheus_install_apache_exporter() {
   run_command --makes-changes a2enmod status
 
   # Configure Apache status page
-  cat >/etc/apache2/conf-available/server-status.conf <<'EOF'
+  write_file /etc/apache2/conf-available/server-status.conf <<'EOF'
 <Location "/server-status">
     SetHandler server-status
     Require local
@@ -3520,7 +3555,7 @@ EOF
   fi
 
   # Create systemd service
-  cat >/etc/systemd/system/apache_exporter.service <<'EOF'
+  write_file /etc/systemd/system/apache_exporter.service <<'EOF'
 [Unit]
 Description=Apache Exporter
 Wants=network-online.target
@@ -3547,7 +3582,7 @@ function prometheus_install_nginx_exporter() {
   nginx_exporter_arch=$(exporter_release_arch_underscore)
 
   # Configure Nginx stub_status
-  cat >/etc/nginx/sites-available/stub_status <<'EOF'
+  write_file /etc/nginx/sites-available/stub_status <<'EOF'
 server {
     listen 127.0.0.1:8080;
     server_name localhost;
@@ -3577,7 +3612,7 @@ EOF
   fi
 
   # Create systemd service
-  cat >/etc/systemd/system/nginx_exporter.service <<'EOF'
+  write_file /etc/systemd/system/nginx_exporter.service <<'EOF'
 [Unit]
 Description=Nginx Prometheus Exporter
 Wants=network-online.target
@@ -3611,7 +3646,7 @@ function prometheus_install_phpfpm_exporter() {
     local moodle_pool_conf="${fpm_pool_dir}/${moodleSiteName}.conf"
     if [ -f "${moodle_pool_conf}" ]; then
       if ! grep -q "pm.status_path" "${moodle_pool_conf}"; then
-        cat >>"${moodle_pool_conf}" <<'EOF'
+        write_file --append "${moodle_pool_conf}" <<'EOF'
 
 ; Enable status page
 pm.status_path = /status
@@ -3624,7 +3659,7 @@ EOF
   # Add status configuration to www pool when not using a dedicated Moodle pool
   if [[ "${phpfpm_scrape_uri}" == "tcp://127.0.0.1:9001/status" ]] && [ -f "${fpm_pool_dir}/www.conf" ]; then
     if ! grep -q "pm.status_path" "${fpm_pool_dir}/www.conf"; then
-      cat >>"${fpm_pool_dir}/www.conf" <<'EOF'
+      write_file --append "${fpm_pool_dir}/www.conf" <<'EOF'
 
 ; Enable status page
 pm.status_path = /status
@@ -3646,7 +3681,7 @@ EOF
   fi
 
   # Create systemd service
-  cat >/etc/systemd/system/php-fpm_exporter.service <<'EOF'
+  write_file /etc/systemd/system/php-fpm_exporter.service <<'EOF'
 [Unit]
 Description=PHP-FPM Prometheus Exporter
 Wants=network-online.target
@@ -3783,7 +3818,7 @@ function mariadb_ensure() {
     log verbose "Configuring MySQL/MariaDB for Moodle requirements..."
 
     # Create Moodle-specific configuration file
-    cat >/etc/mysql/mariadb.conf.d/99-moodle.cnf <<'EOF'
+    write_file /etc/mysql/mariadb.conf.d/99-moodle.cnf <<'EOF'
 [mysqld]
 # Moodle requirements
 innodb_file_format = Barracuda
@@ -3925,10 +3960,10 @@ function postgres_ensure() {
 
       # Update configuration values
       if ! grep -q "^max_connections" "$pg_config"; then
-        echo "max_connections = 200" >>"$pg_config"
+        echo "max_connections = 200" | write_file --append "$pg_config"
       fi
       if ! grep -q "^shared_buffers" "$pg_config"; then
-        echo "shared_buffers = 256MB" >>"$pg_config"
+        echo "shared_buffers = 256MB" | write_file --append "$pg_config"
       fi
 
       run_command --makes-changes service_manage postgresql restart
