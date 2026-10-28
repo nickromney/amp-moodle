@@ -10,7 +10,6 @@ source "${SCRIPT_DIR}/lib.sh"
 
 RESULTS_DIR=""
 KEEP_RESOURCES=false
-REBUILD_IMAGE=false
 APP_PORT="${APP_PORT:-18480}"
 
 IMAGE_TAG="amp-moodle-frankenphp:php8.4-moodle5022"
@@ -36,7 +35,7 @@ Usage:
 Options:
   --results-dir DIR     Write logs and results to DIR
   --keep-resources      Keep containers and network after the run
-  --rebuild-image       Force a Docker rebuild of the FrankenPHP image
+  --rebuild-image       Retained for compatibility; the image is always rebuilt
   --port PORT           Publish the app container on PORT (default: ${APP_PORT})
   -h, --help            Show this help text
 EOF
@@ -91,7 +90,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --rebuild-image)
-      REBUILD_IMAGE=true
       shift
       ;;
     --port)
@@ -141,14 +139,10 @@ docker_cleanup_container "${DB_CONTAINER}"
 "${DOCKER_CMD}" network rm "${NETWORK_NAME}" >/dev/null 2>&1 || true
 "${DOCKER_CMD}" network create "${NETWORK_NAME}" >/dev/null
 
-if [[ "${REBUILD_IMAGE}" == "true" ]] || ! docker_image_exists "${IMAGE_TAG}"; then
-  "${DOCKER_CMD}" build \
-    -f "${SCRIPT_DIR}/frankenphp/Dockerfile" \
-    -t "${IMAGE_TAG}" \
-    "${PROJECT_ROOT}" 2>&1 | tee "${BUILD_LOG}"
-else
-  printf 'Reusing existing image %s\n' "${IMAGE_TAG}" | tee "${BUILD_LOG}"
-fi
+"${DOCKER_CMD}" build \
+  -f "${SCRIPT_DIR}/frankenphp/Dockerfile" \
+  -t "${IMAGE_TAG}" \
+  "${PROJECT_ROOT}" 2>&1 | tee "${BUILD_LOG}"
 
 "${DOCKER_CMD}" run -d \
   --name "${DB_CONTAINER}" \
