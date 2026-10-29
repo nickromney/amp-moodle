@@ -38,6 +38,9 @@ RUN curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor > /usr/s
     echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu $(lsb_release -cs) nginx" > /etc/apt/sources.list.d/nginx.list && \
     printf "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n" > /etc/apt/preferences.d/99nginx
 
+# The standalone installer also provides the PHP version postcondition.
+COPY laemp.sh /usr/local/bin/laemp.sh
+
 # Install PHP 8.4 with all required extensions, Nginx, and MariaDB
 RUN apt-get update && apt-get install -y \
     php8.4-cli \
@@ -57,7 +60,8 @@ RUN apt-get update && apt-get install -y \
     nginx \
     mariadb-server \
     mariadb-client \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && bash /usr/local/bin/laemp.sh --check-php-security
 
 # Install Moodle runtime dependencies (Ubuntu 24.04 uses libaio1t64)
 RUN apt-get update && apt-get install -y \
@@ -83,7 +87,6 @@ RUN curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && \
     rm /tmp/composer-setup.php
 
 # Copy the laemp.sh script
-COPY laemp.sh /usr/local/bin/laemp.sh
 RUN chmod +x /usr/local/bin/laemp.sh
 
 # Create a non-root user for testing
