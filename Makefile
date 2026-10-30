@@ -211,7 +211,7 @@ test: test-security python-test typescript-test ## Run all tests (Python + TypeS
 
 .PHONY: test-smoke-bats
 test-smoke-bats: ## Run fast BATS smoke tests for laemp.sh
-	@bats test_smoke.bats test_docker_ports.bats test_tls_preflight.bats test_frankenphp_pin.bats test_php_security.bats
+	@bats test_smoke.bats test_docker_ports.bats test_tls_preflight.bats test_frankenphp_pin.bats test_php_security.bats test_composer_signature.bats
 
 .PHONY: test-cli-bats
 test-cli-bats: ## Run BATS CLI and dry-run parsing tests
