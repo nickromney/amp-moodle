@@ -16,7 +16,15 @@ RUN install-php-extensions \
     opcache \
     ldap
 
-RUN curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+RUN set -eu; \
+    curl -fsSLo /tmp/composer-setup.php https://getcomposer.org/installer; \
+    curl -fsSLo /tmp/composer-setup.sig https://composer.github.io/installer.sig; \
+    signature="$(cat /tmp/composer-setup.sig)"; \
+    test "${#signature}" -eq 96; \
+    case "$signature" in *[!0-9a-fA-F]*) exit 1;; esac; \
+    printf '%s  %s\n' "$signature" /tmp/composer-setup.php | sha384sum --check --status; \
+    php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer; \
+    rm -f /tmp/composer-setup.php /tmp/composer-setup.sig
 
 RUN mkdir -p /app/public /app/moodledata
 

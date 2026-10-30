@@ -1483,9 +1483,35 @@ function moodle_composer_install() {
   # Check if Composer is installed
   if ! tool_exists composer; then
     log info "Installing Composer..."
-    run_command --makes-changes curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php
-    run_command --makes-changes php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
-    run_command --makes-changes rm /tmp/composer-setup.php
+    local installer_tmpdir installer signature_file signature
+    if [[ "${DRY_RUN_CHANGES:-false}" == "true" ]]; then
+      log verbose "DRY RUN: Would download and verify the Composer installer signature"
+    else
+      installer_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/composer-installer.XXXXXX")" || return 1
+      installer="$installer_tmpdir/installer.php"
+      signature_file="$installer_tmpdir/installer.sig"
+      run_command --makes-changes curl -fsSLo "$installer" https://getcomposer.org/installer || {
+        rm -rf "$installer_tmpdir"
+        return 1
+      }
+      run_command --makes-changes curl -fsSLo "$signature_file" https://composer.github.io/installer.sig || {
+        rm -rf "$installer_tmpdir"
+        log error "Could not download the Composer installer signature"
+        return 1
+      }
+      signature="$(<"$signature_file")"
+      if [[ ! "$signature" =~ ^[[:xdigit:]]{96}$ ]] || ! printf '%s  %s\n' "$signature" "$installer" | sha384sum --check --status; then
+        rm -rf "$installer_tmpdir"
+        log error "Composer installer signature verification failed"
+        return 1
+      fi
+      rm -f "$signature_file"
+      run_command --makes-changes php "$installer" --install-dir=/usr/local/bin --filename=composer || {
+        rm -rf "$installer_tmpdir"
+        return 1
+      }
+      rm -rf "$installer_tmpdir"
+    fi
     log info "Composer installed successfully"
   else
     log verbose "Composer is already installed"
