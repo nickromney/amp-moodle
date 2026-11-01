@@ -2,6 +2,9 @@
 # shellcheck disable=SC2030,SC2031 # Bats isolates each test case in a subshell.
 
 setup() {
+  # Hooks pushed from a linked worktree export GIT_DIR; clear it so git acts on this checkout.
+  # shellcheck disable=SC2046
+  unset $(git rev-parse --local-env-vars)
   APP_ROOT="$(git -C "$BATS_TEST_DIRNAME" rev-parse --show-toplevel)"
   CONTROL="$APP_ROOT/skills/verify-laemp/scripts/control.sh"
 }

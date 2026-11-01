@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
 # Full-gate refusals must not run any producer or masquerade as executed checks.
 setup() {
-  GATE_ROOT="$(git -C "$BATS_TEST_DIRNAME" rev-parse --show-toplevel)"
+  # Derive the root from this file: git exports GIT_DIR to hooks pushed from a
+  # linked worktree, which makes `git -C <dir> rev-parse --show-toplevel` lie.
+  GATE_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   GATE="$GATE_ROOT/scripts/hooks/run-local-ci.sh"
   export PRODUCER_MARKER="$BATS_TEST_TMPDIR/producer-called"
   mkdir -p "$BATS_TEST_TMPDIR/bin"
