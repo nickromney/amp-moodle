@@ -257,6 +257,9 @@ count_log_files() {
   run exec_laemp -p -w nginx -d pgsql -c
   echo "Output: $output"
   [ "$status" -eq 0 ]
+  [[ "$output" =~ "Password stored in: /var/lib/amp-moodle/credentials/moodle-db_password" ]]
+  run file_exists /var/lib/amp-moodle/credentials/moodle-db_password
+  [ "$status" -eq 0 ]
 
   # Verify PostgreSQL installed
   run command_exists psql

@@ -4091,7 +4091,7 @@ function postgres_ensure() {
     log verbose "PostgreSQL configuration completed."
     log info "Database: ${DB_NAME}"
     log info "User: ${DB_USER}"
-    log info "Password stored in: ${password_file}"
+    log info "Password stored in: ${AMP_MOODLE_STATE_DIR}/credentials/${DB_USER}-db_password"
   fi
 
   postgres_verify --exit-on-failure
